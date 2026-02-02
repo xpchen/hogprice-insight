@@ -1,0 +1,722 @@
+[
+  {
+    "template_id": "T01",
+    "name": "标肥价差季节性",
+    "category": "价差",
+    "description": "每周判断标肥价差处于历史什么位置（季节性最常用）",
+    "chart_type": "seasonality",
+    "params": {
+      "years": {
+        "type": "multi_select",
+        "default": [],
+        "description": "年份范围（默认最近6年）",
+        "editable": true
+      },
+      "x_mode": {
+        "type": "select",
+        "default": "week_of_year",
+        "options": ["week_of_year", "month_day"],
+        "description": "横轴模式",
+        "editable": true
+      },
+      "geo_ids": {
+        "type": "multi_select",
+        "default": [],
+        "description": "地区筛选（可选，默认全国）",
+        "editable": true
+      },
+      "agg": {
+        "type": "select",
+        "default": "last",
+        "options": ["mean", "last"],
+        "description": "聚合方式（周度建议last，日度建议mean）",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "seasonality",
+        "title": "标肥价差季节性分析",
+        "query": {
+          "metric_code": "SPREAD_STANDARD_FATTY",
+          "years": "{{params.years}}",
+          "x_mode": "{{params.x_mode}}",
+          "geo_ids": "{{params.geo_ids}}",
+          "agg": "{{params.agg}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "summary",
+        "title": "当前值统计",
+        "calc": ["latest_value", "percentile_10", "percentile_50", "percentile_90", "deviation_from_mean"]
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "季节性数据",
+          "type": "seasonality_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "摘要统计",
+          "type": "summary_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "选择年份后，一年一条线且对齐周序号",
+      "当前周能输出历史分位",
+      "导出包含宽表和图表"
+    ]
+  },
+  {
+    "template_id": "T02",
+    "name": "毛白价差季节性",
+    "category": "价差",
+    "description": "用于屠宰/白条环节分析，与标肥并列常用",
+    "chart_type": "seasonality",
+    "params": {
+      "years": {
+        "type": "multi_select",
+        "default": [],
+        "description": "年份范围（默认最近6年）",
+        "editable": true
+      },
+      "x_mode": {
+        "type": "select",
+        "default": "week_of_year",
+        "options": ["week_of_year", "month_day"],
+        "description": "横轴模式",
+        "editable": true
+      },
+      "geo_ids": {
+        "type": "multi_select",
+        "default": [],
+        "description": "地区筛选（可选）",
+        "editable": true
+      },
+      "agg": {
+        "type": "select",
+        "default": "last",
+        "options": ["mean", "last"],
+        "description": "聚合方式",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "seasonality",
+        "title": "毛白价差季节性分析",
+        "query": {
+          "metric_code": "SPREAD_MAO_BAI",
+          "years": "{{params.years}}",
+          "x_mode": "{{params.x_mode}}",
+          "geo_ids": "{{params.geo_ids}}",
+          "agg": "{{params.agg}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "summary",
+        "title": "当前值统计",
+        "calc": ["latest_value", "percentile_10", "percentile_50", "percentile_90", "deviation_from_mean"]
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "季节性数据",
+          "type": "seasonality_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "摘要统计",
+          "type": "summary_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "同T01验收点",
+      "毛白价差数据正确显示"
+    ]
+  },
+  {
+    "template_id": "T03",
+    "name": "生猪价格季节性",
+    "category": "价格",
+    "description": "看猪价季节性（管理层/研究必备），同时可用于解释价差变化",
+    "chart_type": "seasonality",
+    "params": {
+      "years": {
+        "type": "multi_select",
+        "default": [],
+        "description": "年份范围（默认最近6年）",
+        "editable": true
+      },
+      "x_mode": {
+        "type": "select",
+        "default": "month_day",
+        "options": ["week_of_year", "month_day"],
+        "description": "横轴模式（推荐month_day）",
+        "editable": true
+      },
+      "geo_ids": {
+        "type": "multi_select",
+        "default": [],
+        "description": "地区筛选（全国/省）",
+        "editable": true
+      },
+      "agg": {
+        "type": "select",
+        "default": "mean",
+        "options": ["mean", "last"],
+        "description": "聚合方式（日度mean，周度last）",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "seasonality",
+        "title": "生猪价格季节性分析",
+        "query": {
+          "metric_code": "HOG_PRICE_NATIONAL",
+          "years": "{{params.years}}",
+          "x_mode": "{{params.x_mode}}",
+          "geo_ids": "{{params.geo_ids}}",
+          "agg": "{{params.agg}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "summary",
+        "title": "当前值统计",
+        "calc": ["latest_value", "percentile_10", "percentile_50", "percentile_90", "deviation_from_mean", "historical_mean_band"]
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "季节性数据",
+          "type": "seasonality_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "摘要统计",
+          "type": "summary_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "month_day模式：同月同日对齐（2/29策略一致）",
+      "历史均值带正确显示"
+    ]
+  },
+  {
+    "template_id": "T04",
+    "name": "价格+标肥价差（区间双轴）",
+    "category": "复盘",
+    "description": "复盘某段时间内价格与价差联动，周报里很常见",
+    "chart_type": "timeseries",
+    "params": {
+      "date_range": {
+        "type": "daterange",
+        "default": "YTD",
+        "description": "时间范围（默认本年迄今或最近180天）",
+        "editable": true
+      },
+      "geo_ids": {
+        "type": "multi_select",
+        "default": [],
+        "description": "地区筛选（全国/省，可选）",
+        "editable": true
+      },
+      "time_dimension": {
+        "type": "select",
+        "default": "daily",
+        "options": ["daily", "weekly"],
+        "description": "时间维度",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "timeseries_dual_axis",
+        "title": "生猪价格 vs 标肥价差",
+        "query": {
+          "metrics": [
+            {
+              "metric_code": "HOG_PRICE_NATIONAL",
+              "axis": "left",
+              "agg": "mean"
+            },
+            {
+              "metric_code": "SPREAD_STANDARD_FATTY",
+              "axis": "right",
+              "agg": "mean"
+            }
+          ],
+          "date_range": "{{params.date_range}}",
+          "geo_ids": "{{params.geo_ids}}",
+          "time_dimension": "{{params.time_dimension}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "summary",
+        "title": "区间统计",
+        "calc": ["min", "max", "mean", "last", "change_7d", "change_30d"]
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "区间数据",
+          "type": "timeseries_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "摘要统计",
+          "type": "summary_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "单位不同自动双轴",
+      "导出宽表列名清晰",
+      "区间统计正确"
+    ]
+  },
+  {
+    "template_id": "T05",
+    "name": "区域价差季节性",
+    "category": "价差",
+    "description": "判断区域结构变化（南北/东西/主销主产价差）",
+    "chart_type": "seasonality",
+    "params": {
+      "years": {
+        "type": "multi_select",
+        "default": [],
+        "description": "年份范围（默认最近6年）",
+        "editable": true
+      },
+      "x_mode": {
+        "type": "select",
+        "default": "week_of_year",
+        "options": ["week_of_year", "month_day"],
+        "description": "横轴模式",
+        "editable": true
+      },
+      "spread_pair": {
+        "type": "select",
+        "default": "north_south",
+        "options": ["north_south", "east_west", "main_sell_main_prod"],
+        "description": "区域对（南北/东西/主销主产）",
+        "editable": true
+      },
+      "agg": {
+        "type": "select",
+        "default": "last",
+        "options": ["mean", "last"],
+        "description": "聚合方式（周度last）",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "seasonality",
+        "title": "区域价差季节性分析",
+        "query": {
+          "metric_code": "REGIONAL_SPREAD_NORTH_SOUTH",
+          "years": "{{params.years}}",
+          "x_mode": "{{params.x_mode}}",
+          "agg": "{{params.agg}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "timeseries",
+        "title": "近90天走势",
+        "query": {
+          "metric_code": "REGIONAL_SPREAD_NORTH_SOUTH",
+          "date_range": "last_90_days",
+          "time_dimension": "daily"
+        }
+      },
+      {
+        "block_id": "b3",
+        "type": "summary",
+        "title": "当前值统计",
+        "calc": ["latest_value", "percentile_10", "percentile_50", "percentile_90", "deviation_from_mean"]
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "季节性数据",
+          "type": "seasonality_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "近90天走势",
+          "type": "timeseries_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "摘要统计",
+          "type": "summary_table",
+          "block_id": "b3"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "区域对切换后指标正确切换",
+      "季节性图和近90天走势都正确"
+    ]
+  },
+  {
+    "template_id": "T06",
+    "name": "分省价格对比",
+    "category": "区域",
+    "description": "周报里经常要重点省份排名/分化",
+    "chart_type": "timeseries",
+    "params": {
+      "date_range": {
+        "type": "daterange",
+        "default": "last_90_days",
+        "description": "时间范围（默认最近60/90天）",
+        "editable": true
+      },
+      "geo_ids": {
+        "type": "multi_select",
+        "default": "top10",
+        "description": "省份选择（默认Top10，按最新值排序）",
+        "editable": true
+      },
+      "time_dimension": {
+        "type": "select",
+        "default": "daily",
+        "options": ["daily", "weekly"],
+        "description": "时间维度",
+        "editable": true
+      },
+      "rank_by": {
+        "type": "select",
+        "default": "latest",
+        "options": ["latest", "change_7d"],
+        "description": "排名方式",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "timeseries_multi_line",
+        "title": "分省价格走势",
+        "query": {
+          "metric_code": "PRICE_BY_PROVINCE",
+          "date_range": "{{params.date_range}}",
+          "geo_ids": "{{params.geo_ids}}",
+          "time_dimension": "{{params.time_dimension}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "table_rank",
+        "title": "省份排名",
+        "calc": {
+          "columns": ["latest_value", "change_7d", "volatility"],
+          "rank_by": "{{params.rank_by}}"
+        }
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "区间数据",
+          "type": "timeseries_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "排名表",
+          "type": "rank_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "默认Top10能自动计算",
+      "多线不超过15条",
+      "排名表正确"
+    ]
+  },
+  {
+    "template_id": "T07",
+    "name": "集团企业价格对比",
+    "category": "企业",
+    "description": "企业专题（Top5/Top10企业价格对比）",
+    "chart_type": "timeseries",
+    "params": {
+      "date_range": {
+        "type": "daterange",
+        "default": "last_180_days",
+        "description": "时间范围（默认最近90/180天）",
+        "editable": true
+      },
+      "company_ids": {
+        "type": "multi_select",
+        "default": "top5",
+        "description": "企业选择（默认Top5/Top10）",
+        "editable": true
+      },
+      "time_dimension": {
+        "type": "select",
+        "default": "daily",
+        "options": ["daily", "weekly"],
+        "description": "时间维度",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "timeseries_multi_line",
+        "title": "企业价格走势",
+        "query": {
+          "metric_code": "PRICE_BY_GROUP",
+          "date_range": "{{params.date_range}}",
+          "company_ids": "{{params.company_ids}}",
+          "time_dimension": "{{params.time_dimension}}"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "table_topn",
+        "title": "TopN统计",
+        "calc": {
+          "topn": 5,
+          "metrics": ["change_7d", "change_14d", "deviation"]
+        }
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "区间数据",
+          "type": "timeseries_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "TopN表",
+          "type": "topn_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "图表",
+          "type": "chart",
+          "block_id": "b1"
+        }
+      ]
+    },
+    "acceptance": [
+      "企业维度筛选生效",
+      "TopN计算正确（change_7d/14d）"
+    ]
+  },
+  {
+    "template_id": "T08",
+    "name": "周报核心包",
+    "category": "管理看板",
+    "description": "一键生成报告包（4-6张图一次性生成）",
+    "chart_type": "composite",
+    "params": {
+      "years": {
+        "type": "multi_select",
+        "default": [],
+        "description": "年份范围（用于季节性，默认近6年）",
+        "editable": true
+      },
+      "date_range": {
+        "type": "daterange",
+        "default": "YTD",
+        "description": "时间范围（用于区间图，默认本年迄今）",
+        "editable": true
+      },
+      "geo_ids": {
+        "type": "multi_select",
+        "default": [],
+        "description": "地区筛选（全国/某省/某区域）",
+        "editable": true
+      }
+    },
+    "blocks": [
+      {
+        "block_id": "b1",
+        "type": "seasonality",
+        "title": "标肥价差季节性",
+        "query": {
+          "metric_code": "SPREAD_STANDARD_FATTY",
+          "years": "{{params.years}}",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        }
+      },
+      {
+        "block_id": "b2",
+        "type": "seasonality",
+        "title": "毛白价差季节性",
+        "query": {
+          "metric_code": "SPREAD_MAO_BAI",
+          "years": "{{params.years}}",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        }
+      },
+      {
+        "block_id": "b3",
+        "type": "seasonality",
+        "title": "全国猪价季节性",
+        "query": {
+          "metric_code": "HOG_PRICE_NATIONAL",
+          "years": "{{params.years}}",
+          "x_mode": "month_day",
+          "agg": "mean"
+        }
+      },
+      {
+        "block_id": "b4",
+        "type": "timeseries_dual_axis",
+        "title": "猪价+标肥价差（区间双轴）",
+        "query": {
+          "metrics": [
+            {
+              "metric_code": "HOG_PRICE_NATIONAL",
+              "axis": "left",
+              "agg": "mean"
+            },
+            {
+              "metric_code": "SPREAD_STANDARD_FATTY",
+              "axis": "right",
+              "agg": "mean"
+            }
+          ],
+          "date_range": "{{params.date_range}}",
+          "time_dimension": "daily"
+        }
+      },
+      {
+        "block_id": "b5",
+        "type": "timeseries_multi_line",
+        "title": "分省价格Top10",
+        "query": {
+          "metric_code": "PRICE_BY_PROVINCE",
+          "date_range": "{{params.date_range}}",
+          "geo_ids": "top10",
+          "time_dimension": "daily"
+        }
+      },
+      {
+        "block_id": "b6",
+        "type": "summary",
+        "title": "本周关键结论",
+        "calc": ["manual_input"]
+      }
+    ],
+    "export": {
+      "format": ["xlsx"],
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "content": {
+            "title": "周报核心包",
+            "params": "{{params}}",
+            "generated_at": "{{now}}"
+          }
+        },
+        {
+          "name": "标肥价差季节性",
+          "type": "seasonality_table",
+          "block_id": "b1"
+        },
+        {
+          "name": "毛白价差季节性",
+          "type": "seasonality_table",
+          "block_id": "b2"
+        },
+        {
+          "name": "全国猪价季节性",
+          "type": "seasonality_table",
+          "block_id": "b3"
+        },
+        {
+          "name": "猪价+标肥价差",
+          "type": "timeseries_table",
+          "block_id": "b4"
+        },
+        {
+          "name": "分省价格Top10",
+          "type": "timeseries_table",
+          "block_id": "b5"
+        },
+        {
+          "name": "关键结论",
+          "type": "summary_table",
+          "block_id": "b6"
+        }
+      ]
+    },
+    "acceptance": [
+      "一次点击生成6块内容",
+      "导出文件可直接用于周会/归档",
+      "所有图表数据正确"
+    ]
+  }
+]
