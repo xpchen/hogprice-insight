@@ -1,0 +1,66 @@
+﻿sheet_name,parser,action,freq,geo,note
+样本点选取,,SKIP_META,,,元数据/说明页，不入 fact_observation；可入 raw_layer
+生猪数据库·目录,,SKIP_META,,,元数据/说明页，不入 fact_observation；可入 raw_layer
+数据说明,,SKIP_META,,,元数据/说明页，不入 fact_observation；可入 raw_layer
+不同规模市占率（按生猪出栏划分）,CROSS_SECTION_TABLE,,SNAPSHOT,PROVINCE_FROM_COLUMN,表头含 2025年10月末数据；需从标题或单元格提取 as_of_date，入 tags
+不同规模市占率（按母猪存栏划分）,CROSS_SECTION_TABLE,,SNAPSHOT,PROVINCE_FROM_COLUMN,表头含 2025年10月末数据；需从标题或单元格提取 as_of_date，入 tags
+仔猪与商品猪利润对比,PERIOD_STRING_ROWS_MULTI_METRIC,,W,NATION,
+历史猪价,MONTH_ROW_YEAR_COL_MATRIX,,M,NATION,行是1-12月，列是年份；需转为每月 time series
+2025.4.24料肉比,RAW_TABLE_STORE_ONLY,,,,专题/单日快照；建议入 raw_layer 并手工标注指标
+育肥头均费用,RAW_TABLE_STORE_ONLY,,,,含区间与文字说明；建议先全量入 raw_layer，再按行抽取结构化指标
+周度-商品猪出栏价,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+周度-体重拆分,PERIOD_END_MULTI_METRIC,,W,NATION,
+周度-体重,PERIOD_START_END_WIDE_PROVINCE_WITH_ROW_DIM,,W,PROVINCE_FROM_COLUMN,
+周度-屠宰厂宰前活猪重,PERIOD_START_END_PROVINCE_GROUPED_SUBCOLS,,W,PROVINCE_FROM_GROUP,
+周度-各体重段价差,PERIOD_END_FROM_COL2_START_DERIVED,,W,PROVINCE_FROM_COLUMN,
+二育成本,NARROW_DATE_MULTI_ROW_DIM,,W,NATION,以东北成交价为例；建议 tags 加 region='东北'（默认）
+二育销量,PERIOD_STRING_ROWS_MULTI_METRIC,,W,NATION,时间列为 '2023.2.17-2.26' 这种区间字符串，需解析 start/end
+二育栏舍利用率,MIXED_STATIC_AND_TIME_MATRIX,,D,PROVINCE_FROM_ROW,
+周度-养殖利润最新,PERIOD_START_END_MULTI_COL_WITH_GROUP_HEADERS,,W,NATION,"列按规模/模式拆分；tags: mode=self-breeding|purchase|contract, scale_band=..."
+周度-当期、预期成本,PERIOD_END_MULTI_METRIC,,W,NATION,按当期成本/6个月后预期成本等多指标
+育肥全价料价格,MULTIHEADER_DATE_PROVINCE_AND_NATION,,W,PROVINCE_AND_NATION,
+周度-成本计算附件,,SKIP_META,,,元数据/说明页，不入 fact_observation；可入 raw_layer
+周度-毛白价差,NARROW_PERIOD_END_MULTI_METRIC,,W,NATION,
+周度-50公斤二元母猪价格,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+周度-规模场15公斤仔猪出栏价,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+高频仔猪、母猪,NARROW_DATE_WITH_ROW_DIM_WIDE_PROVINCE,,D,PROVINCE_FROM_COLUMN,
+周度-河南屠宰白条成本,NARROW_PERIOD_END_MULTI_METRIC,,W,FIXED_PROVINCE,可拆分为屠宰成本、白条成本、利润等多个指标
+周度-淘汰母猪价格,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+周度-宰后结算价,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+周度-冻品库存,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+周度-冻品库存多样本,NARROW_DATE_WIDE_DIM_COLS,,W,NATION,
+鲜销率,PERIOD_STRING_ROWS_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,period_label 含日期区间；最后一行较去年为同比差值（可单独 metric）
+周度-猪肉价（前三等级白条均价）,PERIOD_START_END_WIDE_PROVINCE,,W,PROVINCE_FROM_COLUMN,
+周度-猪肉产品价格,PERIOD_START_END_WIDE_PROVINCE_WITH_ROW_DIM,,W,PROVINCE_FROM_COLUMN,
+华东冻品价格,DATE_SERIAL_GROUPED_SUBCOLS_WITH_ROW_DIMS,,D,NATION,大量为区间价格字符串，建议存 raw_value 并做区间解析为 min/max
+周度-屠宰企业日度屠宰量,NARROW_DATE_ROWS_WIDE_PROVINCES_TRANSPOSED,,D,PROVINCE_FROM_COLUMN,
+周度-屠宰新2022.10.28,PERIOD_START_END_MULTI_METRIC,,W,NATION,
+周度-养殖利润,MONTH_ROW_YEAR_COL_MATRIX,,M,NATION,表为年度月度利润矩阵（历史）
+各存栏规模,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+月度出栏完成率,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+月度计划出栏量,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+月度-淘汰母猪屠宰厂宰杀量,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+猪料原料占比,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+月度-猪料销量,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-屠宰厂公母比例,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-屠宰企业开工率,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-生产指标（2021.5.7新增）,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-生产指标2,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+国产冻品2-4号肉价格,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+进口肉,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+MSY,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+月度-二元三元能繁比例,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-能繁母猪存栏（2020年2月新增）,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-小猪存栏（2020年5月新增）,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-大猪存栏（2020年5月新增）,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-商品猪出栏量,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-能繁母猪存栏量,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-小猪（50公斤以下）存栏,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度-原种场二元后备母猪销量及出栏日龄,MONTHLY_AUTO,,M,MIXED,按 header 自动判断：若含省份列=>省级；否则全国
+月度猪肉供应占比,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+历史出栏体重,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+运费,NARROW_DATE_MULTI_METRIC,,W,NATION,
+重要部位冻品进口,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+周&月度-三元母猪价格,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+减产能较2018年7月30日,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标
+新增猪场,RAW_TABLE_STORE_ONLY,,,,建议先全量入 raw_layer，再逐步结构化拆指标

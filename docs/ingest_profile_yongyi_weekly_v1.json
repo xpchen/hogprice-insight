@@ -1,0 +1,1044 @@
+{
+  "profile_code": "YONGYI_WEEKLY_V1",
+  "profile_name": "涌益咨询-周度数据（65 sheet）全量入库",
+  "source_code": "YONGYI",
+  "dataset_type": "YONGYI_WEEKLY",
+  "file_pattern": "*涌益咨询 周度数据*.xlsx",
+  "target": "fact_observation",
+  "defaults": {
+    "freq": "W",
+    "period_type": "week",
+    "period_anchor": "period_end",
+    "geo_strategy": "dim_geo.province",
+    "value_cleaner": "clean_numeric_value",
+    "dedup_key": "sha1(source_code|sheet|metric_key|geo_key|period_end|canonical_tags)"
+  },
+  "dispatch_rules": [
+    {
+      "priority": 10,
+      "when": {
+        "sheet_name_in": [
+          "样本点选取",
+          "生猪数据库·目录",
+          "数据说明",
+          "周度-成本计算附件"
+        ]
+      },
+      "action": "SKIP_META",
+      "into": "raw_layer_only",
+      "reason": "说明/目录/附件类页面"
+    },
+    {
+      "priority": 20,
+      "when": {
+        "sheet_name_regex": "^周度-",
+        "has_columns": [
+          "开始日期",
+          "结束日期"
+        ],
+        "row_dim_any": [
+          "指标",
+          "指标类型",
+          "项目"
+        ]
+      },
+      "parser": "PERIOD_START_END_WIDE_PROVINCE_WITH_ROW_DIM",
+      "reason": "周度省级宽表+行维度"
+    },
+    {
+      "priority": 30,
+      "when": {
+        "sheet_name_regex": "^周度-",
+        "has_columns": [
+          "开始日期",
+          "结束日期"
+        ]
+      },
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "reason": "周度省级宽表"
+    },
+    {
+      "priority": 40,
+      "when": {
+        "sheet_name_regex": "^周度-屠宰新"
+      },
+      "parser": "PERIOD_START_END_MULTI_METRIC",
+      "reason": "周度全国多指标表（含环比）"
+    },
+    {
+      "priority": 50,
+      "when": {
+        "sheet_name_in": [
+          "周度-冻品库存多样本"
+        ]
+      },
+      "parser": "NARROW_DATE_WIDE_DIM_COLS",
+      "reason": "周度按大区列的时间序列"
+    },
+    {
+      "priority": 60,
+      "when": {
+        "sheet_name_in": [
+          "育肥全价料价格",
+          "华东冻品价格"
+        ]
+      },
+      "parser": "MULTIHEADER_MATRIX",
+      "reason": "多表头/日期列组"
+    },
+    {
+      "priority": 70,
+      "when": {
+        "sheet_name_regex": "^月度-"
+      },
+      "parser": "MONTHLY_AUTO",
+      "reason": "月度表按表头自动识别"
+    },
+    {
+      "priority": 80,
+      "when": {
+        "sheet_name_contains": "历史"
+      },
+      "parser": "HISTORY_MATRIX_AUTO",
+      "reason": "历史矩阵（年份列、月份行）"
+    },
+    {
+      "priority": 90,
+      "when": {
+        "has_columns": [
+          "日期"
+        ]
+      },
+      "parser": "NARROW_DATE_AUTO",
+      "reason": "日期列时间序列"
+    },
+    {
+      "priority": 100,
+      "when": {},
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "reason": "兜底：原样入 raw_layer，后续再结构化"
+    }
+  ],
+  "sheets": [
+    {
+      "sheet_name": "样本点选取",
+      "action": "SKIP_META",
+      "parser": null,
+      "note": "元数据/说明页，不入 fact_observation；可入 raw_layer"
+    },
+    {
+      "sheet_name": "生猪数据库·目录",
+      "action": "SKIP_META",
+      "parser": null,
+      "note": "元数据/说明页，不入 fact_observation；可入 raw_layer"
+    },
+    {
+      "sheet_name": "数据说明",
+      "action": "SKIP_META",
+      "parser": null,
+      "note": "元数据/说明页，不入 fact_observation；可入 raw_layer"
+    },
+    {
+      "sheet_name": "不同规模市占率（按生猪出栏划分）",
+      "parser": "CROSS_SECTION_TABLE",
+      "freq": "SNAPSHOT",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 1,
+      "note": "表头含 2025年10月末数据；需从标题或单元格提取 as_of_date，入 tags"
+    },
+    {
+      "sheet_name": "不同规模市占率（按母猪存栏划分）",
+      "parser": "CROSS_SECTION_TABLE",
+      "freq": "SNAPSHOT",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 1,
+      "note": "表头含 2025年10月末数据；需从标题或单元格提取 as_of_date，入 tags"
+    },
+    {
+      "sheet_name": "仔猪与商品猪利润对比",
+      "parser": "PERIOD_STRING_ROWS_MULTI_METRIC",
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 1,
+      "period_col": "时间",
+      "metrics_from_columns": "*"
+    },
+    {
+      "sheet_name": "历史猪价",
+      "parser": "MONTH_ROW_YEAR_COL_MATRIX",
+      "freq": "M",
+      "geo": "NATION",
+      "header_row": 1,
+      "row_dim": "月份",
+      "note": "行是1-12月，列是年份；需转为每月 time series"
+    },
+    {
+      "sheet_name": "2025.4.24料肉比",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "专题/单日快照；建议入 raw_layer 并手工标注指标"
+    },
+    {
+      "sheet_name": "育肥头均费用",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "含区间与文字说明；建议先全量入 raw_layer，再按行抽取结构化指标"
+    },
+    {
+      "sheet_name": "周度-商品猪出栏价",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_OUT_PRICE",
+        "metric_name": "商品猪出栏价",
+        "unit": "元/公斤"
+      }
+    },
+    {
+      "sheet_name": "周度-体重拆分",
+      "parser": "PERIOD_END_MULTI_METRIC",
+      "table_name": "yongyi_weekly_weight_split",
+      "table_config": {
+        "column_mapping": {
+          "period_end": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "nation_avg_weight": {
+            "source": "value",
+            "condition": "metric_key == YY_W_WEIGHT_NATION_AVG",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "group_weight": {
+            "source": "value",
+            "condition": "metric_key == YY_W_WEIGHT_GROUP",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "scatter_weight": {
+            "source": "value",
+            "condition": "metric_key == YY_W_WEIGHT_SCATTER",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "group_ratio": {
+            "source": "value",
+            "condition": "metric_key == YY_W_WEIGHT_SHARE AND tags.crowd == 集团",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "scatter_ratio": {
+            "source": "value",
+            "condition": "metric_key == YY_W_WEIGHT_SHARE AND tags.crowd == 散户",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["period_end"]
+      },
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 3,
+      "date_col": "结束日期",
+      "metrics_from_columns": [
+        {
+          "col": "全国均重",
+          "metric_key": "YY_W_WEIGHT_NATION_AVG",
+          "unit": "kg"
+        },
+        {
+          "col": "集团",
+          "metric_key": "YY_W_WEIGHT_GROUP",
+          "unit": "kg",
+          "tags": {
+            "crowd": "集团"
+          }
+        },
+        {
+          "col": "散户",
+          "metric_key": "YY_W_WEIGHT_SCATTER",
+          "unit": "kg",
+          "tags": {
+            "crowd": "散户"
+          }
+        },
+        {
+          "col": "集团",
+          "metric_key": "YY_W_WEIGHT_SHARE",
+          "unit": "ratio",
+          "tags": {
+            "crowd": "集团",
+            "field": "share"
+          },
+          "use_col_occurrence": 2
+        },
+        {
+          "col": "散户",
+          "metric_key": "YY_W_WEIGHT_SHARE",
+          "unit": "ratio",
+          "tags": {
+            "crowd": "散户",
+            "field": "share"
+          },
+          "use_col_occurrence": 2
+        }
+      ]
+    },
+    {
+      "sheet_name": "周度-体重",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE_WITH_ROW_DIM",
+      "table_name": "yongyi_weekly_weight",
+      "table_config": {
+        "column_mapping": {
+          "period_start": {
+            "source": "period_start",
+            "type": "DATE",
+            "required": true
+          },
+          "period_end": {
+            "source": "period_end",
+            "type": "DATE",
+            "required": true
+          },
+          "indicator": {
+            "source": "tags.indicator",
+            "type": "VARCHAR(64)",
+            "required": true
+          },
+          "region_code": {
+            "source": "row_dim.province",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "weight_value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["period_end", "indicator", "region_code"]
+      },
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期",
+      "end_col": "结束日期",
+      "row_dim_col": "指标",
+      "indicator_mapping": {
+        "90kg以下": "90Kg出栏占比",
+        "150kg以上": "150Kg出栏占重",
+        "均重": "均重"
+      },
+      "indicator_unit_mapping": {
+        "90kg以下": "%",
+        "150kg以上": "%",
+        "均重": "kg",
+        "90Kg出栏占比": "%",
+        "150Kg出栏占重": "%"
+      },
+      "metric_template": {
+        "metric_key": "YY_W_OUT_WEIGHT",
+        "metric_name": "商品猪出栏体重",
+        "unit": "kg"
+      }
+    },
+    {
+      "sheet_name": "周度-屠宰厂宰前活猪重",
+      "parser": "PERIOD_START_END_PROVINCE_GROUPED_SUBCOLS",
+      "table_name": "yongyi_weekly_slaughter_prelive_weight",
+      "table_config": {
+        "column_mapping": {
+          "period_start": {
+            "source": "period_start",
+            "type": "DATE",
+            "required": true
+          },
+          "period_end": {
+            "source": "period_end",
+            "type": "DATE",
+            "required": true
+          },
+          "indicator": {
+            "source": "tags.indicator",
+            "type": "VARCHAR(64)",
+            "required": true
+          },
+          "region_code": {
+            "source": "row_dim.province",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "weight_value": {
+            "source": "value",
+            "condition": "metric_key == YY_W_SLAUGHTER_PRELIVE_WEIGHT",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "change_from_last_week": {
+            "source": "value",
+            "condition": "metric_key == YY_W_SLAUGHTER_PRELIVE_WEIGHT_WOW",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["period_end", "indicator", "region_code"]
+      },
+      "freq": "W",
+      "geo": "PROVINCE_FROM_GROUP",
+      "header_row": 4,
+      "start_col": "开始日期",
+      "end_col": "结束日期",
+      "row_dim_col": "指标",
+      "group_size": 2,
+      "subheaders": [
+        "值",
+        "较上周"
+      ],
+      "metric_templates": [
+        {
+          "subheader_index": 0,
+          "metric_key": "YY_W_SLAUGHTER_PRELIVE_WEIGHT",
+          "metric_name": "宰前活猪重",
+          "unit": "kg"
+        },
+        {
+          "subheader_index": 1,
+          "metric_key": "YY_W_SLAUGHTER_PRELIVE_WEIGHT_WOW",
+          "metric_name": "宰前活猪重较上周",
+          "unit": "kg"
+        }
+      ]
+    },
+    {
+      "sheet_name": "周度-各体重段价差",
+      "parser": "PERIOD_END_FROM_COL2_START_DERIVED",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "end_col": "结束日期",
+      "start_derive_days": 6,
+      "row_dim_col": "指标",
+      "metric_template": {
+        "metric_key": "YY_W_PRICE_BY_WEIGHT",
+        "metric_name": "各体重段价格",
+        "unit": "元/斤"
+      }
+    },
+    {
+      "sheet_name": "二育成本",
+      "parser": "NARROW_DATE_MULTI_ROW_DIM",
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 3,
+      "date_col": "日期",
+      "row_dims": [
+        {
+          "col": "二育主流采购体重段\n（kg）",
+          "key": "purchase_weight_kg",
+          "type": "number"
+        }
+      ],
+      "metrics_from_columns": [
+        {
+          "col": "计划出栏体重\n(kg)",
+          "metric_key": "YY_W_2F_TARGET_WEIGHT",
+          "metric_name": "计划出栏体重",
+          "unit": "kg"
+        },
+        {
+          "col": "料肉比",
+          "metric_key": "YY_W_2F_FCR",
+          "metric_name": "料肉比",
+          "unit": null
+        },
+        {
+          "col": "采购成本\n(元/kg)",
+          "metric_key": "YY_W_2F_PURCHASE_COST",
+          "metric_name": "采购成本",
+          "unit": "元/kg"
+        },
+        {
+          "col": "运费+损耗\n(元/kg)",
+          "metric_key": "YY_W_2F_LOGISTICS_LOSS",
+          "metric_name": "运费+损耗",
+          "unit": "元/kg"
+        },
+        {
+          "col": "增重饲料成本\n（元）",
+          "metric_key": "YY_W_2F_FEED_COST",
+          "metric_name": "增重饲料成本",
+          "unit": "元"
+        },
+        {
+          "col": "二育成本\n（元/kg）",
+          "metric_key": "YY_W_2F_TOTAL_COST",
+          "metric_name": "二育成本",
+          "unit": "元/kg"
+        }
+      ],
+      "note": "以东北成交价为例；建议 tags 加 region='东北'（默认）"
+    },
+    {
+      "sheet_name": "二育销量",
+      "parser": "PERIOD_STRING_ROWS_MULTI_METRIC",
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 2,
+      "period_col": "时间",
+      "metrics_from_columns": "*",
+      "note": "时间列为 '2023.2.17-2.26' 这种区间字符串，需解析 start/end"
+    },
+    {
+      "sheet_name": "二育栏舍利用率",
+      "parser": "MIXED_STATIC_AND_TIME_MATRIX",
+      "freq": "D",
+      "geo": "PROVINCE_FROM_ROW",
+      "header_row": 2,
+      "province_col": "省份",
+      "time_cols": "dates",
+      "static_cols": [
+        "2021年生猪出栏",
+        "2022预估"
+      ],
+      "metric_templates": {
+        "util": {
+          "metric_key": "YY_W_2F_BARN_UTIL",
+          "metric_name": "二育栏舍利用率",
+          "unit": "ratio"
+        },
+        "out2021": {
+          "metric_key": "YY_A_OUT_2021",
+          "metric_name": "2021年生猪出栏",
+          "unit": "万头"
+        },
+        "est2022": {
+          "metric_key": "YY_A_OUT_EST_2022",
+          "metric_name": "2022预估出栏",
+          "unit": "万头"
+        }
+      }
+    },
+    {
+      "sheet_name": "周度-养殖利润最新",
+      "parser": "PERIOD_START_END_MULTI_COL_WITH_GROUP_HEADERS",
+      "freq": "W",
+      "geo": "NATION",
+      "header_rows": [
+        2,
+        3
+      ],
+      "start_col": "开始日期",
+      "end_col": "结束日期",
+      "row_dim_col": "项目",
+      "col_group_row": 2,
+      "col_subheader_row": 3,
+      "metric_template": {
+        "metric_key": "YY_W_FARM_PROFIT_LATEST",
+        "metric_name": "养殖利润最新",
+        "unit": "元/头"
+      },
+      "note": "列按规模/模式拆分；tags: mode=self-breeding|purchase|contract, scale_band=..."
+    },
+    {
+      "sheet_name": "周度-当期、预期成本",
+      "parser": "PERIOD_END_MULTI_METRIC",
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 1,
+      "date_col": "日期|结束日期",
+      "metrics_from_columns": "*",
+      "note": "按当期成本/6个月后预期成本等多指标"
+    },
+    {
+      "sheet_name": "育肥全价料价格",
+      "parser": "MULTIHEADER_DATE_PROVINCE_AND_NATION",
+      "freq": "W",
+      "header_rows": [
+        3,
+        4
+      ],
+      "date_col": "日期",
+      "geo": "PROVINCE_AND_NATION",
+      "province_map_row": 4,
+      "nation_cols": [
+        [
+          "全国",
+          "全价料出厂价"
+        ],
+        [
+          "全国",
+          "全价料到猪场价"
+        ]
+      ],
+      "metric_key": "YY_W_FEED_FULLPRICE",
+      "metric_name": "育肥全价料价格",
+      "unit": "元/吨"
+    },
+    {
+      "sheet_name": "周度-成本计算附件",
+      "action": "SKIP_META",
+      "parser": null,
+      "note": "元数据/说明页，不入 fact_observation；可入 raw_layer"
+    },
+    {
+      "sheet_name": "周度-毛白价差",
+      "parser": "NARROW_PERIOD_END_MULTI_METRIC",
+      "freq": "W",
+      "geo": "NATION",
+      "date_col": "date",
+      "header_row": 1,
+      "metrics": [
+        {
+          "metric_key": "YY_W_WHITE_PRICE_TOP3",
+          "metric_name": "前三等级白条价",
+          "unit": "元/公斤"
+        },
+        {
+          "metric_key": "YY_W_OUT_PRICE_NATION",
+          "metric_name": "生猪出栏价",
+          "unit": "元/公斤"
+        },
+        {
+          "metric_key": "YY_W_LIVE_WHITE_SPREAD",
+          "metric_name": "毛白价差",
+          "unit": "元/公斤",
+          "compute": "white-live"
+        }
+      ]
+    },
+    {
+      "sheet_name": "周度-50公斤二元母猪价格",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_SOW_50KG_PRICE",
+        "metric_name": "50公斤二元母猪价格",
+        "unit": "元/头"
+      }
+    },
+    {
+      "sheet_name": "周度-规模场15公斤仔猪出栏价",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_PIGLET_15KG_PRICE",
+        "metric_name": "规模场15公斤仔猪出栏价",
+        "unit": "元/头"
+      }
+    },
+    {
+      "sheet_name": "高频仔猪、母猪",
+      "parser": "NARROW_DATE_WITH_ROW_DIM_WIDE_PROVINCE",
+      "freq": "D",
+      "header_row": 2,
+      "date_col": "日期",
+      "row_dim_col": "指标",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "metric_template": {
+        "metric_key": "YY_D_PIGLET_SOW_PRICE",
+        "metric_name": "高频仔猪/母猪价格",
+        "unit": "元/头"
+      },
+      "tags_from_row_dim": "indicator"
+    },
+    {
+      "sheet_name": "周度-河南屠宰白条成本",
+      "parser": "NARROW_PERIOD_END_MULTI_METRIC",
+      "freq": "W",
+      "geo": "FIXED_PROVINCE",
+      "fixed_geo": {
+        "province": "河南"
+      },
+      "header_row": 2,
+      "date_col": "日期",
+      "metrics_from_columns": "*",
+      "note": "可拆分为屠宰成本、白条成本、利润等多个指标"
+    },
+    {
+      "sheet_name": "周度-淘汰母猪价格",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_CULL_SOW_PRICE",
+        "metric_name": "淘汰母猪价格",
+        "unit": "元/公斤"
+      }
+    },
+    {
+      "sheet_name": "周度-宰后结算价",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_POST_SLAUGHTER_SETTLE_PRICE",
+        "metric_name": "宰后结算价",
+        "unit": "元/公斤"
+      }
+    },
+    {
+      "sheet_name": "周度-冻品库存",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_FROZEN_INVENTORY_RATIO",
+        "metric_name": "冻品库存库容率",
+        "unit": "ratio"
+      }
+    },
+    {
+      "sheet_name": "周度-冻品库存多样本",
+      "parser": "NARROW_DATE_WIDE_DIM_COLS",
+      "freq": "W",
+      "geo": "NATION",
+      "date_col": "日期",
+      "header_row": 2,
+      "dim_col": "region",
+      "dim_values": [
+        "东北",
+        "华北",
+        "华东",
+        "华中",
+        "西南",
+        "华南",
+        "全国"
+      ],
+      "metric_template": {
+        "metric_key": "YY_W_FROZEN_INVENTORY_RATIO",
+        "metric_name": "冻品库存库容率",
+        "unit": "ratio"
+      }
+    },
+    {
+      "sheet_name": "鲜销率",
+      "parser": "PERIOD_STRING_ROWS_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_rows": [
+        3
+      ],
+      "period_col_index": 1,
+      "row_dim": "period_label",
+      "metric_template": {
+        "metric_key": "YY_W_FRESH_SALES_RATIO",
+        "metric_name": "鲜销率",
+        "unit": "ratio"
+      },
+      "note": "period_label 含日期区间；最后一行较去年为同比差值（可单独 metric）"
+    },
+    {
+      "sheet_name": "周度-猪肉价（前三等级白条均价）",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期|起始日期",
+      "end_col": "结束日期",
+      "metric_template": {
+        "metric_key": "YY_W_PORK_WHITE_TOP3",
+        "metric_name": "前三等级白条均价",
+        "unit": "元/公斤"
+      }
+    },
+    {
+      "sheet_name": "周度-猪肉产品价格",
+      "parser": "PERIOD_START_END_WIDE_PROVINCE_WITH_ROW_DIM",
+      "freq": "W",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "header_row": 2,
+      "start_col": "开始日期",
+      "end_col": "结束日期",
+      "row_dim_col": "指标类型",
+      "metric_template": {
+        "metric_key": "YY_W_PORK_PRODUCT_PRICE",
+        "metric_name": "猪肉产品价格",
+        "unit": "元/公斤"
+      }
+    },
+    {
+      "sheet_name": "华东冻品价格",
+      "parser": "DATE_SERIAL_GROUPED_SUBCOLS_WITH_ROW_DIMS",
+      "freq": "D",
+      "geo": "NATION",
+      "date_header_row": 2,
+      "row_dim_cols": [
+        1,
+        2
+      ],
+      "subcol_pairs": [
+        "鲜品主流价",
+        "国产冻品"
+      ],
+      "metric_key": "YY_D_EAST_FROZEN_PRICE",
+      "metric_name": "华东冻品价格",
+      "unit": "元/公斤",
+      "value_type": "string_or_number",
+      "note": "大量为区间价格字符串，建议存 raw_value 并做区间解析为 min/max"
+    },
+    {
+      "sheet_name": "周度-屠宰企业日度屠宰量",
+      "parser": "NARROW_DATE_ROWS_WIDE_PROVINCES_TRANSPOSED",
+      "freq": "D",
+      "geo": "PROVINCE_FROM_COLUMN",
+      "date_col_index": 1,
+      "header_row": 1,
+      "metric_template": {
+        "metric_key": "YY_D_SLAUGHTER_VOL",
+        "metric_name": "屠宰企业日度屠宰量",
+        "unit": "头"
+      }
+    },
+    {
+      "sheet_name": "周度-屠宰新2022.10.28",
+      "parser": "PERIOD_START_END_MULTI_METRIC",
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 2,
+      "start_col": 1,
+      "end_col": 2,
+      "metrics_from_columns": [
+        {
+          "col": 3,
+          "metric_key": "YY_W_SLAUGHTER_TOP10",
+          "metric_name": "规模屠宰厂全国前10家宰杀量",
+          "unit": "头"
+        },
+        {
+          "col": 4,
+          "metric_key": "YY_W_SLAUGHTER_TOP10_MOM",
+          "metric_name": "规模屠宰厂全国前10家环比",
+          "unit": "ratio"
+        },
+        {
+          "col": 5,
+          "metric_key": "YY_W_SLAUGHTER_100",
+          "metric_name": "各省规模屠宰厂100家宰杀量",
+          "unit": "头"
+        },
+        {
+          "col": 6,
+          "metric_key": "YY_W_SLAUGHTER_100_MOM",
+          "metric_name": "各省规模屠宰厂100家环比",
+          "unit": "ratio"
+        },
+        {
+          "col": 7,
+          "metric_key": "YY_W_SLAUGHTER_TOWN",
+          "metric_name": "县区+乡镇宰杀70家",
+          "unit": "头"
+        },
+        {
+          "col": 8,
+          "metric_key": "YY_W_SLAUGHTER_TOWN_MOM",
+          "metric_name": "县区+乡镇宰杀环比",
+          "unit": "ratio"
+        }
+      ]
+    },
+    {
+      "sheet_name": "周度-养殖利润",
+      "parser": "MONTH_ROW_YEAR_COL_MATRIX",
+      "freq": "M",
+      "geo": "NATION",
+      "header_row": 1,
+      "row_dim": "月份",
+      "note": "表为年度月度利润矩阵（历史）"
+    },
+    {
+      "sheet_name": "各存栏规模",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "月度出栏完成率",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "月度计划出栏量",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "月度-淘汰母猪屠宰厂宰杀量",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "猪料原料占比",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "月度-猪料销量",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-屠宰厂公母比例",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-屠宰企业开工率",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-生产指标（2021.5.7新增）",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-生产指标2",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "国产冻品2-4号肉价格",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "进口肉",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "MSY",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "月度-二元三元能繁比例",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-能繁母猪存栏（2020年2月新增）",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-小猪存栏（2020年5月新增）",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-大猪存栏（2020年5月新增）",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-商品猪出栏量",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-能繁母猪存栏量",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-小猪（50公斤以下）存栏",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度-原种场二元后备母猪销量及出栏日龄",
+      "parser": "MONTHLY_AUTO",
+      "freq": "M",
+      "geo": "MIXED",
+      "note": "按 header 自动判断：若含省份列=>省级；否则全国"
+    },
+    {
+      "sheet_name": "月度猪肉供应占比",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "历史出栏体重",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "运费",
+      "parser": "NARROW_DATE_MULTI_METRIC",
+      "freq": "W",
+      "geo": "NATION",
+      "header_row": 1,
+      "date_col": "日期|时间",
+      "metrics_from_columns": "*"
+    },
+    {
+      "sheet_name": "重要部位冻品进口",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "周&月度-三元母猪价格",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "减产能较2018年7月30日",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    },
+    {
+      "sheet_name": "新增猪场",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "建议先全量入 raw_layer，再逐步结构化拆指标"
+    }
+  ]
+}

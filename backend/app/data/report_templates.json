@@ -1,0 +1,242 @@
+[
+  {
+    "name": "标肥价差季节性报告",
+    "description": "标肥价差季节性分析报告，包含多年叠线数据和统计摘要",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "标肥价差季节性分析报告",
+          "subtitle": "多年对比分析"
+        },
+        {
+          "name": "标肥价差季节性",
+          "chart_type": "seasonality",
+          "metric_code": "SPREAD_STANDARD_FATTY",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        },
+        {
+          "name": "统计摘要",
+          "type": "summary",
+          "calc": ["min", "max", "mean", "last", "p10", "p50", "p90"]
+        }
+      ]
+    },
+    "is_public": true
+  },
+  {
+    "name": "毛白价差季节性报告",
+    "description": "毛白价差季节性分析报告",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "毛白价差季节性分析报告",
+          "subtitle": "多年对比分析"
+        },
+        {
+          "name": "毛白价差季节性",
+          "chart_type": "seasonality",
+          "metric_code": "SPREAD_MAO_BAI",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        },
+        {
+          "name": "统计摘要",
+          "type": "summary",
+          "calc": ["min", "max", "mean", "last", "p10", "p50", "p90"]
+        }
+      ]
+    },
+    "is_public": true
+  },
+  {
+    "name": "全国猪价季节性报告",
+    "description": "全国生猪价格季节性分析报告",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "全国生猪价格季节性分析报告",
+          "subtitle": "多年对比分析"
+        },
+        {
+          "name": "全国猪价季节性",
+          "chart_type": "seasonality",
+          "metric_code": "HOG_PRICE_NATIONAL",
+          "x_mode": "month_day",
+          "agg": "mean"
+        },
+        {
+          "name": "统计摘要",
+          "type": "summary",
+          "calc": ["min", "max", "mean", "last", "p10", "p50", "p90"]
+        }
+      ]
+    },
+    "is_public": true
+  },
+  {
+    "name": "价格+价差双轴区间报告",
+    "description": "生猪价格与标肥价差双轴对比区间分析报告",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "价格+价差双轴区间分析报告",
+          "subtitle": "联动分析"
+        },
+        {
+          "name": "价格+价差双轴",
+          "chart_type": "timeseries",
+          "metric_ids": [],
+          "metrics": [
+            {
+              "metric_code": "HOG_PRICE_NATIONAL",
+              "axis": "left",
+              "agg": "mean"
+            },
+            {
+              "metric_code": "SPREAD_STANDARD_FATTY",
+              "axis": "right",
+              "agg": "mean"
+            }
+          ],
+          "time_dimension": "daily"
+        },
+        {
+          "name": "区间统计",
+          "type": "summary",
+          "calc": ["min", "max", "mean", "last", "change_7d"]
+        }
+      ]
+    },
+    "is_public": true
+  },
+  {
+    "name": "区域价差季节性报告",
+    "description": "区域价差（南北/东西）季节性分析报告",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "区域价差季节性分析报告",
+          "subtitle": "区域结构变化分析"
+        },
+        {
+          "name": "区域价差季节性",
+          "chart_type": "seasonality",
+          "metric_code": "REGIONAL_SPREAD_NORTH_SOUTH",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        },
+        {
+          "name": "统计摘要",
+          "type": "summary",
+          "calc": ["min", "max", "mean", "last", "p10", "p50", "p90"]
+        }
+      ]
+    },
+    "is_public": true
+  },
+  {
+    "name": "分省价格对比报告",
+    "description": "分省价格对比分析报告，包含Top10省份排名",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "分省价格对比分析报告",
+          "subtitle": "重点省份排名与分化"
+        },
+        {
+          "name": "分省价格走势",
+          "chart_type": "timeseries",
+          "metric_code": "PRICE_BY_PROVINCE",
+          "time_dimension": "daily",
+          "geo_limit": 10
+        },
+        {
+          "name": "排名表",
+          "type": "rank_table",
+          "rank_by": "latest",
+          "top_n": 10,
+          "columns": ["latest_value", "change_7d", "volatility"]
+        }
+      ]
+    },
+    "is_public": true
+  },
+  {
+    "name": "周报核心包",
+    "description": "周报核心包，包含标肥价差、毛白价差、全国猪价季节性，以及价格+价差双轴、分省价格Top10",
+    "template_json": {
+      "sheets": [
+        {
+          "name": "封面",
+          "type": "cover",
+          "title": "周报核心包",
+          "subtitle": "综合市场分析报告"
+        },
+        {
+          "name": "标肥价差季节性",
+          "chart_type": "seasonality",
+          "metric_code": "SPREAD_STANDARD_FATTY",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        },
+        {
+          "name": "毛白价差季节性",
+          "chart_type": "seasonality",
+          "metric_code": "SPREAD_MAO_BAI",
+          "x_mode": "week_of_year",
+          "agg": "last"
+        },
+        {
+          "name": "全国猪价季节性",
+          "chart_type": "seasonality",
+          "metric_code": "HOG_PRICE_NATIONAL",
+          "x_mode": "month_day",
+          "agg": "mean"
+        },
+        {
+          "name": "价格+价差双轴",
+          "chart_type": "timeseries",
+          "metrics": [
+            {
+              "metric_code": "HOG_PRICE_NATIONAL",
+              "axis": "left",
+              "agg": "mean"
+            },
+            {
+              "metric_code": "SPREAD_STANDARD_FATTY",
+              "axis": "right",
+              "agg": "mean"
+            }
+          ],
+          "time_dimension": "daily"
+        },
+        {
+          "name": "分省价格Top10",
+          "chart_type": "timeseries",
+          "metric_code": "PRICE_BY_PROVINCE",
+          "time_dimension": "daily",
+          "geo_limit": 10
+        },
+        {
+          "name": "本周关键结论",
+          "type": "summary",
+          "calc": ["manual_input"]
+        }
+      ]
+    },
+    "is_public": true
+  }
+]

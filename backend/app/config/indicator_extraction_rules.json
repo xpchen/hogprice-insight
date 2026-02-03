@@ -1,0 +1,186 @@
+{
+  "rules": [
+    {
+      "indicator_code": "YY_D_PRICE_NATION_AVG",
+      "indicator_name": "全国出栏均价",
+      "source_code": "YONGYI",
+      "freq": "D",
+      "topic": "价格",
+      "unit": "元/公斤",
+      "conditions": {
+        "metric_key_pattern": "YY_D_PRICE.*",
+        "tags": {
+          "scale": "均价",
+          "scope": "nation"
+        },
+        "geo_code": "NATION"
+      },
+      "agg_method": "mean"
+    },
+    {
+      "indicator_code": "YY_D_PRICE_PROVINCE_AVG",
+      "indicator_name": "各省出栏均价",
+      "source_code": "YONGYI",
+      "freq": "D",
+      "topic": "价格",
+      "unit": "元/公斤",
+      "conditions": {
+        "metric_key_pattern": "YY_D_PRICE.*",
+        "tags": {
+          "scale": "均价"
+        },
+        "geo_code_pattern": ".*"
+      },
+      "agg_method": "mean",
+      "group_by": "geo_code"
+    },
+    {
+      "indicator_code": "YY_D_SLAUGHTER_TOTAL",
+      "indicator_name": "全国屠宰量合计",
+      "source_code": "YONGYI",
+      "freq": "D",
+      "topic": "屠宰",
+      "unit": "头",
+      "conditions": {
+        "metric_key_pattern": "YY_D_SLAUGHTER.*",
+        "tags": {
+          "scope": "nation"
+        },
+        "geo_code": "NATION"
+      },
+      "agg_method": "sum"
+    },
+    {
+      "indicator_code": "YY_W_PRICE_NATION_AVG",
+      "indicator_name": "全国出栏均价（周度）",
+      "source_code": "YONGYI",
+      "freq": "W",
+      "topic": "价格",
+      "unit": "元/公斤",
+      "conditions": {
+        "metric_key_pattern": "YY_W_PRICE.*",
+        "tags": {
+          "scale": "均价",
+          "scope": "nation"
+        },
+        "geo_code": "NATION",
+        "period_type": "week"
+      },
+      "agg_method": "mean"
+    },
+    {
+      "indicator_code": "YY_W_INVENTORY_TOTAL",
+      "indicator_name": "冻品库存合计",
+      "source_code": "YONGYI",
+      "freq": "W",
+      "topic": "库存",
+      "unit": "万吨",
+      "conditions": {
+        "metric_key_pattern": "YY_W_INVENTORY.*",
+        "tags": {
+          "scope": "nation"
+        },
+        "geo_code": "NATION",
+        "period_type": "week"
+      },
+      "agg_method": "sum"
+    },
+    {
+      "indicator_code": "YY_D_SLAUGHTER_PROVINCE",
+      "indicator_name": "各省屠宰量",
+      "source_code": "YONGYI",
+      "freq": "D",
+      "topic": "屠宰",
+      "unit": "头",
+      "conditions": {
+        "metric_key_pattern": "YY_D_SLAUGHTER.*",
+        "geo_code_pattern": ".*",
+        "period_type": "day"
+      },
+      "agg_method": "sum",
+      "group_by": "geo_code"
+    },
+    {
+      "indicator_code": "YY_W_PRICE_PROVINCE_AVG",
+      "indicator_name": "各省出栏均价（周度）",
+      "source_code": "YONGYI",
+      "freq": "W",
+      "topic": "价格",
+      "unit": "元/公斤",
+      "conditions": {
+        "metric_key_pattern": "YY_W_OUT_PRICE",
+        "geo_code_pattern": ".*",
+        "period_type": "week"
+      },
+      "agg_method": "mean",
+      "group_by": "geo_code"
+    },
+    {
+      "indicator_code": "YY_W_FROZEN_INVENTORY_TOTAL",
+      "indicator_name": "冻品库存合计",
+      "source_code": "YONGYI",
+      "freq": "W",
+      "topic": "库存",
+      "unit": "ratio",
+      "conditions": {
+        "metric_key_pattern": "YY_W_FROZEN_INVENTORY_RATIO",
+        "tags": {
+          "scope": "nation"
+        },
+        "geo_code": "NATION",
+        "period_type": "week"
+      },
+      "agg_method": "sum"
+    },
+    {
+      "indicator_code": "YY_W_LIVE_WHITE_SPREAD",
+      "indicator_name": "毛白价差",
+      "source_code": "YONGYI",
+      "freq": "W",
+      "topic": "价差",
+      "unit": "元/公斤",
+      "conditions": {
+        "metric_key_pattern": "YY_W_LIVE_WHITE_SPREAD",
+        "tags": {
+          "scope": "nation"
+        },
+        "geo_code": "NATION",
+        "period_type": "week"
+      },
+      "agg_method": "mean"
+    },
+    {
+      "indicator_code": "YY_W_FARM_PROFIT_LATEST",
+      "indicator_name": "养殖利润最新",
+      "source_code": "YONGYI",
+      "freq": "W",
+      "topic": "利润",
+      "unit": "元/头",
+      "conditions": {
+        "metric_key_pattern": "YY_W_FARM_PROFIT_LATEST",
+        "tags": {
+          "mode": "自繁自养"
+        },
+        "period_type": "week"
+      },
+      "agg_method": "mean"
+    },
+    {
+      "indicator_code": "YY_D_DELIVERY_CITY_PRICE_AVG",
+      "indicator_name": "交割地市出栏价（平均）",
+      "source_code": "YONGYI",
+      "freq": "D",
+      "topic": "价格",
+      "unit": "元/公斤",
+      "conditions": {
+        "metric_key_pattern": "YY_D_DELIVERY_CITY_OUT_PRICE",
+        "tags": {
+          "city": "*"
+        },
+        "period_type": "day"
+      },
+      "agg_method": "mean",
+      "group_by": "tags.city"
+    }
+  ]
+}

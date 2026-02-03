@@ -1,0 +1,132 @@
+{
+  "mappings": [
+    {
+      "sheet_name": "价格+宰量",
+      "field_name": "全国均价",
+      "indicator_code": "hog_price_nation",
+      "freq": "D",
+      "region_code": "NATION",
+      "unit": "元/公斤",
+      "topic": "价格"
+    },
+    {
+      "sheet_name": "各省份均价",
+      "field_name": "*",
+      "indicator_code": "hog_price_province",
+      "freq": "D",
+      "region_code": "{province}",
+      "unit": "元/公斤",
+      "topic": "价格"
+    },
+    {
+      "sheet_name": "屠宰企业日度屠宰量",
+      "field_name": "*",
+      "indicator_code": "slaughter_daily",
+      "freq": "D",
+      "region_code": "{province}",
+      "unit": "头",
+      "topic": "屠宰"
+    },
+    {
+      "sheet_name": "散户标肥价差",
+      "field_name": "标重猪价（散户标）",
+      "indicator_code": "std_price_retail",
+      "freq": "D",
+      "region_code": "{province}",
+      "unit": "元/公斤",
+      "topic": "价格"
+    },
+    {
+      "sheet_name": "散户标肥价差",
+      "field_name": "150kg较标猪",
+      "indicator_code": "spread_150_std",
+      "freq": "D",
+      "region_code": "{province}",
+      "unit": "元/公斤",
+      "topic": "价差"
+    },
+    {
+      "sheet_name": "散户标肥价差",
+      "field_name": "175kg较标猪",
+      "indicator_code": "spread_175_std",
+      "freq": "D",
+      "region_code": "{province}",
+      "unit": "元/公斤",
+      "topic": "价差"
+    },
+    {
+      "sheet_name": "周度-商品猪出栏价",
+      "field_name": "*",
+      "indicator_code": "hog_price_out_week",
+      "freq": "W",
+      "region_code": "{region}",
+      "unit": "元/公斤",
+      "topic": "价格"
+    },
+    {
+      "sheet_name": "周度-体重",
+      "field_name": "均重",
+      "indicator_code": "hog_weight_out_week",
+      "freq": "W",
+      "region_code": "{region}",
+      "unit": "kg",
+      "topic": "均重"
+    },
+    {
+      "sheet_name": "周度-屠宰厂宰前活猪重",
+      "field_name": "*",
+      "indicator_code": "hog_weight_pre_slaughter",
+      "freq": "W",
+      "region_code": "{region}",
+      "unit": "kg",
+      "topic": "均重"
+    },
+    {
+      "sheet_name": "周度-养殖利润最新",
+      "field_name": "*",
+      "indicator_code": "profit_breeding",
+      "freq": "W",
+      "region_code": "NATION",
+      "unit": "元/头",
+      "topic": "产业链",
+      "sub_key": "{scale_segment}"
+    },
+    {
+      "sheet_name": "育肥全价料价格",
+      "field_name": "*",
+      "indicator_code": "feed_price_full",
+      "freq": "W",
+      "region_code": "{region}",
+      "unit": "元/吨",
+      "topic": "产业链"
+    },
+    {
+      "sheet_name": "周度-冻品库存",
+      "field_name": "*",
+      "indicator_code": "frozen_capacity_rate",
+      "freq": "W",
+      "region_code": "{province}",
+      "unit": "%",
+      "topic": "冻品"
+    },
+    {
+      "sheet_name": "周度-毛白价差",
+      "field_name": "*",
+      "indicator_code": "spread_hog_carcass",
+      "freq": "W",
+      "region_code": "{region}",
+      "unit": "元/公斤",
+      "topic": "价差"
+    }
+  ],
+  "region_mappings": {
+    "NATION": "全国",
+    "NORTHEAST": "东北",
+    "NORTH": "华北",
+    "EAST": "华东",
+    "CENTRAL": "华中",
+    "SOUTH": "华南",
+    "SOUTHWEST": "西南",
+    "NORTHWEST": "西北"
+  }
+}

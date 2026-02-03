@@ -1,0 +1,328 @@
+{
+  "profile_code": "GANGLIAN_DAILY_V1",
+  "profile_name": "钢联价格模板-日度数据（7 sheet）全量入库",
+  "source_code": "GANGLIAN",
+  "dataset_type": "GANGLIAN_DAILY",
+  "file_pattern": "*钢联自动更新模板*.xlsx",
+  "target": "fact_observation",
+  "defaults": {
+    "freq": "D",
+    "period_type": "day",
+    "geo_strategy": "dim_geo.province",
+    "region_normalizer": "normalize_province_name",
+    "value_cleaner": "clean_numeric_value",
+    "dedup_key": "sha1(source_code|sheet|metric_key|geo_key|obs_date|canonical_tags)"
+  },
+  "sheets": [
+    {
+      "sheet_name": "分省区猪价",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_daily_province_price",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "row_dim.date",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "extract_pattern": "商品猪：出栏均价：(.*?)（日）",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "indicator_name": {
+            "source": "column_name",
+            "type": "VARCHAR(128)",
+            "extract_pattern": "(商品猪：出栏均价)",
+            "required": false
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["trade_date", "region_code", "indicator_name"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      },
+      "note": "钢联标准格式：第1行标题，第2行指标名称，第3行单位，第4行更新时间，第5行起数据"
+    },
+    {
+      "sheet_name": "集团企业出栏价",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_daily_group_enterprise_price",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "row_dim.date",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "extract_pattern": "出栏价：(.*?)：",
+            "normalizer": "normalize_province_name"
+          },
+          "enterprise_name": {
+            "source": "column_name",
+            "type": "VARCHAR(128)",
+            "extract_pattern": "：(.*?)（日）$",
+            "required": true
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["trade_date", "enterprise_name", "region_code"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      }
+    },
+    {
+      "sheet_name": "交割库出栏价",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_daily_delivery_warehouse_price",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "row_dim.date",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "extract_pattern": "出栏价：(.*?)：",
+            "normalizer": "normalize_province_name"
+          },
+          "warehouse_name": {
+            "source": "column_name",
+            "type": "VARCHAR(128)",
+            "extract_pattern": "：(.*?)（日）$",
+            "required": true
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["trade_date", "warehouse_name", "region_code"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      }
+    },
+    {
+      "sheet_name": "区域价差",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_daily_region_spread",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "row_dim.date",
+            "type": "DATE",
+            "required": true
+          },
+          "spread_type": {
+            "source": "column_name",
+            "type": "VARCHAR(64)",
+            "required": true
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["trade_date", "spread_type"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      }
+    },
+    {
+      "sheet_name": "肥标价差",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_daily_fat_std_spread",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "row_dim.date",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "extract_pattern": "生猪标肥：价差：(.*?)（日）",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["trade_date", "region_code"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      }
+    },
+    {
+      "sheet_name": "毛白价差",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_daily_live_white_spread",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "row_dim.date",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name"
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["trade_date", "region_code"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      }
+    },
+    {
+      "sheet_name": "养殖利润（周度）",
+      "parser": "GANGLIAN_LEGACY_FORMAT",
+      "table_name": "ganglian_weekly_farm_profit",
+      "table_config": {
+        "column_mapping": {
+          "period_start": {
+            "source": "period_start",
+            "type": "DATE",
+            "required": true
+          },
+          "period_end": {
+            "source": "period_end",
+            "type": "DATE",
+            "required": true
+          },
+          "profit_type": {
+            "source": "column_name",
+            "type": "VARCHAR(64)",
+            "required": true
+          },
+          "value": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "unit": {
+            "source": "meta.unit_row",
+            "type": "VARCHAR(32)"
+          },
+          "updated_at_time": {
+            "source": "meta.update_time_row",
+            "type": "DATETIME"
+          }
+        },
+        "unique_key": ["period_end", "profit_type"]
+      },
+      "header": {
+        "title_row": 1,
+        "indicator_row": 2,
+        "unit_row": 3,
+        "update_time_row": 4,
+        "data_start_row": 5
+      }
+    }
+  ]
+}

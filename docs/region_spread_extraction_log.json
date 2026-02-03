@@ -1,0 +1,33 @@
+{
+  "extraction_date": "2026-02-03T18:50:21.830981",
+  "source_file": "D:\\Workspace\\hogprice-insight\\docs\\1、价格：钢联自动更新模板.xlsx",
+  "batch_id": 116,
+  "results": {
+    "region_spread": {
+      "sheet": "区域价差",
+      "metric": "区域价差",
+      "metric_key": "GL_D_REGION_SPREAD",
+      "inserted": 0,
+      "region_pairs": {
+        "广东-广西": 0,
+        "广东-四川": 0,
+        "广东-重庆": 0,
+        "广东-贵州": 0,
+        "广东-江西": 0,
+        "广东-湖南": 0,
+        "广东-河南": 0,
+        "四川-山西": 0,
+        "四川-陕西": 0,
+        "四川-山东": 0,
+        "四川-河南": 0,
+        "浙江-河南": 0,
+        "浙江-江西": 0
+      },
+      "date_range": {
+        "start": "2015-12-14 00:00:00",
+        "end": "2026-01-30 00:00:00"
+      }
+    }
+  },
+  "total_inserted": 0
+}
