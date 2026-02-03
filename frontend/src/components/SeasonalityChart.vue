@@ -3,10 +3,25 @@
     <template #header>
       <div style="display: flex; justify-content: space-between; align-items: center">
         <span>{{ title || '季节性图表' }}</span>
-        <div style="display: flex; gap: 10px; align-items: center">
+        <div style="display: flex; gap: 10px; align-items: center; flex: 1; justify-content: flex-end; margin-left: 20px">
+          <div v-if="changeInfo" class="change-info" style="display: flex; gap: 20px; font-size: 14px; margin-right: 10px">
+            <span v-if="changeInfo.period_change !== null" class="change-item">
+              本期涨跌：
+              <span :class="getChangeClass(changeInfo.period_change)">
+                {{ formatChange(changeInfo.period_change) }}
+              </span>
+            </span>
+            <span v-if="changeInfo.yoy_change !== null" class="change-item">
+              较去年同期涨跌：
+              <span :class="getChangeClass(changeInfo.yoy_change)">
+                {{ formatChange(changeInfo.yoy_change) }}
+              </span>
+            </span>
+          </div>
           <el-radio-group v-model="xMode" size="small" @change="handleModeChange">
             <el-radio-button label="week_of_year">周序号</el-radio-button>
             <el-radio-button label="month_day">月-日</el-radio-button>
+            <el-radio-button v-if="lunarAlignment" label="lunar_day_index">农历对齐</el-radio-button>
           </el-radio-group>
           <el-button size="small" @click="handleSaveAsPng" :disabled="!data">
             <el-icon><Download /></el-icon>
@@ -20,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
+import { ref, onMounted, watch, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
@@ -42,11 +57,19 @@ const props = defineProps<{
   data: SeasonalityData | null
   loading?: boolean
   title?: string
+  lunarAlignment?: boolean  // 是否支持农历对齐
+  changeInfo?: {
+    period_change: number | null
+    yoy_change: number | null
+  } | null  // 变化信息（本期涨跌、较去年同期涨跌）
 }>()
 
 const chartRef = ref<HTMLDivElement>()
 let chartInstance: echarts.ECharts | null = null
-const xMode = ref<'week_of_year' | 'month_day'>('week_of_year')
+const xMode = ref<'week_of_year' | 'month_day' | 'lunar_day_index'>('week_of_year')
+
+// 图例选中状态（用于控制显示/隐藏）
+const legendSelected = ref<Record<string, boolean>>({})
 
 // 年份颜色映射（固定颜色，保证一致性）
 const yearColors: Record<number, string> = {
@@ -65,9 +88,24 @@ const getYearColor = (year: number): string => {
 }
 
 const updateChart = () => {
-  if (!chartInstance || !props.data) return
+  if (!chartRef.value || !chartInstance || !props.data) {
+    // 如果chartRef还没有挂载，尝试初始化
+    if (chartRef.value && !chartInstance) {
+      chartInstance = echarts.init(chartRef.value)
+    } else {
+      return
+    }
+  }
   
   const { x_values, series, meta } = props.data
+  
+  // 初始化图例选中状态（默认全部显示）
+  if (Object.keys(legendSelected.value).length === 0) {
+    series.forEach(s => {
+      const seriesName = `${s.year}年度`
+      legendSelected.value[seriesName] = true
+    })
+  }
   
   // 根据xMode过滤x_values（如果数据包含两种模式）
   let displayXValues = x_values
@@ -107,12 +145,16 @@ const updateChart = () => {
     },
     legend: {
       data: series.map(s => `${s.year}年度`),
-      bottom: 0,
-      type: 'scroll'
+      top: 10,
+      type: 'scroll',
+      selected: legendSelected.value,
+      // 监听图例点击事件
+      selectedMode: true
     },
     grid: {
       left: '3%',
       right: '4%',
+      top: '15%',
       bottom: '15%',
       containLabel: true
     },
@@ -142,20 +184,25 @@ const updateChart = () => {
       nameLocation: 'end',
       nameGap: 20
     },
-    series: series.map(s => ({
-      name: `${s.year}年度`,
-      type: 'line',
-      data: s.values,
-      smooth: true,
-      symbol: 'circle',
-      symbolSize: 4,
-      lineStyle: {
-        width: 2
-      },
-      color: getYearColor(s.year),
-      // 缺失值断线
-      connectNulls: false
-    })),
+    series: series.map(s => {
+      const isLeap = (s as any).is_leap_month
+      const seriesName = `${s.year}年度${isLeap ? '(闰月)' : ''}`
+      return {
+        name: seriesName,
+        type: 'line',
+        data: s.values,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: {
+          width: 2,
+          type: isLeap ? 'dashed' : 'solid'  // 闰月用虚线
+        },
+        color: getYearColor(s.year),
+        // 缺失值断线
+        connectNulls: false
+      }
+    }),
     dataZoom: [
       {
         type: 'inside',
@@ -173,6 +220,19 @@ const updateChart = () => {
   }
   
   chartInstance.setOption(option, true)
+  
+  // 监听图例点击事件
+  chartInstance.off('legendselectchanged')
+  chartInstance.on('legendselectchanged', (params: any) => {
+    // 更新图例选中状态
+    legendSelected.value = { ...params.selected }
+    // 重新设置option以应用选中状态
+    chartInstance?.setOption({
+      legend: {
+        selected: legendSelected.value
+      }
+    })
+  })
 }
 
 const handleModeChange = () => {
@@ -212,19 +272,46 @@ const handleSaveAsPng = () => {
 }
 
 onMounted(() => {
-  if (chartRef.value) {
-    chartInstance = echarts.init(chartRef.value)
-    updateChart()
-    
-    window.addEventListener('resize', () => {
-      chartInstance?.resize()
-    })
-  }
+  // 使用nextTick确保DOM已完全渲染
+  nextTick(() => {
+    if (chartRef.value) {
+      try {
+        chartInstance = echarts.init(chartRef.value)
+        updateChart()
+        
+        const handleResize = () => {
+          if (chartInstance) {
+            chartInstance.resize()
+          }
+        }
+        window.addEventListener('resize', handleResize)
+        
+        // 保存resize handler以便清理
+        ;(window as any).__seasonalityChartResizeHandler = handleResize
+      } catch (error) {
+        console.error('初始化图表失败:', error)
+      }
+    }
+  })
 })
 
-watch(() => props.data, updateChart, { deep: true })
+watch(() => props.data, () => {
+  // 重置图例选中状态
+  legendSelected.value = {}
+  // 使用nextTick确保DOM已更新
+  if (chartRef.value) {
+    if (!chartInstance) {
+      chartInstance = echarts.init(chartRef.value)
+    }
+    updateChart()
+  }
+}, { deep: true })
+
 watch(() => props.loading, (loading) => {
-  if (!loading) {
+  if (!loading && chartRef.value) {
+    if (!chartInstance) {
+      chartInstance = echarts.init(chartRef.value)
+    }
     setTimeout(updateChart, 100)
   }
 })
@@ -232,15 +319,53 @@ watch(() => props.loading, (loading) => {
 onBeforeUnmount(() => {
   if (chartInstance) {
     chartInstance.dispose()
+    chartInstance = null
   }
-  window.removeEventListener('resize', () => {
-    chartInstance?.resize()
-  })
+  const resizeHandler = (window as any).__seasonalityChartResizeHandler
+  if (resizeHandler) {
+    window.removeEventListener('resize', resizeHandler)
+    delete (window as any).__seasonalityChartResizeHandler
+  }
 })
+
+// 格式化涨跌值
+const formatChange = (value: number | null): string => {
+  if (value === null) return '-'
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(2)}`
+}
+
+// 获取涨跌样式类
+const getChangeClass = (value: number | null): string => {
+  if (value === null) return ''
+  return value >= 0 ? 'change-positive' : 'change-negative'
+}
 </script>
 
 <style scoped>
 .seasonality-chart-panel {
   margin-bottom: 20px;
+}
+
+.change-info {
+  display: flex;
+  gap: 20px;
+  font-size: 14px;
+}
+
+.change-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.change-positive {
+  color: #f56c6c;
+  font-weight: bold;
+}
+
+.change-negative {
+  color: #67c23a;
+  font-weight: bold;
 }
 </style>

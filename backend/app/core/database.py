@@ -9,6 +9,12 @@ engine = create_engine(
     pool_pre_ping=True,
     echo=False,  # 设置为True可以看到SQL日志
     pool_recycle=3600,  # MySQL连接回收时间
+    connect_args={
+        "connect_timeout": 60,
+        "read_timeout": 300,
+        "write_timeout": 300,
+        "charset": "utf8mb4"
+    }
 )
 
 # 创建SessionLocal类

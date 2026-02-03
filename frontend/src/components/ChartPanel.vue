@@ -2,7 +2,7 @@
   <el-card class="chart-panel">
     <template #header>
       <div style="display: flex; justify-content: space-between; align-items: center">
-        <span>图表</span>
+        <span>{{ title || '图表' }}</span>
         <div style="display: flex; gap: 10px; align-items: center">
           <el-radio-group v-model="chartMode" size="small" @change="handleModeChange">
             <el-radio-button label="normal">常规</el-radio-button>
@@ -41,6 +41,7 @@ export interface ChartData {
 const props = defineProps<{
   data: ChartData | null
   loading?: boolean
+  title?: string
 }>()
 
 const chartRef = ref<HTMLDivElement>()

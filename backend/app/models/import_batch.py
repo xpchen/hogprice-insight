@@ -22,6 +22,10 @@ class ImportBatch(Base):
     inserted_count = Column(BigInteger, default=0)  # 插入记录数
     updated_count = Column(BigInteger, default=0)  # 更新记录数
     error_json = Column(JSON)  # MySQL使用JSON类型，包含error_summary
+    # 新增字段：用于新导入系统
+    source_code = Column(String(32))  # 数据源代码：LH_FTR/LH_OPT/YONGYI_DAILY/YONGYI_WEEKLY/LEGACY
+    date_range = Column(JSON)  # 日期范围：{"start": "2026-01-01", "end": "2026-01-31"}
+    mapping_json = Column(JSON)  # 映射结果：记录识别与映射，便于追溯和复用
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 
     uploader = relationship("SysUser", backref="import_batches")

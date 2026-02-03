@@ -16,7 +16,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '/api'),
+        // rewrite 规则：不需要重写，直接转发
         ws: true, // 支持 WebSocket
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, _res) => {

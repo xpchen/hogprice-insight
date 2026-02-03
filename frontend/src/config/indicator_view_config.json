@@ -1,0 +1,82 @@
+{
+  "hog_price_nation": {
+    "title": "全国出栏均价",
+    "unit": "元/公斤",
+    "default_time_window": "6m",
+    "chart_type": "line",
+    "note_rules": {
+      "chg_1": true,
+      "yoy": true
+    },
+    "filters": {
+      "region": false,
+      "year": false,
+      "freq": false
+    }
+  },
+  "spread_std_fat": {
+    "title": "标肥价差",
+    "unit": "元/公斤",
+    "default_time_window": "6m",
+    "chart_type": "line",
+    "note_rules": {
+      "chg_5": true,
+      "chg_10": true
+    },
+    "filters": {
+      "region": true,
+      "year": false,
+      "freq": false
+    }
+  },
+  "slaughter_daily": {
+    "title": "日度屠宰量",
+    "unit": "头",
+    "default_time_window": "1y",
+    "chart_type": "seasonality",
+    "note_rules": {
+      "lunar_alignment": true
+    },
+    "filters": {
+      "region": true,
+      "year": true,
+      "freq": false
+    }
+  },
+  "hog_weight_out_week": {
+    "title": "出栏均重",
+    "unit": "kg",
+    "default_time_window": "6m",
+    "chart_type": "line",
+    "note_rules": {},
+    "filters": {
+      "region": true,
+      "year": false,
+      "freq": false
+    }
+  },
+  "frozen_capacity_rate": {
+    "title": "冻品库容率",
+    "unit": "%",
+    "default_time_window": "1y",
+    "chart_type": "seasonality",
+    "note_rules": {},
+    "filters": {
+      "region": true,
+      "year": true,
+      "freq": false
+    }
+  },
+  "profit_breeding": {
+    "title": "养殖利润",
+    "unit": "元/头",
+    "default_time_window": "6m",
+    "chart_type": "line",
+    "note_rules": {},
+    "filters": {
+      "region": false,
+      "year": false,
+      "freq": false
+    }
+  }
+}

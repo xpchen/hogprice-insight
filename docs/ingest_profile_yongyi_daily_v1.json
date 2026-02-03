@@ -1,0 +1,715 @@
+{
+  "profile_code": "YONGYI_DAILY_V1",
+  "profile_name": "涌益咨询-日度数据（8 sheet）全量入库",
+  "source_code": "YONGYI",
+  "dataset_type": "YONGYI_DAILY",
+  "file_pattern": "*涌益咨询日度数据*.xlsx",
+  "target": "fact_observation",
+  "defaults": {
+    "freq": "D",
+    "period_type": "day",
+    "geo_strategy": "dim_geo.province",
+    "region_normalizer": "normalize_province_name",
+    "value_cleaner": "clean_numeric_value",
+    "dedup_key": "sha1(source_code|sheet|metric_key|geo_key|obs_date|canonical_tags)"
+  },
+  "sheets": [
+    {
+      "sheet_name": "价格+宰量",
+      "parser": "NARROW_DATE_ROWS",
+      "table_name": "yongyi_daily_price_slaughter",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "nation_avg_price": {
+            "source": "value",
+            "condition": "metric_key == YY_D_PRICE_NATION_AVG",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "slaughter_total_1": {
+            "source": "value",
+            "condition": "metric_key == YY_D_SLAUGHTER_TOTAL_1",
+            "type": "INTEGER",
+            "cleaner": "clean_numeric_value"
+          },
+          "slaughter_total_2": {
+            "source": "value",
+            "condition": "metric_key == YY_D_SLAUGHTER_TOTAL_2",
+            "type": "INTEGER",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date"]
+      },
+      "header": {
+        "header_row": 1
+      },
+      "date_col": "日期",
+      "metrics": [
+        {
+          "metric_key": "YY_D_PRICE_NATION_AVG",
+          "metric_name": "全国均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "全国均价",
+          "tags": {
+            "scope": "nation"
+          }
+        },
+        {
+          "metric_key": "YY_D_SLAUGHTER_TOTAL_1",
+          "metric_name": "日屠宰量合计1",
+          "unit": "头",
+          "value_type": "number",
+          "raw_header": "日屠宰量合计1",
+          "tags": {
+            "scope": "nation"
+          }
+        },
+        {
+          "metric_key": "YY_D_SLAUGHTER_TOTAL_2",
+          "metric_name": "日度屠宰量合计2",
+          "unit": "头",
+          "value_type": "number",
+          "raw_header": "日度屠宰量合计2",
+          "tags": {
+            "scope": "nation"
+          }
+        }
+      ],
+      "geo": {
+        "type": "NATION"
+      }
+    },
+    {
+      "sheet_name": "各省份均价",
+      "parser": "NARROW_DATE_ROWS_WIDE_PROVINCES",
+      "table_name": "yongyi_daily_province_avg",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "avg_price": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date", "region_code"]
+      },
+      "header": {
+        "header_row": 1
+      },
+      "date_col": "日期",
+      "province_cols": "*",
+      "metric_template": {
+        "metric_key": "YY_D_PRICE_PROVINCE_AVG",
+        "metric_name": "商品猪出栏均价",
+        "unit": "元/公斤",
+        "value_type": "number",
+        "raw_header": "各省份均价"
+      },
+      "geo": {
+        "type": "PROVINCE_FROM_COLUMN"
+      }
+    },
+    {
+      "sheet_name": "屠宰企业日度屠宰量",
+      "parser": "WIDE_PROVINCE_ROWS_DATE_COLS",
+      "table_name": "yongyi_daily_slaughter_vol",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "column_name",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "row_dim.province",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "slaughter_volume": {
+            "source": "value",
+            "type": "INTEGER",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date", "region_code"]
+      },
+      "header": {
+        "header_row": 1
+      },
+      "province_col": "省份",
+      "date_cols": "*",
+      "metric_template": {
+        "metric_key": "YY_D_SLAUGHTER_VOL",
+        "metric_name": "屠宰企业日度屠宰量",
+        "unit": "头",
+        "value_type": "number",
+        "raw_header": "屠宰企业日度屠宰量"
+      },
+      "geo": {
+        "type": "PROVINCE_FROM_ROW"
+      }
+    },
+    {
+      "sheet_name": "出栏价",
+      "parser": "WIDE_DATE_GROUPED_SUBCOLS",
+      "table_name": "yongyi_daily_out_price",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "row_dim.province",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "scale": {
+            "source": "subheader",
+            "type": "VARCHAR(16)",
+            "value_map": {
+              "规模场": "scale_farm",
+              "小散户": "scatter",
+              "均价": "avg"
+            },
+            "required": true
+          },
+          "price": {
+            "source": "value",
+            "condition": "subheader in [规模场, 小散户, 均价]",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "change_amount": {
+            "source": "value",
+            "condition": "subheader = 涨跌",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date", "region_code", "scale"]
+      },
+      "header": {
+        "date_row": 1,
+        "subheader_row": 2,
+        "data_start_row": 3
+      },
+      "row_dims": [
+        {
+          "col": 1,
+          "key": "province",
+          "type": "PROVINCE"
+        },
+        {
+          "col": 2,
+          "key": "region",
+          "type": "TEXT",
+          "optional": true
+        }
+      ],
+      "date_col_groups": {
+        "date_row": 1,
+        "group_start_col": 3,
+        "group_size": 4,
+        "subheaders": [
+          "规模场",
+          "小散户",
+          "均价",
+          "涨跌"
+        ]
+      },
+      "metrics": [
+        {
+          "metric_key": "YY_D_OUT_PRICE",
+          "metric_name": "商品猪出栏价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "商品猪出栏价（元/公斤）",
+          "value_from_subheader_map": {
+            "规模场": {
+              "tags": {
+                "scale": "规模场",
+                "stat": "price"
+              }
+            },
+            "小散户": {
+              "tags": {
+                "scale": "小散户",
+                "stat": "price"
+              }
+            },
+            "均价": {
+              "tags": {
+                "scale": "all",
+                "stat": "avg"
+              }
+            },
+            "涨跌": {
+              "tags": {
+                "scale": "all",
+                "stat": "chg"
+              },
+              "unit": "元/公斤"
+            }
+          }
+        }
+      ],
+      "geo": {
+        "type": "PROVINCE_FROM_ROW",
+        "col": 1
+      }
+    },
+    {
+      "sheet_name": "散户标肥价差",
+      "parser": "WIDE_DATE_GROUPED_SUBCOLS",
+      "table_name": "yongyi_daily_scatter_fat_spread",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "row_dim.province",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "scatter_std_price": {
+            "source": "value",
+            "condition": "subheader = 场散户标重猪",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "spread_150_vs_std": {
+            "source": "value",
+            "condition": "subheader = 150公斤左右较标猪",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "spread_175_vs_std": {
+            "source": "value",
+            "condition": "subheader = 175公斤左右较标猪",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date", "region_code"]
+      },
+      "header": {
+        "date_row": 1,
+        "subheader_row": 2,
+        "data_start_row": 3
+      },
+      "row_dims": [
+        {
+          "col": 1,
+          "key": "province",
+          "type": "PROVINCE"
+        }
+      ],
+      "date_col_groups": {
+        "date_row": 1,
+        "group_start_col": 2,
+        "group_size": 4,
+        "subheaders": [
+          "市场散户标重猪",
+          "150公斤左右较标猪",
+          "175公斤左右较标猪",
+          "今日采购二育情绪较昨日"
+        ]
+      },
+      "metrics": [
+        {
+          "metric_key": "YY_D_MARKET_SCATTER_STD_PIG_PRICE",
+          "metric_name": "市场散户标重猪",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "市场散户标重猪",
+          "subheader": "市场散户标重猪",
+          "tags": {
+            "crowd": "散户",
+            "pig_type": "标重猪",
+            "field": "price"
+          }
+        },
+        {
+          "metric_key": "YY_D_SPREAD_150_VS_STD",
+          "metric_name": "150公斤左右较标猪价差",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "150公斤左右较标猪",
+          "subheader": "150公斤左右较标猪",
+          "tags": {
+            "spread": "150-vs-std",
+            "weight_band": "150kg"
+          }
+        },
+        {
+          "metric_key": "YY_D_SPREAD_175_VS_STD",
+          "metric_name": "175公斤左右较标猪价差",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "175公斤左右较标猪",
+          "subheader": "175公斤左右较标猪",
+          "tags": {
+            "spread": "175-vs-std",
+            "weight_band": "175kg"
+          }
+        },
+        {
+          "metric_key": "YY_D_SECOND_FATTENING_SENTIMENT",
+          "metric_name": "二育采购情绪较昨日",
+          "unit": null,
+          "value_type": "string",
+          "raw_header": "今日采购二育情绪较昨日",
+          "subheader": "今日采购二育情绪较昨日",
+          "tags": {
+            "topic": "二育",
+            "field": "sentiment"
+          },
+          "store_in": "raw_value"
+        }
+      ],
+      "geo": {
+        "type": "PROVINCE_FROM_ROW",
+        "col": 1
+      }
+    },
+    {
+      "sheet_name": "市场主流标猪肥猪价格",
+      "parser": "WIDE_DATE_GROUPED_SUBCOLS",
+      "table_name": "yongyi_daily_market_std_fat_price",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "row_dim.province",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "std_pig_avg_price": {
+            "source": "value",
+            "condition": "subheader = 标猪均价",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "std_pig_weight_band": {
+            "source": "value",
+            "condition": "subheader = 标猪体重段",
+            "type": "VARCHAR(32)"
+          },
+          "price_90_100": {
+            "source": "value",
+            "condition": "subheader = 90-100kg均价",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "price_130_140": {
+            "source": "value",
+            "condition": "subheader = 130-140kg均价",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "price_150_around": {
+            "source": "value",
+            "condition": "subheader = 150kg左右均价",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date", "region_code"]
+      },
+      "header": {
+        "date_row": 1,
+        "subheader_row": 2,
+        "data_start_row": 3
+      },
+      "row_dims": [
+        {
+          "col": 1,
+          "key": "province",
+          "type": "PROVINCE"
+        }
+      ],
+      "date_col_groups": {
+        "date_row": 1,
+        "group_start_col": 2,
+        "group_size": 5,
+        "subheaders": [
+          "标猪均价",
+          "标猪体重段",
+          "90-100kg均价",
+          "130-140kg均价",
+          "150kg左右均价"
+        ]
+      },
+      "metrics": [
+        {
+          "metric_key": "YY_D_STD_PIG_AVG_PRICE",
+          "metric_name": "标猪均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "标猪均价",
+          "subheader": "标猪均价",
+          "tags": {
+            "pig_type": "标猪",
+            "stat": "avg"
+          }
+        },
+        {
+          "metric_key": "YY_D_STD_PIG_WEIGHT_BAND",
+          "metric_name": "标猪体重段",
+          "unit": "kg",
+          "value_type": "string",
+          "raw_header": "标猪体重段",
+          "subheader": "标猪体重段",
+          "tags": {
+            "pig_type": "标猪",
+            "field": "weight_band"
+          },
+          "store_in": "raw_value"
+        },
+        {
+          "metric_key": "YY_D_PIG_PRICE_90_100",
+          "metric_name": "90-100kg均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "90-100kg均价",
+          "subheader": "90-100kg均价",
+          "tags": {
+            "weight_band": "90-100kg",
+            "stat": "avg"
+          }
+        },
+        {
+          "metric_key": "YY_D_PIG_PRICE_130_140",
+          "metric_name": "130-140kg均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "130-140kg均价",
+          "subheader": "130-140kg均价",
+          "tags": {
+            "weight_band": "130-140kg",
+            "stat": "avg"
+          }
+        },
+        {
+          "metric_key": "YY_D_PIG_PRICE_150_AROUND",
+          "metric_name": "150kg左右均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "150kg左右均价",
+          "subheader": "150kg左右均价",
+          "tags": {
+            "weight_band": "150kg左右",
+            "stat": "avg"
+          }
+        }
+      ],
+      "geo": {
+        "type": "PROVINCE_FROM_ROW",
+        "col": 1
+      }
+    },
+    {
+      "sheet_name": "市场主流标猪肥猪均价方便作图",
+      "parser": "NARROW_DATE_ROWS",
+      "table_name": "yongyi_daily_market_avg_convenient",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "nation_avg_price": {
+            "source": "value",
+            "condition": "metric_key == YY_D_MARKET_NATION_AVG",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "price_90_100": {
+            "source": "value",
+            "condition": "metric_key == YY_D_MARKET_90_100_AVG",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "price_130_140": {
+            "source": "value",
+            "condition": "metric_key == YY_D_MARKET_130_140_AVG",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "price_150_170": {
+            "source": "value",
+            "condition": "metric_key == YY_D_MARKET_150_170_AVG",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          }
+        },
+        "unique_key": ["trade_date"]
+      },
+      "header": {
+        "header_row": 1
+      },
+      "date_col": "日期",
+      "metrics": [
+        {
+          "metric_key": "YY_D_MARKET_NATION_AVG",
+          "metric_name": "全国均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "全国均价",
+          "tags": {
+            "scope": "nation"
+          }
+        },
+        {
+          "metric_key": "YY_D_MARKET_90_100_AVG",
+          "metric_name": "90-100kg均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "90-100kg均价",
+          "tags": {
+            "weight_band": "90-100kg",
+            "scope": "nation"
+          }
+        },
+        {
+          "metric_key": "YY_D_MARKET_130_140_AVG",
+          "metric_name": "130-140kg均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "130-140kg均价",
+          "tags": {
+            "weight_band": "130-140kg",
+            "scope": "nation"
+          }
+        },
+        {
+          "metric_key": "YY_D_MARKET_150_170_AVG",
+          "metric_name": "150-170kg均价",
+          "unit": "元/公斤",
+          "value_type": "number",
+          "raw_header": "150-170kg均价",
+          "tags": {
+            "weight_band": "150-170kg",
+            "scope": "nation"
+          }
+        }
+      ],
+      "geo": {
+        "type": "NATION"
+      }
+    },
+    {
+      "sheet_name": "交割地市出栏价",
+      "parser": "DELIVERY_CITY_MATRIX_WITH_META",
+      "table_name": "yongyi_daily_delivery_city_price",
+      "table_config": {
+        "column_mapping": {
+          "trade_date": {
+            "source": "date_col",
+            "type": "DATE",
+            "required": true
+          },
+          "region_code": {
+            "source": "meta.province_row",
+            "type": "VARCHAR(32)",
+            "normalizer": "normalize_province_name",
+            "required": true
+          },
+          "location_code": {
+            "source": "column_name",
+            "type": "VARCHAR(32)",
+            "required": true
+          },
+          "city_price": {
+            "source": "value",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "premium_lh2505_plus": {
+            "source": "meta.premium_row_2",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "premium_lh2409_lh2503": {
+            "source": "meta.premium_row_3",
+            "type": "DECIMAL(18,6)",
+            "cleaner": "clean_numeric_value"
+          },
+          "weight_band": {
+            "source": "meta.weight_row",
+            "type": "VARCHAR(64)"
+          }
+        },
+        "unique_key": ["trade_date", "location_code"]
+      },
+      "header": {
+        "province_row": 1,
+        "premium_rows": [
+          2,
+          3
+        ],
+        "weight_row": 4,
+        "city_header_row": 5,
+        "data_start_row": 6
+      },
+      "meta": {
+        "premium_row_2_label": "升贴水（LH2505及以后）",
+        "premium_row_3_label": "升贴水（LH2409-LH2503）",
+        "premium_units": "元/吨",
+        "weight_band_unit": "kg"
+      },
+      "date_col": 1,
+      "city_cols": "*",
+      "metric_template": {
+        "metric_key": "YY_D_DELIVERY_CITY_OUT_PRICE",
+        "metric_name": "交割地市出栏价",
+        "unit": "元/公斤",
+        "value_type": "number",
+        "raw_header": "交割地市出栏价"
+      },
+      "geo": {
+        "type": "PROVINCE_FROM_META",
+        "province_row": 1,
+        "col_map": "city_col_to_province"
+      },
+      "tags_from_meta": {
+        "city_name": "city_header_row",
+        "weight_band": "weight_row",
+        "premium_lh2505_plus": "premium_row_2",
+        "premium_lh2409_lh2503": "premium_row_3"
+      }
+    }
+  ]
+}

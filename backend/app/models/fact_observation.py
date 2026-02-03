@@ -12,6 +12,9 @@ class FactObservation(Base):
     batch_id = Column(BigInteger, ForeignKey("import_batch.id", ondelete="SET NULL"))
     metric_id = Column(BigInteger, ForeignKey("dim_metric.id", ondelete="CASCADE"), nullable=False, index=True)
     obs_date = Column(Date, nullable=False, index=True)
+    period_type = Column(String(10), nullable=True)  # day/week/month - 周期类型
+    period_start = Column(Date, nullable=True)  # 周期开始日期（周度/月度必需）
+    period_end = Column(Date, nullable=True)  # 周期结束日期（周度/月度必需）
     value = Column(Numeric(18, 6))  # 价格/价差/比例/利润等统一numeric
     geo_id = Column(BigInteger, ForeignKey("dim_geo.id"), index=True)
     company_id = Column(BigInteger, ForeignKey("dim_company.id"), index=True)
@@ -35,4 +38,5 @@ class FactObservation(Base):
         Index("idx_fact_geo_date", "geo_id", "obs_date"),
         Index("idx_fact_company_date", "company_id", "obs_date"),
         Index("idx_fact_warehouse_date", "warehouse_id", "obs_date"),
+        Index("idx_obs_period", "period_type", "period_end"),  # 周期查询索引
     )

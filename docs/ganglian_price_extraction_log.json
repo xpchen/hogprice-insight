@@ -1,0 +1,51 @@
+{
+  "extraction_date": "2026-02-03T18:04:51.663882",
+  "source_file": "D:\\Workspace\\hogprice-insight\\docs\\1、价格：钢联自动更新模板.xlsx",
+  "batch_id": 111,
+  "results": {
+    "national_price": {
+      "sheet": "分省区猪价",
+      "metric": "全国出栏均价",
+      "metric_key": "GL_D_PRICE_NATION",
+      "inserted": 0,
+      "date_range": {
+        "start": "2015-12-14 00:00:00",
+        "end": "2026-01-30 00:00:00"
+      }
+    },
+    "fat_std_spread": {
+      "sheet": "肥标价差",
+      "metric": "标肥价差（分省区）",
+      "metric_key": "GL_D_FAT_STD_SPREAD",
+      "inserted": 0,
+      "provinces": {
+        "中国": 0,
+        "四川": 0,
+        "贵州": 0,
+        "重庆": 0,
+        "湖南": 0,
+        "江西": 0,
+        "湖北": 0,
+        "河北": 0,
+        "河南": 0,
+        "山东": 0,
+        "山西": 0,
+        "辽宁": 0,
+        "吉林": 0,
+        "黑龙江": 0
+      },
+      "date_range": {
+        "start": "2021-01-04 00:00:00",
+        "end": "2026-01-30 00:00:00"
+      }
+    },
+    "slaughter_data": {
+      "sheet": "价格+宰量",
+      "metric": "日度屠宰量",
+      "metric_key": "YY_D_SLAUGHTER_TOTAL",
+      "inserted": 0,
+      "source_file": "D:\\Workspace\\hogprice-insight\\docs\\2026年2月2日涌益咨询日度数据.xlsx"
+    }
+  },
+  "total_inserted": 0
+}

@@ -1,0 +1,179 @@
+"""Sheet表导入器 - 批量导入数据到指定表"""
+from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import text, inspect
+from sqlalchemy.exc import IntegrityError
+
+
+class SheetTableImporter:
+    """Sheet表导入器"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def import_to_table(
+        self,
+        table_name: str,
+        records: List[Dict],
+        unique_key: List[str],
+        batch_size: int = 1000
+    ) -> Dict[str, int]:
+        """
+        导入数据到指定表
+        
+        Args:
+            table_name: 目标表名
+            records: 记录列表
+            unique_key: 唯一键字段列表
+        
+        Returns:
+            {
+                "inserted": int,
+                "updated": int,
+                "errors": int
+            }
+        """
+        if not records:
+            return {"inserted": 0, "updated": 0, "errors": 0}
+        
+        # 检查表是否存在
+        if not self._table_exists(table_name):
+            raise ValueError(f"Table {table_name} does not exist")
+        
+        inserted_count = 0
+        updated_count = 0
+        error_count = 0
+        
+        # 批量处理
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            
+            try:
+                result = self._batch_upsert(table_name, batch, unique_key)
+                inserted_count += result["inserted"]
+                updated_count += result["updated"]
+                error_count += result["errors"]
+                # 每批提交一次
+                self.db.commit()
+            except Exception as e:
+                self.db.rollback()
+                error_count += len(batch)
+                # 记录错误但继续处理下一批
+                continue
+        
+        return {
+            "inserted": inserted_count,
+            "updated": updated_count,
+            "errors": error_count
+        }
+    
+    def _table_exists(self, table_name: str) -> bool:
+        """检查表是否存在"""
+        inspector = inspect(self.db.bind)
+        return table_name in inspector.get_table_names()
+    
+    def _batch_upsert(
+        self,
+        table_name: str,
+        records: List[Dict],
+        unique_key: List[str]
+    ) -> Dict[str, int]:
+        """批量upsert记录"""
+        if not records:
+            return {"inserted": 0, "updated": 0, "errors": 0}
+        
+        inserted_count = 0
+        updated_count = 0
+        error_count = 0
+        
+        # 获取表的所有列名
+        inspector = inspect(self.db.bind)
+        columns = [col["name"] for col in inspector.get_columns(table_name)]
+        
+        # 构建INSERT ... ON DUPLICATE KEY UPDATE语句
+        # 注意：这里使用动态SQL，需要确保安全性
+        
+        for record in records:
+            try:
+                # 过滤掉不存在的列
+                filtered_record = {k: v for k, v in record.items() if k in columns}
+                
+                if not filtered_record:
+                    error_count += 1
+                    continue
+                
+                # 构建列名和值
+                col_names = list(filtered_record.keys())
+                col_placeholders = [f":{col}" for col in col_names]
+                
+                # 构建UPDATE子句（更新所有非唯一键字段）
+                update_clauses = []
+                for col in col_names:
+                    if col not in unique_key and col not in ["id", "created_at"]:
+                        update_clauses.append(f"{col} = VALUES({col})")
+                
+                # 构建SQL
+                insert_sql = f"""
+                    INSERT INTO {table_name} ({', '.join(col_names)})
+                    VALUES ({', '.join(col_placeholders)})
+                """
+                
+                if update_clauses:
+                    insert_sql += f" ON DUPLICATE KEY UPDATE {', '.join(update_clauses)}"
+                
+                # 执行SQL
+                params = {col: filtered_record[col] for col in col_names}
+                result = self.db.execute(text(insert_sql), params)
+                
+                if result.rowcount == 1:
+                    # rowcount=1 表示插入
+                    inserted_count += 1
+                elif result.rowcount == 2:
+                    # ON DUPLICATE KEY UPDATE返回2表示更新
+                    updated_count += 1
+                elif result.rowcount == 0:
+                    # 没有影响任何行，可能是数据已存在且没有变化
+                    updated_count += 1
+                else:
+                    # 其他情况，假设是更新
+                    updated_count += 1
+                
+            except IntegrityError:
+                # 唯一键冲突，尝试更新
+                try:
+                    # 查找现有记录
+                    where_clauses = []
+                    params = {}
+                    for key in unique_key:
+                        if key in record:
+                            where_clauses.append(f"{key} = :{key}")
+                            params[key] = record[key]
+                    
+                    if where_clauses:
+                        update_sql = f"UPDATE {table_name} SET "
+                        update_fields = []
+                        for col, val in record.items():
+                            if col not in unique_key and col not in ["id", "created_at"]:
+                                update_fields.append(f"{col} = :{col}")
+                                params[col] = val
+                        
+                        if update_fields:
+                            update_sql += ", ".join(update_fields)
+                            update_sql += " WHERE " + " AND ".join(where_clauses)
+                            
+                            self.db.execute(text(update_sql), params)
+                            updated_count += 1
+                        else:
+                            error_count += 1
+                    else:
+                        error_count += 1
+                except Exception:
+                    error_count += 1
+            except Exception:
+                error_count += 1
+        
+        return {
+            "inserted": inserted_count,
+            "updated": updated_count,
+            "errors": error_count
+        }

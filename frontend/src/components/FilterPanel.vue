@@ -1,239 +1,187 @@
 <template>
-  <el-card class="filter-panel">
-    <template #header>
-      <span>筛选条件</span>
-    </template>
-    <el-form :model="filters" label-width="100px">
-      <el-form-item label="时间维度">
-        <el-select v-model="filters.time_dimension" placeholder="请选择" clearable>
-          <el-option label="日度" value="daily" />
-          <el-option label="周度" value="weekly" />
-          <el-option label="月度" value="monthly" />
-          <el-option label="季度" value="quarterly" />
-          <el-option label="年度" value="yearly" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="时间范围（可选）">
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          format="YYYY-MM-DD"
-          :clearable="true"
-          @change="handleDateChange"
-        />
-      </el-form-item>
-      <el-form-item label="指标组（可选，支持多选）">
-        <el-select 
-          v-model="filters.metric_groups" 
-          placeholder="请选择指标组（不选则显示所有）" 
-          multiple
-          clearable
-          collapse-tags
-          collapse-tags-tooltip
-        >
-          <el-option label="分省区" value="province" />
-          <el-option label="集团企业" value="group" />
-          <el-option label="交割库" value="warehouse" />
-          <el-option label="价差" value="spread" />
-          <el-option label="利润" value="profit" />
-        </el-select>
-        <div style="font-size: 12px; color: #909399; margin-top: 4px;">
-          提示：不选择指标组或选择多个指标组，可进行跨组对比分析
+  <div class="filter-panel">
+    <el-card shadow="never" class="filter-card">
+      <template #header>
+        <div class="filter-header">
+          <span>筛选条件</span>
+          <el-button type="text" size="small" @click="resetFilters">重置</el-button>
         </div>
-      </el-form-item>
-      <!-- 频率已移除：根据指标组自动确定（profit=weekly，其他=daily） -->
-      <el-form-item label="指标">
-        <el-select
-          v-model="filters.metric_ids"
-          multiple
-          placeholder="请选择指标"
-          :loading="metricsLoading"
-        >
-          <el-option
-            v-for="metric in metrics"
-            :key="metric.id"
-            :label="metric.raw_header"
-            :value="metric.id"
+      </template>
+      
+      <el-form :model="filters" label-width="100px" size="default">
+        <!-- 数据源筛选 -->
+        <el-form-item label="数据源">
+          <el-select
+            v-model="filters.sourceCodes"
+            multiple
+            placeholder="请选择数据源"
+            style="width: 100%"
+            @change="handleFilterChange"
+          >
+            <el-option label="涌益" value="YONGYI" />
+            <el-option label="钢联" value="GANGLIAN" />
+            <el-option label="DCE" value="DCE" />
+          </el-select>
+        </el-form-item>
+
+        <!-- 时间粒度 + 范围 -->
+        <el-form-item label="时间粒度">
+          <el-radio-group v-model="filters.freq" @change="handleFilterChange">
+            <el-radio label="day">日</el-radio>
+            <el-radio label="week">周</el-radio>
+            <el-radio label="month">月</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item label="时间范围">
+          <el-date-picker
+            v-model="filters.dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            style="width: 100%"
+            @change="handleFilterChange"
           />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="地区">
-        <el-select
-          v-model="filters.geo_ids"
-          multiple
-          placeholder="请选择地区"
-          :loading="geoLoading"
-        >
-          <el-option
-            v-for="geo in geos"
-            :key="geo.id"
-            :label="geo.province"
-            :value="geo.id"
+        </el-form-item>
+
+        <!-- 地域筛选 -->
+        <el-form-item label="地域">
+          <el-cascader
+            v-model="filters.geo"
+            :options="geoOptions"
+            placeholder="请选择地域"
+            style="width: 100%"
+            @change="handleFilterChange"
           />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="企业">
-        <el-select
-          v-model="filters.company_ids"
-          multiple
-          placeholder="请选择企业"
-          :loading="companyLoading"
-        >
-          <el-option
-            v-for="company in companies"
-            :key="company.id"
-            :label="company.company_name"
-            :value="company.id"
-          />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="handleQuery">查询</el-button>
-        <el-button @click="handleReset">重置</el-button>
-      </el-form-item>
-    </el-form>
-  </el-card>
+        </el-form-item>
+
+        <!-- 维度tags筛选（动态加载） -->
+        <el-form-item v-for="tag in availableTags" :key="tag.tag_key" :label="tag.tag_key">
+          <el-select
+            v-model="filters.tags[tag.tag_key]"
+            multiple
+            :placeholder="`请选择${tag.tag_key}`"
+            style="width: 100%"
+            @change="handleFilterChange"
+          >
+            <el-option
+              v-for="value in tag.values"
+              :key="value.tag_value"
+              :label="value.tag_value"
+              :value="value.tag_value"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue'
-import { metadataApi, type MetricInfo, type GeoInfo, type CompanyInfo } from '../api/metadata'
+import { ref, reactive, onMounted, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { getAvailableTags } from '../api/observation'
 
-const emit = defineEmits<{
-  (e: 'query', filters: any): void
+interface TagValue {
+  tag_value: string
+  count: number
+}
+
+interface TagInfo {
+  tag_key: string
+  values: TagValue[]
+}
+
+const props = defineProps<{
+  sourceCodes?: string[]
+  freq?: 'day' | 'week' | 'month'
+  dateRange?: [Date, Date]
+  geo?: string[]
+  tags?: Record<string, string[]>
 }>()
 
-const dateRange = ref<[Date, Date] | null>(null)
+const emit = defineEmits<{
+  (e: 'change', filters: any): void
+}>()
+
 const filters = reactive({
-  time_dimension: 'daily' as 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly',
-  metric_groups: [] as string[],  // 改为多选
-  metric_ids: [] as number[],
-  geo_ids: [] as number[],
-  company_ids: [] as number[]
+  sourceCodes: props.sourceCodes || [],
+  freq: props.freq || 'day',
+  dateRange: props.dateRange || null,
+  geo: props.geo || [],
+  tags: props.tags || {} as Record<string, string[]>
 })
 
-const metrics = ref<MetricInfo[]>([])
-const geos = ref<GeoInfo[]>([])
-const companies = ref<CompanyInfo[]>([])
-
-const metricsLoading = ref(false)
-const geoLoading = ref(false)
-const companyLoading = ref(false)
-
-// 根据指标组自动推断频率：profit=weekly，其他=daily
-// 多指标组时，如果包含profit且其他组都是daily，则返回undefined（不筛选频率）
-const getFreqByGroups = (groups: string[]): string | undefined => {
-  if (!groups || groups.length === 0) return undefined
-  
-  const hasProfit = groups.includes('profit')
-  const hasDaily = groups.some(g => g !== 'profit')
-  
-  // 如果同时包含profit和其他组，不筛选频率（显示所有频率）
-  if (hasProfit && hasDaily) return undefined
-  
-  // 如果只有profit，返回weekly
-  if (hasProfit) return 'weekly'
-  
-  // 如果只有其他组，返回daily
-  return 'daily'
-}
-
-const handleDateChange = () => {
-  // 日期变化时触发查询
-}
-
-const handleQuery = () => {
-  // 格式化日期为 YYYY-MM-DD 格式
-  const formatDate = (date: Date): string => {
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+const availableTags = ref<TagInfo[]>([])
+const geoOptions = ref([
+  {
+    value: 'nation',
+    label: '全国',
+    children: [
+      { value: 'northeast', label: '东北' },
+      { value: 'north', label: '华北' },
+      { value: 'east', label: '华东' },
+      { value: 'south', label: '华南' },
+      { value: 'west', label: '西南' },
+      { value: 'northwest', label: '西北' }
+    ]
   }
-  
-  const queryFilters = {
-    date_range: dateRange.value && dateRange.value.length === 2
-      ? {
-          start: formatDate(dateRange.value[0]),
-          end: formatDate(dateRange.value[1])
-        }
-      : undefined,
-    time_dimension: filters.time_dimension || 'daily',
-    metric_groups: filters.metric_groups.length > 0 ? filters.metric_groups : undefined,
-    metric_ids: filters.metric_ids,
-    geo_ids: filters.geo_ids,
-    company_ids: filters.company_ids
-  }
-  emit('query', queryFilters)
-}
+])
 
-const handleReset = () => {
-  dateRange.value = null
-  filters.time_dimension = 'daily'
-  filters.metric_groups = []
-  filters.metric_ids = []
-  filters.geo_ids = []
-  filters.company_ids = []
-}
-
-const loadMetrics = async () => {
-  metricsLoading.value = true
+// 加载可用的tags
+const loadAvailableTags = async () => {
   try {
-    // 根据指标组自动推断频率
-    const freq = getFreqByGroups(filters.metric_groups)
-    // 支持多指标组筛选
-    metrics.value = await metadataApi.getMetrics(
-      filters.metric_groups.length > 0 ? filters.metric_groups : undefined, 
-      freq
-    )
+    const tagKeys = await getAvailableTags()
+    const tagValuesPromises = tagKeys.map(async (tag) => {
+      const values = await getAvailableTags(tag.tag_key)
+      return {
+        tag_key: tag.tag_key,
+        values: values.map(v => ({ tag_value: v.tag_value, count: v.count }))
+      }
+    })
+    availableTags.value = await Promise.all(tagValuesPromises)
   } catch (error) {
-    console.error('加载指标失败', error)
-  } finally {
-    metricsLoading.value = false
+    console.error('加载tags失败:', error)
   }
 }
 
-const loadGeos = async () => {
-  geoLoading.value = true
-  try {
-    geos.value = await metadataApi.getGeo()
-  } catch (error) {
-    console.error('加载地区失败', error)
-  } finally {
-    geoLoading.value = false
-  }
+const handleFilterChange = () => {
+  emit('change', {
+    sourceCodes: filters.sourceCodes,
+    freq: filters.freq,
+    dateRange: filters.dateRange,
+    geo: filters.geo,
+    tags: filters.tags
+  })
 }
 
-const loadCompanies = async () => {
-  companyLoading.value = true
-  try {
-    companies.value = await metadataApi.getCompany()
-  } catch (error) {
-    console.error('加载企业失败', error)
-  } finally {
-    companyLoading.value = false
-  }
+const resetFilters = () => {
+  filters.sourceCodes = []
+  filters.freq = 'day'
+  filters.dateRange = null
+  filters.geo = []
+  filters.tags = {}
+  handleFilterChange()
 }
-
-// 当指标组变化时，自动加载对应频率的指标列表
-watch(() => filters.metric_groups, () => {
-  // 清空已选择的指标，因为指标组变了
-  filters.metric_ids = []
-  loadMetrics()
-}, { deep: true })
 
 onMounted(() => {
-  loadMetrics()
-  loadGeos()
-  loadCompanies()
+  loadAvailableTags()
 })
 </script>
 
 <style scoped>
 .filter-panel {
   margin-bottom: 20px;
+}
+
+.filter-card {
+  border-radius: 8px;
+}
+
+.filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 </style>
