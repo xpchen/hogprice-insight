@@ -1,0 +1,216 @@
+{
+  "profile_code": "ENTERPRISE_DAILY_V1",
+  "profile_name": "企业集团出栏跟踪-日度数据",
+  "source_code": "ENTERPRISE",
+  "dataset_type": "ENTERPRISE_DAILY",
+  "file_pattern": "*集团企业出栏跟踪*.xlsx",
+  "target": "fact_observation",
+  "defaults": {
+    "freq": "D",
+    "period_type": "day",
+    "geo_strategy": "dim_geo.province",
+    "value_cleaner": "clean_numeric_value_enhanced",
+    "dedup_key": "sha1(source_code|sheet|metric_key|company|region|obs_date|canonical_tags)"
+  },
+  "sheets": [
+    {
+      "sheet_name": "CR5日度",
+      "parser": "ENTERPRISE_DAILY",
+      "header": {
+        "header_row": 1
+      },
+      "metrics_from_columns": [
+        {
+          "column_pattern": "实际出栏|实际成交",
+          "metric_name": "日度出栏",
+          "metric_key": "CR5_DAILY_OUTPUT",
+          "unit": "头",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "月度计划|计划日均|计划量",
+          "metric_name": "计划量",
+          "metric_key": "CR5_MONTHLY_PLAN",
+          "unit": "头",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "全国均价|价格",
+          "metric_name": "价格",
+          "metric_key": "CR5_PRICE",
+          "unit": "元/公斤",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "牧原|温氏|双胞胎|新希望|德康",
+          "metric_name": "日度出栏",
+          "metric_key": "CR5_COMPANY_OUTPUT",
+          "unit": "头",
+          "metric_group": "enterprise",
+          "tags": {
+            "company": "${column_name}"
+          }
+        },
+        {
+          "column_pattern": "均重",
+          "metric_name": "均重",
+          "metric_key": "CR5_AVG_WEIGHT",
+          "unit": "公斤",
+          "metric_group": "enterprise"
+        }
+      ]
+    },
+    {
+      "sheet_name": "西南汇总",
+      "parser": "ENTERPRISE_DAILY",
+      "header": {
+        "header_row": 1,
+        "metric_row": 2
+      },
+      "metrics_from_columns": [
+        {
+          "column_pattern": "实际成交",
+          "metric_name": "日度出栏",
+          "metric_key": "SOUTHWEST_ACTUAL_OUTPUT",
+          "unit": "头",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "计划日均",
+          "metric_name": "计划出栏",
+          "metric_key": "SOUTHWEST_PLAN_OUTPUT",
+          "unit": "头",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "成交率|完成率",
+          "metric_name": "完成率",
+          "metric_key": "SOUTHWEST_COMPLETION_RATE",
+          "unit": "%",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "价格|MS",
+          "metric_name": "价格",
+          "metric_key": "SOUTHWEST_PRICE",
+          "unit": "元/公斤",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "量|出栏",
+          "metric_name": "出栏量",
+          "metric_key": "SOUTHWEST_OUTPUT",
+          "unit": "头",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "重",
+          "metric_name": "均重",
+          "metric_key": "SOUTHWEST_AVG_WEIGHT",
+          "unit": "公斤",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "价",
+          "metric_name": "价格",
+          "metric_key": "SOUTHWEST_PRICE",
+          "unit": "元/公斤",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        }
+      ]
+    },
+    {
+      "sheet_name": "重点省区汇总",
+      "parser": "ENTERPRISE_DAILY",
+      "header": {
+        "header_row": 1,
+        "province_row": 2
+      },
+      "metrics_from_columns": [
+        {
+          "column_pattern": ".*",
+          "metric_name": "计划量",
+          "metric_key": "PROVINCE_PLAN",
+          "unit": "头",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${province_from_row2}"
+          }
+        }
+      ]
+    },
+    {
+      "sheet_name": "汇总",
+      "parser": "ENTERPRISE_DAILY",
+      "header": {
+        "header_row": 1,
+        "metric_row": 2
+      },
+      "metrics_from_columns": [
+        {
+          "column_pattern": "出栏计划|计划出栏量",
+          "metric_name": "计划出栏量",
+          "metric_key": "PROVINCE_PLAN",
+          "unit": "头",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "实际出栏量",
+          "metric_name": "实际出栏量",
+          "metric_key": "PROVINCE_ACTUAL",
+          "unit": "头",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "计划完成率|计划达成率",
+          "metric_name": "计划完成率",
+          "metric_key": "PROVINCE_COMPLETION_RATE",
+          "unit": "%",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "实际均重|均重",
+          "metric_name": "均重",
+          "metric_key": "PROVINCE_AVG_WEIGHT",
+          "unit": "公斤",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "计划均重",
+          "metric_name": "计划均重",
+          "metric_key": "PROVINCE_PLAN_WEIGHT",
+          "unit": "公斤",
+          "metric_group": "enterprise"
+        },
+        {
+          "column_pattern": "销售均价|均价",
+          "metric_name": "销售均价",
+          "metric_key": "PROVINCE_PRICE",
+          "unit": "元/公斤",
+          "metric_group": "enterprise"
+        }
+      ]
+    }
+  ]
+}

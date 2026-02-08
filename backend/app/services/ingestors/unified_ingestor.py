@@ -104,7 +104,8 @@ def unified_import(
             profile_file_map = {
                 'YONGYI_WEEKLY': 'ingest_profile_yongyi_weekly_v1.json',
                 'YONGYI_DAILY': 'ingest_profile_yongyi_daily_v1.json',
-                'GANGLIAN_DAILY': 'ingest_profile_ganglian_daily_v1.json'
+                'GANGLIAN_DAILY': 'ingest_profile_ganglian_daily_v1.json',
+                'ENTERPRISE_DAILY': 'ingest_profile_enterprise_daily_v1.json'
             }
             
             profile_file = profile_file_map.get(dataset_type)

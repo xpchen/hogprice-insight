@@ -7,6 +7,8 @@ from .p4_period_start_end_wide_province import P4PeriodStartEndWideProvinceParse
 from .p5_period_start_end_multi_col import P5PeriodStartEndMultiColParser
 from .p6_delivery_city_matrix import P6DeliveryCityMatrixParser
 from .p7_ganglian_legacy_format import P7GanglianLegacyFormatParser
+from .p8_enterprise_daily import P8EnterpriseDailyParser
+from .p9_white_strip_market import P9WhiteStripMarketParser
 
 __all__ = [
     "BaseParser",
@@ -18,6 +20,8 @@ __all__ = [
     "P5PeriodStartEndMultiColParser",
     "P6DeliveryCityMatrixParser",
     "P7GanglianLegacyFormatParser",
+    "P8EnterpriseDailyParser",
+    "P9WhiteStripMarketParser",
 ]
 
 # 解析器注册表
@@ -50,6 +54,9 @@ PARSER_REGISTRY = {
     "NARROW_DATE_ROWS_WIDE_PROVINCES_TRANSPOSED": P2WideProvinceRowsParser,  # 变体：日期行 + 省份列（转置）
     "DELIVERY_CITY_MATRIX_WITH_META": P6DeliveryCityMatrixParser,
     "GANGLIAN_LEGACY_FORMAT": P7GanglianLegacyFormatParser,  # 钢联标准格式：第2行指标名称，第3行单位，第4行更新时间，第5行起数据
+    "ENTERPRISE_DAILY": P8EnterpriseDailyParser,  # 企业集团日度数据：CR5日度、西南汇总等
+    "WHITE_STRIP_MARKET": P9WhiteStripMarketParser,  # 白条市场跟踪：白条市场、华宝和牧原白条
+    "HUABAO_MUYUAN_WHITE_STRIP": P9WhiteStripMarketParser,  # 华宝和牧原白条（使用相同解析器）
 }
 
 

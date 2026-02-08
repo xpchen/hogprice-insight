@@ -34,7 +34,7 @@
           <SeasonalityChart
             :data="getChartData(indicatorName)"
             :loading="loading"
-            :title="`${selectedProvince} - ${indicatorName}`"
+            :title="getChartTitle(indicatorName)"
           />
         </div>
       </div>
@@ -68,11 +68,11 @@ const provinces = [
   '广东', '广西', '四川', '贵州', '重庆', '云南'
 ]
 
-// 将省份分成3行，每行6个
+// 将省份分成2行，每行9个
 const provinceRows = computed(() => {
   const rows: string[][] = []
-  for (let i = 0; i < provinces.length; i += 6) {
-    rows.push(provinces.slice(i, i + 6))
+  for (let i = 0; i < provinces.length; i += 9) {
+    rows.push(provinces.slice(i, i + 9))
   }
   return rows
 })
@@ -197,6 +197,13 @@ const getWeekOfYear = (date: Date): number => {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
 }
 
+// 获取图表标题（格式：指标名称：省份，不显示"日度周度"）
+const getChartTitle = (indicatorName: string): string => {
+  // 移除"日度"、"周度"前缀
+  const cleanName = indicatorName.replace(/^(日度|周度)\s+/, '')
+  return `${cleanName}：${selectedProvince.value}`
+}
+
 // 处理省份变化
 const handleProvinceChange = () => {
   loadIndicatorsData()
@@ -254,15 +261,27 @@ onMounted(() => {
 
 .province-row {
   display: flex;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 6px; /* 间距缩小 */
+  margin-bottom: 6px; /* 间距缩小 */
   flex-wrap: wrap;
 }
 
 .province-radio {
   flex: 1;
-  min-width: 120px;
+  min-width: 100px;
   text-align: center;
+}
+
+/* 移除el-radio-button的边框 */
+.province-radio :deep(.el-radio-button__inner) {
+  border: none;
+  box-shadow: none;
+  background-color: #f5f7fa;
+}
+
+.province-radio :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background-color: #409eff;
+  color: #fff;
 }
 
 .charts-container {

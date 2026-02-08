@@ -21,12 +21,20 @@ const updateTimeText = computed(() => {
     const date = typeof props.updateTime === 'string' 
       ? new Date(props.updateTime) 
       : props.updateTime
-    return `更新时间：${date.toLocaleString('zh-CN')}`
+    // 只显示年月日，不显示时刻
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `更新时间：${year}年${month}月${day}日`
   } else if (props.lastDataDate) {
     const date = typeof props.lastDataDate === 'string' 
       ? new Date(props.lastDataDate) 
       : props.lastDataDate
-    return `更新时间：${date.toLocaleDateString('zh-CN')}`
+    // 只显示年月日，不显示时刻
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `更新时间：${year}年${month}月${day}日`
   } else {
     return '更新时间：暂无'
   }

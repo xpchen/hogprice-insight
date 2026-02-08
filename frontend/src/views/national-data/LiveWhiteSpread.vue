@@ -14,32 +14,85 @@
         </div>
       </template>
 
-      <!-- 时间范围选择器 -->
+      <!-- 时间范围选择器：近3月、近6月、近1年、全部日期、自定义 -->
       <div style="margin-bottom: 20px">
-        <TimeRangeSelector 
-          v-model="dateRange"
-          @change="handleDateRangeChange"
+        <el-radio-group v-model="selectedRange" @change="handleRangeChange" size="small">
+          <el-radio-button label="3m">近3月</el-radio-button>
+          <el-radio-button label="6m">近6月</el-radio-button>
+          <el-radio-button label="1y">近1年</el-radio-button>
+          <el-radio-button label="all">全部日期</el-radio-button>
+          <el-radio-button label="custom">自定义</el-radio-button>
+        </el-radio-group>
+        <el-date-picker
+          v-if="selectedRange === 'custom'"
+          v-model="customRange"
+          type="daterange"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          size="small"
+          style="margin-left: 10px"
+          @change="handleCustomRangeChange"
         />
       </div>
 
-      <!-- 图表 -->
-      <div class="chart-wrapper">
-        <h3 class="chart-title">（毛白价差）</h3>
-        <div v-if="loading" class="loading-placeholder">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span style="margin-left: 10px">加载中...</span>
+      <!-- 两个图表横向排列，共用边框 -->
+      <div class="charts-row">
+        <!-- 左图：毛白价差比率&生猪价格 -->
+        <div class="chart-wrapper">
+          <div class="chart-box">
+            <h3 class="chart-title">毛白价差比率&生猪价格</h3>
+            <div v-if="loading" class="loading-placeholder">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span style="margin-left: 10px">加载中...</span>
+            </div>
+            <div v-else-if="!leftChartData" class="no-data-placeholder">
+              <el-empty description="暂无数据" :image-size="80" />
+            </div>
+            <DualAxisChart
+              v-else
+              :data="leftChartData"
+              :loading="loading"
+              title=""
+              axis1="left"
+              axis2="right"
+            />
+          </div>
+          <div class="info-box">
+            <DataSourceInfo
+              :source-name="'钢联'"
+              :update-date="formatUpdateDate(latestUpdateTime)"
+            />
+          </div>
         </div>
-        <div v-else-if="!chartData" class="no-data-placeholder">
-          <el-empty description="暂无数据" :image-size="80" />
+
+        <!-- 右图：毛白价差&比率 -->
+        <div class="chart-wrapper">
+          <div class="chart-box">
+            <h3 class="chart-title">毛白价差&比率</h3>
+            <div v-if="loading" class="loading-placeholder">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span style="margin-left: 10px">加载中...</span>
+            </div>
+            <div v-else-if="!rightChartData" class="no-data-placeholder">
+              <el-empty description="暂无数据" :image-size="80" />
+            </div>
+            <DualAxisChart
+              v-else
+              :data="rightChartData"
+              :loading="loading"
+              title=""
+              axis1="left"
+              axis2="right"
+            />
+          </div>
+          <div class="info-box">
+            <DataSourceInfo
+              :source-name="'钢联'"
+              :update-date="formatUpdateDate(latestUpdateTime)"
+            />
+          </div>
         </div>
-        <DualAxisChart
-          v-else
-          :data="chartData"
-          :loading="loading"
-          title=""
-          axis1="left"
-          axis2="right"
-        />
       </div>
     </el-card>
   </div>
@@ -51,17 +104,101 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import UpdateTimeBadge from '@/components/UpdateTimeBadge.vue'
 import DualAxisChart, { type DualAxisData } from '@/components/DualAxisChart.vue'
-import TimeRangeSelector from '@/components/TimeRangeSelector.vue'
+import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import { getLiveWhiteSpreadDualAxis, type LiveWhiteSpreadDualAxisResponse } from '@/api/price-display'
 
 // 数据状态
 const loading = ref(false)
 const apiData = ref<LiveWhiteSpreadDualAxisResponse | null>(null)
+const priceData = ref<any>(null) // 生猪价格数据
 const dateRange = ref<[string, string] | undefined>(undefined)
 const latestUpdateTime = ref<string | null>(null)
 
-// 计算图表数据
-const chartData = computed<DualAxisData | null>(() => {
+// 筛选按钮状态
+const selectedRange = ref<string>('all') // 默认全部日期
+const customRange = ref<[Date, Date] | null>(null)
+
+// 计算日期范围
+const getDateRange = (range: string): [string, string] | undefined => {
+  const end = new Date()
+  const start = new Date()
+  
+  switch (range) {
+    case '3m':
+      start.setMonth(start.getMonth() - 3)
+      break
+    case '6m':
+      start.setMonth(start.getMonth() - 6)
+      break
+    case '1y':
+      start.setFullYear(start.getFullYear() - 1)
+      break
+    case 'all':
+      // 全部日期：返回一个很大的日期范围
+      return ['2000-01-01', '2099-12-31']
+    case 'custom':
+      if (customRange.value) {
+        return [
+          customRange.value[0].toISOString().split('T')[0],
+          customRange.value[1].toISOString().split('T')[0]
+        ]
+      }
+      return ['2000-01-01', '2099-12-31']
+    default:
+      return ['2000-01-01', '2099-12-31']
+  }
+  
+  return [
+    start.toISOString().split('T')[0],
+    end.toISOString().split('T')[0]
+  ]
+}
+
+const handleRangeChange = () => {
+  if (selectedRange.value !== 'custom') {
+    const range = getDateRange(selectedRange.value)
+    if (range) {
+      dateRange.value = range
+      loadData()
+    }
+  }
+}
+
+const handleCustomRangeChange = () => {
+  if (customRange.value) {
+    const range = getDateRange('custom')
+    if (range) {
+      dateRange.value = range
+      loadData()
+    }
+  }
+}
+
+// 计算左图数据：毛白价差比率&生猪价格
+const leftChartData = computed<DualAxisData | null>(() => {
+  if (!apiData.value) return null
+  
+  // 暂时使用价差比率作为左图的数据，后续需要添加生猪价格
+  // TODO: 需要从后端API获取生猪价格数据
+  return {
+    series1: {
+      name: '价差比率',
+      data: apiData.value.ratio_data.map(item => ({
+        date: item.date,
+        value: item.value
+      })),
+      unit: apiData.value.ratio_unit
+    },
+    series2: {
+      name: '生猪价格',
+      data: [], // TODO: 需要从API获取生猪价格数据
+      unit: '元/公斤'
+    }
+  }
+})
+
+// 计算右图数据：毛白价差&比率
+const rightChartData = computed<DualAxisData | null>(() => {
   if (!apiData.value) return null
 
   return {
@@ -84,15 +221,33 @@ const chartData = computed<DualAxisData | null>(() => {
   }
 })
 
+// 格式化更新日期（只显示年月日）
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}年${month}月${day}日`
+  } catch {
+    return null
+  }
+}
+
 // 加载数据
 const loadData = async () => {
   try {
     loading.value = true
     const [startDate, endDate] = dateRange.value || []
     
+    // 加载毛白价差数据
     const response = await getLiveWhiteSpreadDualAxis(startDate, endDate)
     apiData.value = response
     latestUpdateTime.value = response.latest_date
+    
+    // TODO: 加载生猪价格数据（用于左图）
+    // 暂时不加载，等待后端API支持
   } catch (error: any) {
     console.error('加载数据失败:', error)
     ElMessage.error('加载数据失败: ' + (error.message || '未知错误'))
@@ -101,17 +256,14 @@ const loadData = async () => {
   }
 }
 
-// 处理时间范围变化
-const handleDateRangeChange = (range: [string, string]) => {
-  dateRange.value = range
-  loadData()
-}
-
 // 初始化
 onMounted(() => {
-  // TimeRangeSelector会在mounted时自动触发change事件，设置默认时间范围
-  // 这里先加载一次数据（使用默认时间范围）
-  loadData()
+  // 默认加载全部日期数据
+  const range = getDateRange('all')
+  if (range) {
+    dateRange.value = range
+    loadData()
+  }
 })
 </script>
 
@@ -120,12 +272,33 @@ onMounted(() => {
   padding: 20px;
 }
 
-.chart-wrapper {
-  background: #fff;
-  border: 1px solid #e4e7ed;
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
+  border: 1px solid #e4e7ed; /* 共用边框 */
   border-radius: 4px;
   padding: 16px;
-  min-height: 400px;
+  background: #fff;
+}
+
+.chart-wrapper {
+  /* 移除单独的边框和背景，因为已经在charts-row中设置了 */
+  padding: 0;
+}
+
+.chart-box {
+  /* 图表框：包含标题、图例、图表 */
+  margin-bottom: 8px;
+}
+
+.info-box {
+  /* 说明框：无背景色，位于图表框下方 */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  background-color: transparent;
 }
 
 .chart-title {

@@ -19,44 +19,60 @@
         <div class="chart-row">
           <!-- 图1：宰前均重 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">宰前均重【数据来源：涌益咨询 周度数据】</h3>
-            <div v-if="loading" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <div class="chart-box">
+              <h3 class="chart-title">宰前均重</h3>
+              <div v-if="loading" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!hasPreSlaughterWeight" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleImportData">导入数据</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="preSlaughterChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!hasPreSlaughterWeight" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleImportData">导入数据</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="preSlaughterChartRef" class="chart-container"></div>
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="preSlaughterCurrentChange"
                 :yoy-change="preSlaughterYoyChange"
                 unit="kg"
+              />
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(updateTime)"
               />
             </div>
           </div>
 
           <!-- 图2：出栏均重 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">出栏均重【数据来源：涌益咨询 周度数据】</h3>
-            <div v-if="loading" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <div class="chart-box">
+              <h3 class="chart-title">出栏均重</h3>
+              <div v-if="loading" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!hasOutWeight" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleImportData">导入数据</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="outWeightChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!hasOutWeight" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleImportData">导入数据</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="outWeightChartRef" class="chart-container"></div>
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="outWeightCurrentChange"
                 :yoy-change="outWeightYoyChange"
                 unit="kg"
+              />
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(updateTime)"
               />
             </div>
           </div>
@@ -66,44 +82,60 @@
         <div class="chart-row">
           <!-- 图3：规模场 出栏均重 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">规模场 出栏均重【数据来源：涌益咨询 周度数据】</h3>
-            <div v-if="loading" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <div class="chart-box">
+              <h3 class="chart-title">规模场 出栏均重</h3>
+              <div v-if="loading" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!hasScaleFarmWeight" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleImportData">导入数据</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="scaleFarmChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!hasScaleFarmWeight" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleImportData">导入数据</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="scaleFarmChartRef" class="chart-container"></div>
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="scaleFarmCurrentChange"
                 :yoy-change="scaleFarmYoyChange"
                 unit="kg"
+              />
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(updateTime)"
               />
             </div>
           </div>
 
           <!-- 图4：散户 出栏均重 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">散户 出栏均重【数据来源：涌益咨询 周度数据】</h3>
-            <div v-if="loading" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <div class="chart-box">
+              <h3 class="chart-title">散户 出栏均重</h3>
+              <div v-if="loading" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!hasRetailWeight" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleImportData">导入数据</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="retailChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!hasRetailWeight" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleImportData">导入数据</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="retailChartRef" class="chart-container"></div>
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="retailCurrentChange"
                 :yoy-change="retailYoyChange"
                 unit="kg"
+              />
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(updateTime)"
               />
             </div>
           </div>
@@ -113,44 +145,60 @@
         <div class="chart-row">
           <!-- 图5：90Kg出栏占比 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">90Kg出栏占比【数据来源：涌益咨询 周度数据】</h3>
-            <div v-if="loading" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <div class="chart-box">
+              <h3 class="chart-title">90Kg出栏占比</h3>
+              <div v-if="loading" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!has90kgRatio" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleImportData">导入数据</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="ratio90kgChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!has90kgRatio" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleImportData">导入数据</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="ratio90kgChartRef" class="chart-container"></div>
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="ratio90kgCurrentChange"
                 :yoy-change="ratio90kgYoyChange"
                 unit="%"
+              />
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(updateTime)"
               />
             </div>
           </div>
 
           <!-- 图6：150Kg出栏占重 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">150Kg出栏占重【数据来源：涌益咨询 周度数据】</h3>
-            <div v-if="loading" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <div class="chart-box">
+              <h3 class="chart-title">150Kg出栏占重</h3>
+              <div v-if="loading" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!has150kgRatio" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleImportData">导入数据</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="ratio150kgChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!has150kgRatio" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleImportData">导入数据</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="ratio150kgChartRef" class="chart-container"></div>
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="ratio150kgCurrentChange"
                 :yoy-change="ratio150kgYoyChange"
                 unit="%"
+              />
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(updateTime)"
               />
             </div>
           </div>
@@ -167,6 +215,7 @@ import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import UpdateTimeBadge from '@/components/UpdateTimeBadge.vue'
 import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
+import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import { getWeightData } from '@/api/national-data'
 import { useRouter } from 'vue-router'
 
@@ -370,6 +419,20 @@ const getYearColor = (year: number): string => {
   return yearColors[year] || '#888888'
 }
 
+// 格式化更新日期（只显示年月日）
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}年${month}月${day}日`
+  } catch {
+    return null
+  }
+}
+
 // 渲染图表（周度季节性，1-52周）
 const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit: string = '', chartInstanceRef: { value: echarts.ECharts | null }) => {
   if (!chartRef) return
@@ -399,6 +462,10 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
   // 按年份分组
   const years = [...new Set(weekData.map(d => d.year))].sort((a, b) => b - a) // 降序排列
   
+  // 计算最近三年（用于颜色规则）
+  const sortedYears = [...years].sort((a, b) => b - a)
+  const recentThreeYears = new Set(sortedYears.slice(0, 3))
+  
   const series = years.map(year => {
     const yearData = weekData.filter(d => d.year === year)
     const values = Array(52).fill(null)
@@ -407,18 +474,32 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
         values[d.week - 1] = d.value
       }
     })
+    // 最近三年有颜色，其他年份灰色
+    const isRecentYear = recentThreeYears.has(year)
+    const lineColor = isRecentYear ? getYearColor(year) : '#D3D3D3'
+    
     return {
       name: `${year}年`,
       type: 'line',
       data: values,
       smooth: true,
-      symbol: 'circle',
-      symbolSize: 4,
-      lineStyle: { width: 2 },
-      itemStyle: { color: getYearColor(year) },
-      connectNulls: false
+      // 移除数据点
+      symbol: 'none',
+      // 处理断点：使用连续曲线
+      connectNulls: true,
+      lineStyle: { 
+        width: 2,
+        color: lineColor
+      },
+      itemStyle: { color: lineColor }
     }
   })
+  
+  // 计算Y轴范围（自动调整）
+  const allValues = series.flatMap(s => s.data).filter(v => v !== null && v !== undefined) as number[]
+  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
+  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
+  const yPadding = (yMax - yMin) * 0.1 // 10% padding
   
   const option: echarts.EChartsOption = {
     tooltip: {
@@ -441,8 +522,13 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     legend: {
       data: years.map(y => `${y}年`),
       top: 10,
-      type: 'scroll',
-      orient: 'horizontal'
+      type: 'plain', // 不使用滚动
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      orient: 'horizontal',
+      left: 'center'
     },
     grid: {
       left: '3%',
@@ -454,9 +540,8 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     xAxis: {
       type: 'category',
       data: Array.from({ length: 52 }, (_, i) => i + 1),
-      name: '周序号（1-52周）',
-      nameLocation: 'middle',
-      nameGap: 30,
+      // X轴不显示标签（默认时间轴）
+      name: '',
       axisLabel: {
         formatter: (value: number) => {
           // 只显示部分标签，避免过于拥挤
@@ -469,23 +554,22 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     },
     yAxis: {
       type: 'value',
-      name: unit ? `${title}(${unit})` : title,
+      // Y轴不显示单位
+      name: '',
       nameLocation: 'end',
-      nameGap: 20
+      nameGap: 20,
+      // 自动调整范围
+      min: yMin - yPadding,
+      max: yMax + yPadding,
+      scale: false
     },
     series: series,
+    // 只保留内部缩放，删除日期筛选进度条
     dataZoom: [
       {
         type: 'inside',
         start: 0,
         end: 100
-      },
-      {
-        type: 'slider',
-        start: 0,
-        end: 100,
-        height: 20,
-        bottom: 10
       }
     ]
   }
@@ -546,20 +630,37 @@ onBeforeUnmount(() => {
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 20px; /* 缩小间距 */
 }
 
 .chart-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 30px;
+  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
+  border: 1px solid #e4e7ed; /* 共用边框 */
+  border-radius: 4px;
+  padding: 16px; /* 减少padding */
+  background: #fff;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .chart-wrapper {
-  background: #fff;
-  border-radius: 4px;
-  padding: 20px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  /* 移除单独的边框和背景，因为已经在chart-row中设置了 */
+  padding: 0;
+}
+
+.chart-box {
+  /* 图表框：包含标题、图例、图表 */
+  margin-bottom: 8px;
+}
+
+.info-box {
+  /* 说明框：无背景色，位于图表框下方 */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  background-color: transparent;
 }
 
 .chart-title {

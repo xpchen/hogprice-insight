@@ -16,6 +16,8 @@
             :loading="chartLoading[metric.name]"
             :title="metric.displayName"
             :change-info="changeInfo[metric.name]"
+            :source-name="getSourceName(metric.name)"
+            :update-date="formatUpdateDate(updateTimes[metric.name])"
           />
         </div>
       </div>
@@ -52,14 +54,37 @@ const loading = ref(false)
 const chartLoading = ref<Record<string, boolean>>({})
 const chartData = ref<Record<string, SeasonalityData | null>>({})
 const changeInfo = ref<Record<string, { period_change: number | null; yoy_change: number | null }>>({})
+const updateTimes = ref<Record<string, string | null>>({})
 const availableYears = ref<number[]>([])
 
 // 初始化chartData和changeInfo
 metrics.forEach(metric => {
   chartData.value[metric.name] = null
   changeInfo.value[metric.name] = { period_change: null, yoy_change: null }
+  updateTimes.value[metric.name] = null
   chartLoading.value[metric.name] = false
 })
+
+// 获取数据来源名称（根据指标名称判断）
+const getSourceName = (metricName: string): string => {
+  // 产业链数据主要来自涌益，部分可能来自钢联
+  // 这里可以根据实际数据源配置，暂时默认使用涌益
+  return '涌益'
+}
+
+// 格式化更新日期（只显示年月日）
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}年${month}月${day}日`
+  } catch {
+    return null
+  }
+}
 
 // 加载单个图表数据
 const loadChartData = async (metricName: string) => {
@@ -160,8 +185,12 @@ onMounted(async () => {
 .charts-container {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
   margin-top: 20px;
+  border: 1px solid #e4e7ed; /* 共用边框 */
+  border-radius: 4px;
+  padding: 16px;
+  background: #fff;
 }
 
 .chart-item {

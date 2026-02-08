@@ -97,12 +97,22 @@ const assignYAxis = (series: ChartSeries[]): ChartSeries[] => {
 
 // 获取Y轴配置
 const getYAxisConfig = (series: ChartSeries[]) => {
+  // 计算Y轴范围（自动调整）
+  const allValues = series.flatMap(s => s.data.map(([_, v]) => v).filter(v => v !== null && v !== undefined) as number[])
+  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
+  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
+  const yPadding = (yMax - yMin) * 0.1 // 10% padding
+  
   if (!needsDualYAxis.value) {
     return [{
       type: 'value',
-      name: series[0]?.unit || '',
+      // Y轴不显示单位
+      name: '',
       nameLocation: 'end',
-      nameGap: 20
+      nameGap: 20,
+      min: yMin - yPadding,
+      max: yMax + yPadding,
+      scale: false
     }]
   }
   
@@ -110,23 +120,42 @@ const getYAxisConfig = (series: ChartSeries[]) => {
   const leftSeries = series.filter(s => s.yAxisIndex === 0)
   const rightSeries = series.filter(s => s.yAxisIndex === 1)
   
+  const leftValues = leftSeries.flatMap(s => s.data.map(([_, v]) => v).filter(v => v !== null && v !== undefined) as number[])
+  const rightValues = rightSeries.flatMap(s => s.data.map(([_, v]) => v).filter(v => v !== null && v !== undefined) as number[])
+  
+  const leftMin = leftValues.length > 0 ? Math.min(...leftValues) : 0
+  const leftMax = leftValues.length > 0 ? Math.max(...leftValues) : 100
+  const leftPadding = (leftMax - leftMin) * 0.1
+  
+  const rightMin = rightValues.length > 0 ? Math.min(...rightValues) : 0
+  const rightMax = rightValues.length > 0 ? Math.max(...rightValues) : 100
+  const rightPadding = (rightMax - rightMin) * 0.1
+  
   return [
     {
       type: 'value',
-      name: leftSeries[0]?.unit || '',
+      // Y轴不显示单位
+      name: '',
       nameLocation: 'end',
       nameGap: 20,
       position: 'left',
+      min: leftMin - leftPadding,
+      max: leftMax + leftPadding,
+      scale: false,
       axisLabel: {
         formatter: '{value}'
       }
     },
     {
       type: 'value',
-      name: rightSeries[0]?.unit || '',
+      // Y轴不显示单位
+      name: '',
       nameLocation: 'end',
       nameGap: 20,
       position: 'right',
+      min: rightMin - rightPadding,
+      max: rightMax + rightPadding,
+      scale: false,
       axisLabel: {
         formatter: '{value}'
       }
@@ -210,7 +239,11 @@ const updateChart = () => {
     legend: {
       data: assignedSeries.map(s => s.name),
       top: 10,
-      type: 'scroll'
+      type: 'plain', // 不使用滚动
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15
     },
     grid: {
       left: '3%',
@@ -223,6 +256,8 @@ const updateChart = () => {
       type: 'category',
       data: processedData.categories,
       boundaryGap: false,
+      // X轴不显示标签（默认时间轴）
+      name: '',
       axisLabel: {
         rotate: chartMode.value === 'compare' ? 45 : 0,
         formatter: (value: string) => {
@@ -242,26 +277,22 @@ const updateChart = () => {
       data: series.data.map(([_, value]) => value),
       smooth: true,
       yAxisIndex: series.yAxisIndex || 0,
-      symbol: 'circle',
-      symbolSize: 4,
+      // 移除数据点
+      symbol: 'none',
+      // 处理断点：使用连续曲线
+      connectNulls: true,
       lineStyle: {
         width: 2
       },
       // 自动颜色分配
       color: series.color || undefined
     })),
+    // 只保留内部缩放，删除日期筛选进度条
     dataZoom: [
       {
         type: 'inside',
         start: 0,
         end: 100
-      },
-      {
-        type: 'slider',
-        start: 0,
-        end: 100,
-        height: 20,
-        bottom: 10
       }
     ]
   }

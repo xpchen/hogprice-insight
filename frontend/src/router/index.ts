@@ -97,11 +97,6 @@ const routes = [
         component: () => import('../views/province-summary/Overview.vue')
       },
       {
-        path: 'province-summary/indicators',
-        name: 'ProvinceSummaryIndicators',
-        component: () => import('../views/province-summary/Indicators.vue')
-      },
-      {
         path: 'province-summary/range',
         name: 'ProvinceSummaryRange',
         component: () => import('../views/province-summary/ProvinceRange.vue')
@@ -148,11 +143,16 @@ const routes = [
         name: 'EnterpriseStatisticsStructureAnalysis',
         component: () => import('../views/enterprise-statistics/StructureAnalysis.vue')
       },
+      {
+        path: 'enterprise-statistics/group-price',
+        name: 'EnterpriseStatisticsGroupPrice',
+        component: () => import('../views/enterprise-statistics/GroupPrice.vue')
+      },
       // E. 官方数据汇总
       {
         path: 'official-data/scale-farm',
         name: 'OfficialDataScaleFarm',
-        component: () => import('../views/official-data/ScaleFarm.vue')
+        component: () => import('../views/enterprise-statistics/ProductionIndicators.vue')
       },
       {
         path: 'official-data/multi-source',

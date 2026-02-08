@@ -64,6 +64,18 @@ const updateChart = () => {
     const item = series2.data.find(d => d.date === date)
     return item?.value ?? null
   })
+  
+  // 计算Y轴范围（自动调整）
+  const values1 = data1.filter(v => v !== null && v !== undefined) as number[]
+  const values2 = data2.filter(v => v !== null && v !== undefined) as number[]
+  
+  const y1Min = values1.length > 0 ? Math.min(...values1) : 0
+  const y1Max = values1.length > 0 ? Math.max(...values1) : 100
+  const y1Padding = (y1Max - y1Min) * 0.1
+  
+  const y2Min = values2.length > 0 ? Math.min(...values2) : 0
+  const y2Max = values2.length > 0 ? Math.max(...values2) : 100
+  const y2Padding = (y2Max - y2Min) * 0.1
 
   const option: echarts.EChartsOption = {
     tooltip: {
@@ -74,7 +86,12 @@ const updateChart = () => {
     },
     legend: {
       data: [series1.name, series2.name],
-      top: 10
+      top: 10,
+      type: 'plain',
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15
     },
     grid: {
       left: '3%',
@@ -86,6 +103,8 @@ const updateChart = () => {
       type: 'category',
       boundaryGap: false,
       data: sortedDates,
+      // X轴不显示标签（默认时间轴）
+      name: '',
       axisLabel: {
         formatter: (value: string) => {
           const date = new Date(value)
@@ -96,18 +115,26 @@ const updateChart = () => {
     yAxis: [
       {
         type: 'value',
-        name: series1.name,
+        // Y轴不显示单位
+        name: '',
         position: props.axis1 || 'left',
+        min: y1Min - y1Padding,
+        max: y1Max + y1Padding,
+        scale: false,
         axisLabel: {
-          formatter: `{value} ${series1.unit}`
+          formatter: '{value}'
         }
       },
       {
         type: 'value',
-        name: series2.name,
+        // Y轴不显示单位
+        name: '',
         position: props.axis2 || 'right',
+        min: y2Min - y2Padding,
+        max: y2Max + y2Padding,
+        scale: false,
         axisLabel: {
-          formatter: `{value} ${series2.unit}`
+          formatter: '{value}'
         }
       }
     ],
@@ -118,6 +145,10 @@ const updateChart = () => {
         yAxisIndex: 0,
         data: data1,
         smooth: true,
+        // 移除数据点
+        symbol: 'none',
+        // 处理断点：使用连续曲线
+        connectNulls: true,
         itemStyle: {
           color: '#409EFF'
         }
@@ -128,6 +159,10 @@ const updateChart = () => {
         yAxisIndex: 1,
         data: data2,
         smooth: true,
+        // 移除数据点
+        symbol: 'none',
+        // 处理断点：使用连续曲线
+        connectNulls: true,
         itemStyle: {
           color: '#67C23A'
         }

@@ -30,7 +30,14 @@
         </div>
       </div>
     </template>
-    <div ref="chartRef" style="width: 100%; height: 500px;" v-loading="loading"></div>
+    <div class="chart-content">
+      <div ref="chartRef" style="width: 100%; height: 500px;" v-loading="loading"></div>
+      <div v-if="sourceName || updateDate" class="data-source-info">
+        <span v-if="sourceName">数据来源：{{ sourceName }}</span>
+        <span v-if="sourceName && updateDate" class="separator"> </span>
+        <span v-if="updateDate">更新日期：{{ updateDate }}</span>
+      </div>
+    </div>
   </el-card>
 </template>
 
@@ -62,6 +69,8 @@ const props = defineProps<{
     period_change: number | null
     yoy_change: number | null
   } | null  // 变化信息（本期涨跌、较去年同期涨跌）
+  sourceName?: string | null  // 数据来源名称（标准化：钢联/涌益）
+  updateDate?: string | null  // 更新日期（格式：X年X月X日）
 }>()
 
 const chartRef = ref<HTMLDivElement>()
@@ -102,10 +111,20 @@ const updateChart = () => {
   // 初始化图例选中状态（默认全部显示）
   if (Object.keys(legendSelected.value).length === 0) {
     series.forEach(s => {
-      const seriesName = `${s.year}年度`
+      const seriesName = `${s.year}年`
       legendSelected.value[seriesName] = true
     })
   }
+  
+  // 计算最近三年（用于颜色规则）
+  const sortedYears = [...series.map(s => s.year)].sort((a, b) => b - a)
+  const recentThreeYears = new Set(sortedYears.slice(0, 3))
+  
+  // 计算Y轴范围（自动调整）
+  const allValues = series.flatMap(s => s.values).filter(v => v !== null && v !== undefined) as number[]
+  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
+  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
+  const yPadding = (yMax - yMin) * 0.1 // 10% padding
   
   // 根据xMode过滤x_values（如果数据包含两种模式）
   let displayXValues = x_values
@@ -144,12 +163,22 @@ const updateChart = () => {
       }
     },
     legend: {
-      data: series.map(s => `${s.year}年度`),
+      data: series.map(s => `${s.year}年`),
       top: 10,
-      type: 'scroll',
+      type: 'plain', // 不使用滚动，使用plain类型
       selected: legendSelected.value,
-      // 监听图例点击事件
-      selectedMode: true
+      selectedMode: true,
+      // 自定义图例图标：只显示圆点，不显示直线
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      // 分2-3行显示
+      orient: 'horizontal',
+      left: 'center',
+      top: 10,
+      // 计算每行显示的数量（假设总共显示所有年份）
+      formatter: (name: string) => name
     },
     grid: {
       left: '3%',
@@ -162,6 +191,8 @@ const updateChart = () => {
       type: 'category',
       data: displayXValues.map(formatXLabel),
       boundaryGap: false,
+      // X轴不显示标签（默认时间轴）
+      name: '',
       axisLabel: {
         rotate: xMode.value === 'month_day' ? 45 : 0,
         interval: xMode.value === 'month_day' ? 'auto' : 0,
@@ -180,41 +211,45 @@ const updateChart = () => {
     },
     yAxis: {
       type: 'value',
-      name: meta.unit || '',
+      // Y轴不显示单位
+      name: '',
       nameLocation: 'end',
-      nameGap: 20
+      nameGap: 20,
+      // 自动调整范围
+      min: yMin - yPadding,
+      max: yMax + yPadding,
+      scale: false
     },
     series: series.map(s => {
       const isLeap = (s as any).is_leap_month
-      const seriesName = `${s.year}年度${isLeap ? '(闰月)' : ''}`
+      const seriesName = `${s.year}年${isLeap ? '(闰月)' : ''}`
+      // 最近三年有颜色，其他年份灰色
+      const isRecentYear = recentThreeYears.has(s.year)
+      const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
+      
       return {
         name: seriesName,
         type: 'line',
         data: s.values,
         smooth: true,
-        symbol: 'circle',
-        symbolSize: 4,
+        // 移除数据点
+        symbol: 'none',
         lineStyle: {
           width: 2,
-          type: isLeap ? 'dashed' : 'solid'  // 闰月用虚线
+          type: isLeap ? 'dashed' : 'solid',  // 闰月用虚线
+          color: lineColor
         },
-        color: getYearColor(s.year),
-        // 缺失值断线
-        connectNulls: false
+        color: lineColor,
+        // 处理断点：使用连续曲线
+        connectNulls: true
       }
     }),
+    // 只保留内部缩放，删除日期筛选进度条
     dataZoom: [
       {
         type: 'inside',
         start: 0,
         end: 100
-      },
-      {
-        type: 'slider',
-        start: 0,
-        end: 100,
-        height: 20,
-        bottom: 10
       }
     ]
   }
@@ -232,6 +267,23 @@ const updateChart = () => {
         selected: legendSelected.value
       }
     })
+    // 重新计算Y轴范围（根据当前显示的数据）
+    const visibleSeries = series.filter(s => {
+      const seriesName = `${s.year}年`
+      return legendSelected.value[seriesName] !== false
+    })
+    const visibleValues = visibleSeries.flatMap(s => s.values).filter(v => v !== null && v !== undefined) as number[]
+    if (visibleValues.length > 0) {
+      const newYMin = Math.min(...visibleValues)
+      const newYMax = Math.max(...visibleValues)
+      const newYPadding = (newYMax - newYMin) * 0.1
+      chartInstance?.setOption({
+        yAxis: {
+          min: newYMin - newYPadding,
+          max: newYMax + newYPadding
+        }
+      })
+    }
   })
 }
 
@@ -367,5 +419,21 @@ const getChangeClass = (value: number | null): string => {
 .change-negative {
   color: #67c23a;
   font-weight: bold;
+}
+
+.chart-content {
+  position: relative;
+}
+
+.data-source-info {
+  font-size: 12px;
+  color: #909399;
+  text-align: right;
+  margin-top: 8px;
+  padding-right: 8px;
+}
+
+.separator {
+  margin: 0 8px;
 }
 </style>

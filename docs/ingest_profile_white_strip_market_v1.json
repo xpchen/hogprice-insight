@@ -1,0 +1,264 @@
+{
+  "profile_code": "WHITE_STRIP_MARKET_V1",
+  "profile_name": "白条市场跟踪",
+  "source_code": "WHITE_STRIP_MARKET",
+  "dataset_type": "WHITE_STRIP_MARKET",
+  "file_pattern": "*白条市场跟踪*.xlsx",
+  "target": "fact_observation",
+  "defaults": {
+    "freq": "D",
+    "period_type": "day",
+    "value_cleaner": "clean_numeric_value_enhanced",
+    "dedup_key": "sha1(source_code|sheet|metric_key|market|obs_date|canonical_tags)"
+  },
+  "sheets": [
+    {
+      "sheet_name": "白条市场",
+      "parser": "WHITE_STRIP_MARKET",
+      "header": {
+        "header_row": 0
+      },
+      "metrics_from_columns": [
+        {
+          "column_pattern": "北京石门到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_BEIJING",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "北京石门"
+          }
+        },
+        {
+          "column_pattern": "北京石门价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_BEIJING",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "北京石门"
+          }
+        },
+        {
+          "column_pattern": "上海西郊到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_SHANGHAI",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "上海西郊"
+          }
+        },
+        {
+          "column_pattern": "上海西郊价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_SHANGHAI",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "上海西郊"
+          }
+        },
+        {
+          "column_pattern": "成都点杀数量",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_CHENGDU",
+          "unit": "头",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "成都点杀"
+          }
+        },
+        {
+          "column_pattern": "成都点杀价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_CHENGDU",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "成都点杀"
+          }
+        },
+        {
+          "column_pattern": "山西太原到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_TAIYUAN",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "山西太原"
+          }
+        },
+        {
+          "column_pattern": "山西太原价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_TAIYUAN",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "山西太原"
+          }
+        },
+        {
+          "column_pattern": "杭州五和到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_HANGZHOU",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "杭州五和"
+          }
+        },
+        {
+          "column_pattern": "杭州五和价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_HANGZHOU",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "杭州五和"
+          }
+        },
+        {
+          "column_pattern": "无锡天鹏到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_WUXI",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "无锡天鹏"
+          }
+        },
+        {
+          "column_pattern": "无锡天鹏价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_WUXI",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "无锡天鹏"
+          }
+        },
+        {
+          "column_pattern": "南京众彩到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_NANJING",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "南京众彩"
+          }
+        },
+        {
+          "column_pattern": "南京众彩价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_NANJING",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "南京众彩"
+          }
+        },
+        {
+          "column_pattern": "广西桂林到货",
+          "metric_name": "白条到货量",
+          "metric_key": "WHITE_STRIP_ARRIVAL_GUILIN",
+          "unit": "吨",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "广西桂林"
+          }
+        },
+        {
+          "column_pattern": "广西桂林价格",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_GUILIN",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "market": "广西桂林"
+          }
+        }
+      ]
+    },
+    {
+      "sheet_name": "华宝和牧原白条",
+      "parser": "HUABAO_MUYUAN_WHITE_STRIP",
+      "header": {
+        "header_row": 0
+      },
+      "metrics_from_columns": [
+        {
+          "column_pattern": "华宝肉条",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_HUABAO",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "company": "华宝白条"
+          }
+        },
+        {
+          "column_pattern": "牧原白条",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_MUYUAN",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "company": "牧原白条"
+          }
+        },
+        {
+          "column_pattern": "华东",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_EAST_CHINA",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "region": "华东"
+          }
+        },
+        {
+          "column_pattern": "河南山东",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_HENAN_SHANDONG",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "region": "河南山东"
+          }
+        },
+        {
+          "column_pattern": "湖北陕西",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_HUBEI_SHANXI",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "region": "湖北陕西"
+          }
+        },
+        {
+          "column_pattern": "京津冀",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_JINGJINJI",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "region": "京津冀"
+          }
+        },
+        {
+          "column_pattern": "东北",
+          "metric_name": "白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_NORTHEAST",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "region": "东北"
+          }
+        }
+      ]
+    }
+  ]
+}

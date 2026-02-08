@@ -1,26 +1,33 @@
 <template>
   <div class="frozen-capacity-page">
     <el-card class="filter-card">
-      <el-form :model="filters" inline>
-        <!-- 省份选择 -->
-        <el-form-item label="省份">
-          <el-select
-            v-model="filters.province"
-            placeholder="请选择省份"
-            clearable
-            @change="handleProvinceChange"
-            style="width: 200px"
-            :loading="loadingProvinces"
-          >
-            <el-option
-              v-for="province in provinces"
+      <!-- 筛选按钮：近3月、近6月、近2年、近3年、全部日期 -->
+      <div style="margin-bottom: 16px">
+        <el-radio-group v-model="selectedRange" @change="handleRangeChange" size="small">
+          <el-radio-button label="3m">近3月</el-radio-button>
+          <el-radio-button label="6m">近6月</el-radio-button>
+          <el-radio-button label="2y">近2年</el-radio-button>
+          <el-radio-button label="3y">近3年</el-radio-button>
+          <el-radio-button label="all">全部日期</el-radio-button>
+        </el-radio-group>
+      </div>
+      
+      <!-- 省份筛选：2行布局，间距缩小，无边框 -->
+      <div class="province-filter">
+        <span class="province-label">省份筛选：</span>
+        <el-radio-group v-model="filters.province" @change="handleProvinceChange" size="small">
+          <div class="province-row" v-for="(row, rowIndex) in provinceRows" :key="rowIndex">
+            <el-radio-button
+              v-for="province in row"
               :key="province.province_name"
               :label="province.province_name"
-              :value="province.province_name"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
+              class="province-radio"
+            >
+              {{ province.province_name }}
+            </el-radio-button>
+          </div>
+        </el-radio-group>
+      </div>
     </el-card>
 
     <div class="chart-container" v-loading="loading">
@@ -48,6 +55,8 @@
           :loading="loading"
           :title="chartTitle"
           :change-info="changeInfo"
+          :source-name="'涌益'"
+          :update-date="formatUpdateDate(updateTime)"
         />
       </template>
     </div>
@@ -75,10 +84,77 @@ const changeInfo = ref<{
   yoy_change: number | null
 } | null>(null)
 const errorMessage = ref<string>('')
+const updateTime = ref<string | null>(null)
 
 const filters = ref({
   province: ''
 })
+
+// 筛选按钮状态
+const selectedRange = ref<string>('all') // 默认全部日期
+
+// 将省份分成2行
+const provinceRows = computed(() => {
+  const rows: FrozenInventoryProvinceInfo[][] = []
+  const perRow = Math.ceil(provinces.value.length / 2)
+  for (let i = 0; i < provinces.value.length; i += perRow) {
+    rows.push(provinces.value.slice(i, i + perRow))
+  }
+  return rows
+})
+
+// 计算日期范围
+const getDateRange = (range: string): [string, string] | undefined => {
+  const end = new Date()
+  const start = new Date()
+  
+  switch (range) {
+    case '3m':
+      start.setMonth(start.getMonth() - 3)
+      break
+    case '6m':
+      start.setMonth(start.getMonth() - 6)
+      break
+    case '2y':
+      start.setFullYear(start.getFullYear() - 2)
+      break
+    case '3y':
+      start.setFullYear(start.getFullYear() - 3)
+      break
+    case 'all':
+      // 全部日期：返回一个很大的日期范围
+      return ['2000-01-01', '2099-12-31']
+    default:
+      return ['2000-01-01', '2099-12-31']
+  }
+  
+  return [
+    start.toISOString().split('T')[0],
+    end.toISOString().split('T')[0]
+  ]
+}
+
+const handleRangeChange = () => {
+  // 筛选按钮变化时，重新加载数据（如果需要按日期筛选）
+  // 注意：当前API可能不支持日期范围筛选，这里先保留接口
+  if (filters.value.province) {
+    loadSeasonalityData()
+  }
+}
+
+// 格式化更新日期（只显示年月日）
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}年${month}月${day}日`
+  } catch {
+    return null
+  }
+}
 
 const chartTitle = computed(() => {
   if (filters.value.province) {
@@ -191,6 +267,9 @@ const loadSeasonalityData = async () => {
       period_change: response.period_change,
       yoy_change: response.yoy_change
     }
+    
+    // 保存更新时间
+    updateTime.value = response.update_time
   } catch (error: any) {
     console.error('加载季节性数据失败:', error)
     errorMessage.value = `加载数据失败: ${error?.message || '未知错误'}`
@@ -226,6 +305,44 @@ onMounted(() => {
 
 .filter-card {
   margin-bottom: 20px;
+}
+
+.province-filter {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.province-label {
+  font-size: 14px;
+  color: #606266;
+  white-space: nowrap;
+  padding-top: 4px;
+}
+
+.province-row {
+  display: flex;
+  gap: 6px; /* 间距缩小 */
+  margin-bottom: 6px; /* 间距缩小 */
+  flex-wrap: wrap;
+}
+
+.province-radio {
+  flex: 1;
+  min-width: 80px;
+  text-align: center;
+}
+
+/* 移除el-radio-button的边框 */
+.province-radio :deep(.el-radio-button__inner) {
+  border: none;
+  box-shadow: none;
+  background-color: #f5f7fa;
+}
+
+.province-radio :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background-color: #409eff;
+  color: #fff;
 }
 
 .chart-container {

@@ -21,7 +21,7 @@
           :key="regionPair"
           class="chart-wrapper"
         >
-          <h3 class="chart-title">（区域价差：{{ regionPair }}）</h3>
+          <h3 class="chart-title">区域价差：{{ regionPair }}</h3>
           <div v-if="loadingCharts[regionPair]" class="loading-placeholder">
             <el-icon class="is-loading"><Loading /></el-icon>
             <span style="margin-left: 10px">加载中...</span>
@@ -30,15 +30,23 @@
             <el-empty description="暂无数据" :image-size="80" />
           </div>
           <div v-else>
-            <div 
-              :ref="el => setChartRef(regionPair, el)"
-              class="chart-container"
-            ></div>
-            <ChangeAnnotation
-              :day5-change="changesData[regionPair]?.day5_change"
-              :day10-change="changesData[regionPair]?.day10_change"
-              :unit="chartData[regionPair]?.unit || '元/公斤'"
-            />
+            <div class="chart-box">
+              <div 
+                :ref="el => setChartRef(regionPair, el)"
+                class="chart-container"
+              ></div>
+            </div>
+            <div class="info-box">
+              <ChangeAnnotation
+                :day5-change="changesData[regionPair]?.day5_change"
+                :day10-change="changesData[regionPair]?.day10_change"
+                :unit="chartData[regionPair]?.unit || '元/公斤'"
+              />
+              <DataSourceInfo
+                :source-name="'钢联'"
+                :update-date="formatUpdateDate(latestUpdateTime)"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -53,6 +61,7 @@ import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import UpdateTimeBadge from '@/components/UpdateTimeBadge.vue'
 import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
+import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import {
   getRegionSpreadSeasonality,
   getRegionSpreadChanges,
@@ -88,6 +97,20 @@ const chartRefs = ref<Record<string, HTMLElement | null>>({})
 
 // 最新更新时间
 const latestUpdateTime = ref<string | null>(null)
+
+// 格式化更新日期（只显示年月日）
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}年${month}月${day}日`
+  } catch {
+    return null
+  }
+}
 
 // 渲染队列控制
 const renderQueue = ref<string[]>([])
@@ -262,23 +285,39 @@ const renderChart = (regionPair: string) => {
   })
   const sortedDates = Array.from(allDates).sort()
   
+  // 计算最近三年（用于颜色规则）
+  const sortedYears = [...data.series.map(s => s.year)].sort((a, b) => b - a)
+  const recentThreeYears = new Set(sortedYears.slice(0, 3))
+  
+  // 计算Y轴范围（自动调整）
+  const allValues = data.series.flatMap(s => s.data.map(p => p.value)).filter(v => v !== null && v !== undefined) as number[]
+  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
+  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
+  const yPadding = (yMax - yMin) * 0.1 // 10% padding
+  
   // 构建series
   const series = data.series.map((s) => {
     const yearData = new Map(s.data.map(p => [p.month_day, p.value]))
     const values = sortedDates.map(date => yearData.get(date) ?? null)
+    
+    // 最近三年有颜色，其他年份灰色
+    const isRecentYear = recentThreeYears.has(s.year)
+    const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
     
     return {
       name: `${s.year}年`,
       type: 'line',
       data: values,
       smooth: true,
-      symbol: 'circle',
-      symbolSize: 4,
+      // 移除数据点
+      symbol: 'none',
+      // 处理断点：使用连续曲线
+      connectNulls: true,
       lineStyle: {
-        width: 2
+        width: 2,
+        color: lineColor
       },
-      itemStyle: { color: getYearColor(s.year) },
-      connectNulls: false
+      itemStyle: { color: lineColor }
     }
   })
   
@@ -303,7 +342,13 @@ const renderChart = (regionPair: string) => {
     legend: {
       data: years.map(y => `${y}年`),
       top: 10,
-      type: 'scroll'
+      type: 'plain', // 不使用滚动
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      orient: 'horizontal',
+      left: 'center'
     },
     grid: {
       left: '3%',
@@ -315,6 +360,8 @@ const renderChart = (regionPair: string) => {
       type: 'category',
       boundaryGap: false,
       data: sortedDates,
+      // X轴不显示标签（默认时间轴）
+      name: '',
       axisLabel: {
         rotate: 45,
         interval: Math.floor(sortedDates.length / 10)
@@ -322,9 +369,14 @@ const renderChart = (regionPair: string) => {
     },
     yAxis: {
       type: 'value',
-      name: data.unit,
+      // Y轴不显示单位
+      name: '',
+      // 自动调整范围
+      min: yMin - yPadding,
+      max: yMax + yPadding,
+      scale: false,
       axisLabel: {
-        formatter: `{value} ${data.unit}`
+        formatter: '{value}'
       }
     },
     series: series as any
@@ -408,6 +460,20 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   padding: 16px;
   min-height: 400px;
+}
+
+.chart-box {
+  /* 图表框：包含标题、图例、图表 */
+  margin-bottom: 8px;
+}
+
+.info-box {
+  /* 说明框：无背景色，位于图表框下方 */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  background-color: transparent;
 }
 
 .chart-title {

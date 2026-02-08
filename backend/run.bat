@@ -1,32 +1,80 @@
 @echo off
-echo Activating virtual environment and starting development server...
-cd /d D:\Workspace\hogprice-insight\backend
+setlocal enabledelayedexpansion
 
-REM Check if virtual environment exists
-if not exist "env\Scripts\activate.bat" (
-    echo ERROR: Virtual environment not found! Please create it first.
+echo [INFO] Activating virtual environment and starting development server...
+
+REM ---- Project root ----
+set "PROJ=D:\Workspace\hogprice-insight\backend"
+cd /d "%PROJ%" || (echo [ERROR] cd failed: "%PROJ%" & pause & exit /b 1)
+
+REM ---- Check venv ----
+set "ACT=%PROJ%\env\Scripts\activate.bat"
+if not exist "%ACT%" (
+    echo [ERROR] Virtual environment not found: "%ACT%"
+    echo [HINT] Create it with:
+    echo        python -m venv env
+    echo        env\Scripts\python -m pip install -U pip
     pause
     exit /b 1
 )
 
-REM Activate virtual environment
-call env\Scripts\activate.bat
+REM ---- Activate venv ----
+call "%ACT%"
 
-REM Check if uvicorn is installed by trying to import it
-python -c "import uvicorn" >nul 2>&1
+REM ---- Use venv python/pip explicitly (avoid system python confusion) ----
+set "PY=%PROJ%\env\Scripts\python.exe"
+set "PIP=%PROJ%\env\Scripts\pip.exe"
+
+if not exist "%PY%" (
+    echo [ERROR] venv python not found: "%PY%"
+    pause
+    exit /b 1
+)
+
+REM ---- Ensure requirements exists ----
+if not exist "%PROJ%\requirements.txt" (
+    echo [ERROR] requirements.txt not found in: "%PROJ%"
+    pause
+    exit /b 1
+)
+
+REM ---- Check uvicorn installed in venv ----
+"%PY%" -c "import uvicorn" >nul 2>&1
 if errorlevel 1 (
-    echo uvicorn not installed, installing dependencies...
-    python -m pip install -r requirements.txt
+    echo [WARN] uvicorn not installed in venv, installing dependencies...
+    "%PY%" -m pip install -U pip
     if errorlevel 1 (
-        echo Dependency installation failed!
+        echo [ERROR] pip upgrade failed!
+        pause
+        exit /b 1
+    )
+
+    "%PY%" -m pip install -r "%PROJ%\requirements.txt"
+    if errorlevel 1 (
+        echo [ERROR] Dependency installation failed!
+        echo [HINT] Try:
+        echo        "%PY%" -m pip install -r "%PROJ%\requirements.txt" -v
         pause
         exit /b 1
     )
 )
 
-echo Starting FastAPI development server...
-echo API Documentation: http://localhost:8000/docs
-echo Press Ctrl+C to stop the server
+REM ---- Start server ----
+echo [INFO] Starting FastAPI development server...
+echo [INFO] API Documentation: http://localhost:8000/docs
+echo [INFO] Press Ctrl+C to stop the server
 echo.
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-keep-alive 600
+
+REM host:
+REM - local dev only: 127.0.0.1
+REM - LAN access:     0.0.0.0
+set "HOST=0.0.0.0"
+set "PORT=8000"
+
+REM Limit reload scanning to project folder (faster & fewer surprises)
+"%PY%" -m uvicorn main:app --reload --reload-dir "%PROJ%" --host %HOST% --port %PORT% --timeout-keep-alive 600
+
+echo.
+echo [INFO] Server stopped.
 pause
+endlocal

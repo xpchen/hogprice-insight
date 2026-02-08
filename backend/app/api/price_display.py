@@ -25,8 +25,51 @@ from app.models.fact_observation_tag import FactObservationTag
 from app.models.dim_metric import DimMetric
 from app.models.dim_region import DimRegion
 from app.models.dim_geo import DimGeo
+from app.services.lunar_alignment_service import (
+    solar_to_lunar,
+    _calculate_lunar_day_index,
+    get_leap_month_info,
+    get_lunar_year_date_range
+)
 
 router = APIRouter(prefix="/api/v1/price-display", tags=["price-display"])
+
+
+def get_source_name_from_metric(metric: DimMetric) -> str:
+    """
+    从DimMetric推断数据来源名称（标准化）
+    
+    根据sheet_name或其他字段判断数据来源：
+    - 钢联相关sheet -> "钢联"
+    - 涌益相关sheet -> "涌益"
+    """
+    if not metric:
+        return "未知"
+    
+    sheet_name = metric.sheet_name or ""
+    
+    # 钢联数据源
+    if any(keyword in sheet_name for keyword in ["分省区猪价", "肥标价差", "毛白价差", "区域价差"]):
+        return "钢联"
+    
+    # 涌益数据源
+    if any(keyword in sheet_name for keyword in ["价格+宰量", "涌益"]):
+        return "涌益"
+    
+    # 默认返回钢联（大部分数据来自钢联）
+    return "钢联"
+
+
+def format_update_date(date_obj: Optional[date]) -> Optional[str]:
+    """
+    格式化更新日期（只显示年月日，不显示时刻）
+    
+    返回格式：YYYY年MM月DD日
+    """
+    if not date_obj:
+        return None
+    
+    return f"{date_obj.year}年{date_obj.month:02d}月{date_obj.day:02d}日"
 
 
 @router.get("/test")
@@ -48,6 +91,8 @@ class SeasonalitySeries(BaseModel):
     year: int
     data: List[SeasonalityDataPoint]
     color: Optional[str] = None
+    is_leap_month: Optional[bool] = False  # 是否为闰月系列
+    leap_month: Optional[int] = None  # 如果是闰月，记录闰月月份
 
 
 class SeasonalityResponse(BaseModel):
@@ -74,6 +119,7 @@ class SlaughterLunarResponse(BaseModel):
     series: List[SeasonalitySeries]
     update_time: Optional[str] = None
     latest_date: Optional[str] = None
+    x_axis_labels: Optional[Dict[int, str]] = None  # 索引到农历日期标签的映射，如 {1: "正月初八", 30: "二月初一"}
 
 
 class LiveWhiteSpreadDualAxisResponse(BaseModel):
@@ -178,7 +224,7 @@ async def get_national_price_seasonality(
             data=data_points
         ))
     
-    # 获取更新时间
+    # 获取更新时间（只返回日期部分，不包含时刻）
     latest_obs = observations[-1] if observations else None
     update_time = latest_obs.obs_date.isoformat() if latest_obs else None
     
@@ -186,7 +232,7 @@ async def get_national_price_seasonality(
         metric_name=metric.metric_name,
         unit=metric.unit or "元/公斤",
         series=series,
-        update_time=update_time,
+        update_time=update_time,  # ISO格式日期字符串（YYYY-MM-DD），不包含时刻
         latest_date=update_time
     )
 
@@ -400,13 +446,21 @@ async def get_slaughter_lunar(
     闰月单独显示
     """
     # 查询日度屠宰量指标
+    # 方法1: 通过parse_json中的metric_key查找（优先，因为用户确认metric_key="YY_D_SLAUGHTER_TOTAL_2"有数据）
     metric = db.query(DimMetric).filter(
-        DimMetric.metric_name.like("%屠宰量%"),
-        DimMetric.sheet_name == "价格+宰量",
+        func.json_extract(DimMetric.parse_json, '$.metric_key') == 'YY_D_SLAUGHTER_TOTAL_2',
         DimMetric.freq == "D"
     ).first()
     
-    # 如果没找到，尝试通过raw_header查找
+    # 方法2: 如果没找到，通过metric_name查找
+    if not metric:
+        metric = db.query(DimMetric).filter(
+            DimMetric.metric_name.like("%屠宰量%"),
+            DimMetric.sheet_name == "价格+宰量",
+            DimMetric.freq == "D"
+        ).first()
+    
+    # 方法3: 如果没找到，尝试通过raw_header查找
     if not metric:
         metric = db.query(DimMetric).filter(
             or_(
@@ -417,8 +471,27 @@ async def get_slaughter_lunar(
             DimMetric.freq == "D"
         ).first()
     
+    # 方法4: 如果还没找到，尝试通过parse_json中包含SLAUGHTER的metric_key查找
+    if not metric:
+        metric = db.query(DimMetric).filter(
+            func.json_extract(DimMetric.parse_json, '$.metric_key').like('%SLAUGHTER%'),
+            DimMetric.freq == "D"
+        ).first()
+    
+    # 方法5: 如果还没找到，尝试直接通过raw_header包含"日度屠宰量"查找
+    if not metric:
+        metric = db.query(DimMetric).filter(
+            DimMetric.raw_header.like("%日度屠宰量%"),
+            DimMetric.freq == "D"
+        ).first()
+    
     if not metric:
         raise HTTPException(status_code=404, detail="未找到日度屠宰量指标")
+    
+    # 获取metric_key用于调试
+    metric_key = None
+    if metric.parse_json and isinstance(metric.parse_json, dict):
+        metric_key = metric.parse_json.get("metric_key")
     
     # 构建查询
     query = db.query(FactObservation).filter(
@@ -442,52 +515,398 @@ async def get_slaughter_lunar(
             latest_date=None
         )
     
-    # TODO: 实现农历对齐逻辑
-    # 当前简化处理：按阳历日期分组
-    # 实际需要：
+    # 实现农历对齐逻辑
     # 1. 将阳历日期转换为农历日期
     # 2. 按农历日期对齐（正月初八到腊月二十八）
     # 3. 处理闰月（单独一条曲线）
     
-    # 按年份分组
-    year_data: Dict[int, List[Dict]] = {}
+    # 按农历年份分组，然后转换为农历对齐
+    # 注意：对于农历对齐的季节性图表，应该按农历年份分组，而不是公历年份
+    # 例如：2026年1-2月的数据属于农历2025年，应该显示为"2025年"系列
+    year_data: Dict[int, List[Dict]] = {}  # key是农历年份
+    conversion_stats = {"total": 0, "success": 0, "failed": 0, "null_index": 0, "null_value": 0}
+    
     for obs in observations:
-        year = obs.obs_date.year
-        if year not in year_data:
-            year_data[year] = []
+        conversion_stats["total"] += 1
         
-        month_day = obs.obs_date.strftime("%m-%d")
-        year_data[year].append({
-            "month_day": month_day,
-            "value": float(obs.value) if obs.value else None,
-            "date": obs.obs_date
+        # 转换为农历日期
+        lunar_info = solar_to_lunar(obs.obs_date)
+        lunar_day_index = lunar_info.get("lunar_day_index")
+        is_leap_month = lunar_info.get("is_leap_month", False)
+        lunar_year = lunar_info.get("lunar_year")
+        lunar_month = lunar_info.get("lunar_month")
+        lunar_day = lunar_info.get("lunar_day")
+        
+        # 使用农历年份作为分组键
+        if lunar_year is None:
+            continue
+        
+        if lunar_year not in year_data:
+            year_data[lunar_year] = []
+        
+        obs_value = float(obs.value) if obs.value is not None else None
+        
+        if obs_value is None:
+            conversion_stats["null_value"] += 1
+        if lunar_day_index is None:
+            conversion_stats["null_index"] += 1
+        else:
+            conversion_stats["success"] += 1
+        
+        year_data[lunar_year].append({
+            "date": obs.obs_date,
+            "value": obs_value,
+            "lunar_day_index": lunar_day_index,
+            "is_leap_month": is_leap_month,
+            "lunar_year": lunar_year,
+            "lunar_month": lunar_month,
+            "lunar_day": lunar_day,
+            "solar_year": obs.obs_date.year  # 保留公历年份用于调试
         })
     
-    # 构建响应
+    # 构建响应：按农历日期索引对齐（正月初八到腊月二十八）
+    # 计算最大索引值（腊月二十八对应的索引）
+    max_index = 0
+    valid_indices = []
+    for year_data_list in year_data.values():
+        for item in year_data_list:
+            if item["lunar_day_index"] is not None:
+                idx = item["lunar_day_index"]
+                if idx > max_index:
+                    max_index = idx
+                valid_indices.append(idx)
+    
+    # 如果没有有效的索引，使用默认范围（假设一年大约350天，从正月初八到腊月二十八）
+    if max_index == 0:
+        max_index = 350  # 默认最大值
+    
+    # 按农历年份构建系列（year是农历年份）
+    # 每个系列的数据按农历日期索引对齐到X轴（正月初八到腊月二十八）
     series = []
-    for year in sorted(year_data.keys()):
+    leap_month_series_map: Dict[Tuple[int, int], List[Dict]] = {}  # (lunar_year, leap_month) -> data
+    
+    for year in sorted(year_data.keys()):  # year是农历年份
+        # 构建该年份的农历日期索引到值的映射
+        index_to_value: Dict[int, float] = {}
+        leap_month_data: Dict[Tuple[int, int], Dict[int, float]] = {}  # (lunar_year, leap_month) -> {index: value}
+        
+        year_valid_count = 0
+        year_leap_count = 0
+        year_none_count = 0
+        
+        for item in year_data[year]:
+            if item["is_leap_month"]:
+                # 闰月数据单独处理
+                year_leap_count += 1
+                key = (item["lunar_year"], item["lunar_month"])
+                if key not in leap_month_data:
+                    leap_month_data[key] = {}
+                # 闰月使用农历月份*30+日期作为索引（简化处理，与正常月份对齐）
+                leap_index = item["lunar_month"] * 30 + item["lunar_day"] if item.get("lunar_day") else None
+                if leap_index and item["value"] is not None:
+                    leap_month_data[key][leap_index] = item["value"]
+            else:
+                # 正常月份数据
+                if item["lunar_day_index"] is not None:
+                    if item["value"] is not None:
+                        year_valid_count += 1
+                        index_to_value[item["lunar_day_index"]] = item["value"]
+                    else:
+                        # 值為None，但索引有效（可能是數據缺失）
+                        pass
+                else:
+                    year_none_count += 1
+        
+        # 如果该年份没有任何有效数据，跳过（不创建空系列）
+        if len(index_to_value) == 0 and len(leap_month_data) == 0:
+            continue
+        
+        # 构建正常月份的数据点（正月初八到腊月二十八）
+        # 数据点按农历日期索引对齐，系列名称使用农历年份
         data_points = []
-        for item in sorted(year_data[year], key=lambda x: x["date"]):
+        non_null_count = 0
+        for index in range(1, max_index + 1):
+            value = index_to_value.get(index)  # 如果索引不在映射中，返回None
+            if value is not None:
+                non_null_count += 1
+            # 使用农历日期索引作为month_day（格式化为字符串）
             data_points.append(SeasonalityDataPoint(
-                year=year,
-                month_day=item["month_day"],
-                value=item["value"]
+                year=year,  # 使用农历年份
+                month_day=str(index),  # 使用农历日期索引作为标识
+                value=value,
+                lunar_day_index=index
             ))
         
-        series.append(SeasonalitySeries(
-            year=year,
-            data=data_points
-        ))
+        if data_points:
+            series.append(SeasonalitySeries(
+                year=year,  # 使用农历年份
+                data=data_points
+            ))
+        
+        # 处理闰月数据
+        for (lunar_year, leap_month), leap_values in leap_month_data.items():
+            key = (lunar_year, leap_month)
+            if key not in leap_month_series_map:
+                leap_month_series_map[key] = []
+            
+            # 构建闰月数据点（与对应月份对齐）
+            # 闰月需要和对应月份对齐，例如2025年闰6月应该和历年的6月对齐
+            # 方法：计算该月份（非闰月）第一天的索引，作为基础索引
+            try:
+                from lunar_python import Lunar
+                from datetime import date as date_class
+                
+                # 获取该月份（非闰月）第一天的公历日期
+                lunar_normal_month_first = Lunar.fromYmd(lunar_year, leap_month, 1)
+                solar_normal_first = lunar_normal_month_first.getSolar()
+                solar_normal_date = date_class(solar_normal_first.getYear(), solar_normal_first.getMonth(), solar_normal_first.getDay())
+                
+                # 计算该月份第一天的索引（相对于正月初八）
+                normal_first_info = solar_to_lunar(solar_normal_date)
+                base_index = normal_first_info.get("lunar_day_index")
+                
+                # 如果base_index为None，使用估算方法
+                if base_index is None:
+                    # 估算：假设每月30天，该月份在农历年中的位置
+                    base_index = (leap_month - 1) * 30 + 1
+            except Exception:
+                # 降级：使用简化方法
+                base_index = (leap_month - 1) * 30 + 1
+            
+            leap_data_points = []
+            # 按日期排序，然后构建数据点
+            for leap_index, value in sorted(leap_values.items()):
+                # leap_index 是 lunar_month * 30 + lunar_day
+                # 提取日期部分
+                day_in_month = leap_index % 30 if leap_index >= 30 else leap_index
+                if day_in_month == 0:
+                    day_in_month = 30
+                
+                # 使用基础索引 + 日期偏移（对齐到对应月份）
+                aligned_index = base_index + day_in_month - 1
+                leap_data_points.append({
+                    "index": aligned_index,
+                    "value": value,
+                    "lunar_day": day_in_month
+                })
+            
+            leap_month_series_map[key].extend(leap_data_points)
+    
+    # 添加闰月系列
+    # 闰月系列使用农历年份（因为系列按农历年份分组）
+    for (lunar_year, leap_month), leap_data in leap_month_series_map.items():
+        # 使用农历年份作为系列年份
+        if lunar_year in year_data:  # 确保该农历年份存在
+            # 构建闰月数据点
+            leap_data_points = []
+            for item in sorted(leap_data, key=lambda x: x["index"]):
+                # 使用对齐后的索引作为month_day，标识为闰月
+                leap_data_points.append(SeasonalityDataPoint(
+                    year=lunar_year,  # 使用农历年份
+                    month_day=str(item["index"]),  # 使用对齐后的索引，与对应月份对齐
+                    value=item["value"],
+                    lunar_day_index=item["index"]  # 使用对齐后的索引
+                ))
+            
+            if leap_data_points:
+                # 添加闰月系列，使用is_leap_month和leap_month字段标识
+                leap_series = SeasonalitySeries(
+                    year=lunar_year,  # 使用农历年份
+                    data=leap_data_points,
+                    is_leap_month=True,  # 标识为闰月系列
+                    leap_month=leap_month  # 记录闰月月份
+                )
+                series.append(leap_series)
     
     latest_obs = observations[-1] if observations else None
     update_time = latest_obs.obs_date.isoformat() if latest_obs else None
+    
+    # 构建X轴标签映射（索引 -> 农历日期标签，MM-dd格式）
+    # 例如：{1: "01-08", 30: "02-01", ...}
+    x_axis_labels: Dict[int, str] = {}
+    if valid_indices and year_data:
+        # 使用第一个农历年份来生成标签
+        sample_lunar_year = list(year_data.keys())[0]
+        try:
+            from lunar_python import Lunar
+            from datetime import date as date_class
+            
+            # 获取正月初一的公历日期
+            lunar_new_year = Lunar.fromYmd(sample_lunar_year, 1, 1)
+            solar_new_year = lunar_new_year.getSolar()
+            new_year_date = date_class(solar_new_year.getYear(), solar_new_year.getMonth(), solar_new_year.getDay())
+            
+            # 为正月初八（索引1）到最大索引生成标签
+            # 为每个索引生成MM-dd格式的农历日期标签
+            for idx in range(1, max_index + 1):
+                # 计算对应的公历日期（正月初八 + idx - 1天）
+                target_date = date_class.fromordinal(new_year_date.toordinal() + idx - 1 + 7)  # +7因为正月初八是第8天
+                # 转换为农历日期
+                lunar_info = solar_to_lunar(target_date)
+                lunar_month = lunar_info.get("lunar_month")
+                lunar_day = lunar_info.get("lunar_day")
+                
+                if lunar_month and lunar_day:
+                    # 生成MM-dd格式的标签（农历月份-日期）
+                    x_axis_labels[idx] = f"{lunar_month:02d}-{lunar_day:02d}"
+        except Exception:
+            # 如果生成标签失败，使用空字典（前端会使用索引）
+            pass
     
     return SlaughterLunarResponse(
         metric_name=metric.metric_name,
         unit=metric.unit or "头",
         series=series,
         update_time=update_time,
-        latest_date=update_time
+        latest_date=update_time,
+        x_axis_labels=x_axis_labels
+    )
+
+
+class SlaughterPriceTrendResponse(BaseModel):
+    """屠宰量&价格走势响应（农历年度日期范围）"""
+    slaughter_data: List[Dict[str, Any]]  # [{date, year, value}]，year为农历年份
+    price_data: List[Dict[str, Any]]  # [{date, year, value}]，year为农历年份
+    available_lunar_years: List[int]  # 可用的农历年份列表
+    update_time: Optional[str] = None
+    latest_date: Optional[str] = None
+
+
+@router.get("/slaughter-price-trend/lunar-year", response_model=SlaughterPriceTrendResponse)
+async def get_slaughter_price_trend_lunar_year(
+    lunar_year: Optional[int] = Query(None, description="农历年份（如2024），如果为None则返回所有可用年份"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user)
+):
+    """
+    获取屠宰量&价格走势数据（农历年度日期范围）
+    
+    日期范围：每年2月20日至次年2月10日
+    条件：
+    - 2月20日必须对应农历的正月
+    - 2月10日（次年）必须对应农历的腊月或之前
+    
+    图例年份为农历年份
+    """
+    # 查询日度屠宰量指标
+    slaughter_metric = db.query(DimMetric).filter(
+        DimMetric.metric_name.like("%屠宰量%"),
+        DimMetric.sheet_name == "价格+宰量",
+        DimMetric.freq == "D"
+    ).first()
+    
+    if not slaughter_metric:
+        slaughter_metric = db.query(DimMetric).filter(
+            or_(
+                DimMetric.raw_header.like("%屠宰量%"),
+                DimMetric.raw_header.like("%宰量%")
+            ),
+            DimMetric.sheet_name == "价格+宰量",
+            DimMetric.freq == "D"
+        ).first()
+    
+    # 查询价格指标
+    price_metric = db.query(DimMetric).filter(
+        DimMetric.metric_name.like("%价格%"),
+        DimMetric.sheet_name == "价格+宰量",
+        DimMetric.freq == "D"
+    ).first()
+    
+    if not slaughter_metric:
+        raise HTTPException(status_code=404, detail="未找到日度屠宰量指标")
+    if not price_metric:
+        raise HTTPException(status_code=404, detail="未找到价格指标")
+    
+    # 获取可用的农历年份范围（最近5年）
+    current_solar_year = datetime.now().year
+    lunar_years_to_check = list(range(current_solar_year - 2, current_solar_year + 3))
+    
+    # 查找符合条件的农历年度日期范围
+    valid_lunar_years: List[int] = []
+    lunar_year_ranges: Dict[int, Tuple[date, date]] = {}
+    
+    for check_year in lunar_years_to_check:
+        date_range = get_lunar_year_date_range(check_year)
+        if date_range:
+            valid_lunar_years.append(check_year)
+            lunar_year_ranges[check_year] = date_range
+    
+    if not valid_lunar_years:
+        return SlaughterPriceTrendResponse(
+            slaughter_data=[],
+            price_data=[],
+            available_lunar_years=[],
+            update_time=None,
+            latest_date=None
+        )
+    
+    # 如果指定了lunar_year，只查询该年份
+    if lunar_year is not None:
+        if lunar_year not in valid_lunar_years:
+            raise HTTPException(status_code=400, detail=f"农历年份{lunar_year}不符合条件或没有数据")
+        valid_lunar_years = [lunar_year]
+    
+    # 查询所有符合条件的日期范围的数据
+    all_start_dates = [r[0] for r in lunar_year_ranges.values()]
+    all_end_dates = [r[1] for r in lunar_year_ranges.values()]
+    min_start_date = min(all_start_dates)
+    max_end_date = max(all_end_dates)
+    
+    # 查询屠宰量数据
+    slaughter_query = db.query(FactObservation).filter(
+        FactObservation.metric_id == slaughter_metric.id,
+        FactObservation.period_type == "day",
+        FactObservation.obs_date >= min_start_date,
+        FactObservation.obs_date <= max_end_date
+    )
+    slaughter_obs = slaughter_query.order_by(FactObservation.obs_date).all()
+    
+    # 查询价格数据
+    price_query = db.query(FactObservation).filter(
+        FactObservation.metric_id == price_metric.id,
+        FactObservation.period_type == "day",
+        FactObservation.obs_date >= min_start_date,
+        FactObservation.obs_date <= max_end_date
+    )
+    price_obs = price_query.order_by(FactObservation.obs_date).all()
+    
+    # 构建响应数据：按农历年度分组
+    slaughter_data: List[Dict[str, Any]] = []
+    price_data: List[Dict[str, Any]] = []
+    
+    for lunar_year_val in valid_lunar_years:
+        start_date, end_date = lunar_year_ranges[lunar_year_val]
+        
+        # 筛选该农历年度范围内的数据
+        for obs in slaughter_obs:
+            if start_date <= obs.obs_date <= end_date:
+                slaughter_data.append({
+                    "date": obs.obs_date.isoformat(),
+                    "year": lunar_year_val,  # 使用农历年份
+                    "value": float(obs.value) if obs.value is not None else None
+                })
+        
+        for obs in price_obs:
+            if start_date <= obs.obs_date <= end_date:
+                price_data.append({
+                    "date": obs.obs_date.isoformat(),
+                    "year": lunar_year_val,  # 使用农历年份
+                    "value": float(obs.value) if obs.value is not None else None
+                })
+    
+    # 获取最新日期
+    latest_date = None
+    if slaughter_obs:
+        latest_date = slaughter_obs[-1].obs_date.isoformat()
+    elif price_obs:
+        latest_date = price_obs[-1].obs_date.isoformat()
+    
+    return SlaughterPriceTrendResponse(
+        slaughter_data=slaughter_data,
+        price_data=price_data,
+        available_lunar_years=valid_lunar_years,
+        update_time=latest_date,
+        latest_date=latest_date
     )
 
 

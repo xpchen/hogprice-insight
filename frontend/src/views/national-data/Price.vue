@@ -17,52 +17,72 @@
       <div class="charts-container">
         <!-- 第一行 -->
         <div class="chart-row">
-          <!-- (1) 全国猪价（季节性） -->
+          <!-- (1) 全国猪价 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">全国猪价（季节性）【数据来源：钢联】</h3>
-            <div v-if="loadingPrice" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <!-- 图表框 -->
+            <div class="chart-box">
+              <h3 class="chart-title">全国猪价</h3>
+              <div v-if="loadingPrice" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!priceSeasonalityData || priceSeasonalityData.series.length === 0" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="priceSeasonalityChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!priceSeasonalityData || priceSeasonalityData.series.length === 0" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="priceSeasonalityChartRef" class="chart-container"></div>
+            <!-- 说明框 -->
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="priceChanges.day5_change"
                 :yoy-change="priceChanges.yoy_change"
                 :day5-change="priceChanges.day5_change"
                 :day10-change="priceChanges.day10_change"
                 :day30-change="priceChanges.day30_change"
-                :unit="priceSeasonalityData.unit"
+                :unit="priceSeasonalityData?.unit"
+              />
+              <DataSourceInfo
+                :source-name="'钢联'"
+                :update-date="formatUpdateDate(priceUpdateTime)"
               />
             </div>
           </div>
 
-          <!-- (2) 标肥价差（季节性） -->
+          <!-- (2) 标肥价差 -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">标肥价差（季节性）【数据来源：钢联】</h3>
-            <div v-if="loadingSpread" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <!-- 图表框 -->
+            <div class="chart-box">
+              <h3 class="chart-title">标肥价差</h3>
+              <div v-if="loadingSpread" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!spreadSeasonalityData || spreadSeasonalityData.series.length === 0" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="spreadSeasonalityChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!spreadSeasonalityData || spreadSeasonalityData.series.length === 0" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="spreadSeasonalityChartRef" class="chart-container"></div>
+            <!-- 说明框 -->
+            <div class="info-box">
               <ChangeAnnotation
                 :current-change="spreadChanges.day5_change"
                 :yoy-change="spreadChanges.yoy_change"
                 :day5-change="spreadChanges.day5_change"
                 :day10-change="spreadChanges.day10_change"
                 :day30-change="spreadChanges.day30_change"
-                :unit="spreadSeasonalityData.unit"
+                :unit="spreadSeasonalityData?.unit"
+              />
+              <DataSourceInfo
+                :source-name="'钢联'"
+                :update-date="formatUpdateDate(spreadUpdateTime)"
               />
             </div>
           </div>
@@ -70,47 +90,67 @@
 
         <!-- 第二行 -->
         <div class="chart-row">
-          <!-- (3) 猪价&标肥价差（可年度筛选） -->
+          <!-- (3) 猪价&标肥价差 -->
           <div class="chart-wrapper">
-            <div class="chart-title-row">
-              <h3 class="chart-title">猪价&标肥价差（可年度筛选）【数据来源：钢联】</h3>
-              <el-select v-model="selectedYear" size="small" @change="handleYearFilterChange" style="width: 120px">
-                <el-option
-                  v-for="year in availableYears"
-                  :key="year"
-                  :label="`${year}年`"
-                  :value="year"
-                />
-              </el-select>
+            <!-- 图表框 -->
+            <div class="chart-box">
+              <div class="chart-title-row">
+                <h3 class="chart-title">猪价&标肥价差</h3>
+                <el-select v-model="selectedYear" size="small" @change="handleYearFilterChange" style="width: 120px">
+                  <el-option
+                    v-for="year in availableYears"
+                    :key="year"
+                    :label="`${year}年`"
+                    :value="year"
+                  />
+                </el-select>
+              </div>
+              <div v-if="loadingPriceSpread" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!priceSpreadData || (priceSpreadData.price_data.length === 0 && priceSpreadData.spread_data.length === 0)" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="priceSpreadChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-if="loadingPriceSpread" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
-            </div>
-            <div v-else-if="!priceSpreadData || (priceSpreadData.price_data.length === 0 && priceSpreadData.spread_data.length === 0)" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="priceSpreadChartRef" class="chart-container"></div>
+            <!-- 说明框 -->
+            <div class="info-box">
+              <DataSourceInfo
+                :source-name="'钢联'"
+                :update-date="formatUpdateDate(priceUpdateTime || spreadUpdateTime)"
+              />
             </div>
           </div>
 
           <!-- (4) 日度屠宰量（农历） -->
           <div class="chart-wrapper">
-            <h3 class="chart-title">日度屠宰量（农历正月初八开始至腊月二十八结束，闰月单独显示）【数据来源：涌益咨询日度数据】</h3>
-            <div v-if="loadingSlaughter" class="loading-placeholder">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span style="margin-left: 10px">加载中...</span>
+            <!-- 图表框 -->
+            <div class="chart-box">
+              <h3 class="chart-title">日度屠宰量（农历）</h3>
+              <div v-if="loadingSlaughter" class="loading-placeholder">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span style="margin-left: 10px">加载中...</span>
+              </div>
+              <div v-else-if="!slaughterLunarData || slaughterLunarData.series.length === 0" class="no-data-placeholder">
+                <el-empty description="暂无数据">
+                  <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
+                </el-empty>
+              </div>
+              <div v-else>
+                <div ref="slaughterLunarChartRef" class="chart-container"></div>
+              </div>
             </div>
-            <div v-else-if="!slaughterLunarData || slaughterLunarData.series.length === 0" class="no-data-placeholder">
-              <el-empty description="暂无数据">
-                <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
-              </el-empty>
-            </div>
-            <div v-else>
-              <div ref="slaughterLunarChartRef" class="chart-container"></div>
+            <!-- 说明框 -->
+            <div class="info-box">
+              <DataSourceInfo
+                :source-name="'涌益'"
+                :update-date="formatUpdateDate(slaughterUpdateTime)"
+              />
             </div>
           </div>
         </div>
@@ -140,6 +180,7 @@ import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import UpdateTimeBadge from '@/components/UpdateTimeBadge.vue'
 import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
+import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import {
   getNationalPriceSeasonality,
   getFatStdSpreadSeasonality,
@@ -187,6 +228,7 @@ const spreadChanges = ref<PriceChangesResponse>({
 // 更新时间
 const priceUpdateTime = ref<string | null>(null)
 const spreadUpdateTime = ref<string | null>(null)
+const slaughterUpdateTime = ref<string | null>(null)
 
 // 年度筛选（单选，默认去年）
 const availableYears = ref<number[]>([])
@@ -221,6 +263,20 @@ const yearColors: Record<number, string> = {
 
 const getYearColor = (year: number): string => {
   return yearColors[year] || '#888888'
+}
+
+// 格式化更新日期（只显示年月日）
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}年${month}月${day}日`
+  } catch {
+    return null
+  }
 }
 
 // 加载全国猪价季节性数据
@@ -322,12 +378,18 @@ const loadSlaughterLunar = async () => {
   loadingSlaughter.value = true
   try {
     const data = await getSlaughterLunar()
+    console.log('日度屠宰量（农历）数据:', data)
     slaughterLunarData.value = data
+    slaughterUpdateTime.value = data.update_time || data.latest_date
     
     await nextTick()
     // 延迟渲染，确保DOM完全准备好
     setTimeout(() => {
-      renderSlaughterLunarChart()
+      if (data.series && data.series.length > 0) {
+        renderSlaughterLunarChart()
+      } else {
+        console.warn('日度屠宰量（农历）数据为空，series数量:', data.series?.length || 0)
+      }
     }, 200)
   } catch (error: any) {
     console.error('加载日度屠宰量数据失败:', error)
@@ -804,14 +866,24 @@ const renderSlaughterLunarChart = () => {
   
   slaughterLunarChart = echarts.init(slaughterLunarChartRef.value)
   
-  // 收集所有唯一的month_day作为X轴
+  // 收集所有唯一的month_day作为X轴（农历日期索引）
   const allMonthDays = new Set<string>()
   slaughterLunarData.value.series.forEach(s => {
     s.data.forEach(d => {
       if (d.month_day) allMonthDays.add(d.month_day)
     })
   })
-  const xAxisData = Array.from(allMonthDays).sort()
+  const xAxisData = Array.from(allMonthDays).sort((a, b) => {
+    // 按数字排序（month_day是农历日期索引字符串）
+    const numA = parseInt(a) || 0
+    const numB = parseInt(b) || 0
+    return numA - numB
+  })
+  
+  
+  // 计算最近三年（用于颜色规则）
+  const sortedYears = [...slaughterLunarData.value.series.map(s => s.year)].sort((a, b) => b - a)
+  const recentThreeYears = new Set(sortedYears.slice(0, 3))
   
   // 为每个年份构建数据，对齐到X轴
   const series = slaughterLunarData.value.series.map(s => {
@@ -826,18 +898,41 @@ const renderSlaughterLunarChart = () => {
     // 按照X轴顺序提取值
     const values = xAxisData.map(md => valueMap.get(md) ?? null)
     
+    // 判断是否为闰月系列
+    const isLeapMonth = s.is_leap_month === true
+    const leapMonth = s.leap_month
+    
+    // 最近三年有颜色，其他年份灰色（闰月也遵循这个规则）
+    const isRecentYear = recentThreeYears.has(s.year)
+    const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
+    
+    // 图例名称：如果是闰月，显示"2025年闰6月"；否则显示"2025年"
+    const seriesName = isLeapMonth && leapMonth 
+      ? `${s.year}年闰${leapMonth}月`
+      : `${s.year}年`
+    
     return {
-      name: `${s.year}年`,
+      name: seriesName,
       type: 'line',
       data: values,
       smooth: true,
-      symbol: 'circle',
-      symbolSize: 4,
-      lineStyle: { width: 2 },
-      itemStyle: { color: getYearColor(s.year) },
-      connectNulls: false
+      // 移除数据点
+      symbol: 'none',
+      // 处理断点：使用连续曲线
+      connectNulls: true,
+      lineStyle: { 
+        width: 2,
+        color: lineColor
+      },
+      itemStyle: { color: lineColor }
     }
   })
+  
+  // 计算Y轴范围（自动调整）
+  const allValues = series.flatMap(s => s.data).filter(v => v !== null && v !== undefined) as number[]
+  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
+  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
+  const yPadding = (yMax - yMin) * 0.1 // 10% padding
   
   const option: echarts.EChartsOption = {
     tooltip: {
@@ -845,7 +940,14 @@ const renderSlaughterLunarChart = () => {
       axisPointer: { type: 'cross' },
       formatter: (params: any) => {
         if (!Array.isArray(params)) return ''
-        let result = `<div style="margin-bottom: 4px;"><strong>${params[0].axisValue}</strong></div>`
+        // 获取X轴值（索引），转换为农历日期标签（MM-dd格式）
+        const index = parseInt(params[0].axisValue) || 0
+        let axisLabel = params[0].axisValue
+        if (slaughterLunarData.value.x_axis_labels && slaughterLunarData.value.x_axis_labels[index]) {
+          axisLabel = slaughterLunarData.value.x_axis_labels[index]
+        }
+        
+        let result = `<div style="margin-bottom: 4px;"><strong>${axisLabel}</strong></div>`
         params.forEach((param: any) => {
           const value = param.value !== null && param.value !== undefined 
             ? param.value.toFixed(0) 
@@ -859,10 +961,15 @@ const renderSlaughterLunarChart = () => {
       }
     },
     legend: {
-      data: slaughterLunarData.value.series.map(s => `${s.year}年`),
+      data: series.map(s => s.name),  // 使用series中的name（已经处理了闰月）
       top: 10,
-      type: 'scroll',
-      orient: 'horizontal'
+      type: 'plain', // 不使用滚动
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      orient: 'horizontal',
+      left: 'center'
     },
     grid: {
       left: '3%',
@@ -875,28 +982,38 @@ const renderSlaughterLunarChart = () => {
       type: 'category',
       boundaryGap: false,
       data: xAxisData,
+      // X轴不显示标签（默认时间轴）
+      name: '',
       axisLabel: {
         rotate: 45,
-        interval: 'auto'
+        interval: 'auto',
+        // 如果有x_axis_labels，使用农历日期标签（MM-dd格式）；否则使用索引
+        formatter: (value: string) => {
+          const index = parseInt(value)
+          if (slaughterLunarData.value.x_axis_labels && slaughterLunarData.value.x_axis_labels[index]) {
+            return slaughterLunarData.value.x_axis_labels[index]
+          }
+          // 如果没有标签，显示索引（作为后备）
+          return value
+        }
       }
     },
     yAxis: {
       type: 'value',
-      name: `屠宰量（${slaughterLunarData.value.unit}）`
+      // Y轴不显示单位
+      name: '',
+      // 自动调整范围
+      min: yMin - yPadding,
+      max: yMax + yPadding,
+      scale: false
     },
     series: series,
+    // 只保留内部缩放，删除日期筛选进度条
     dataZoom: [
       {
         type: 'inside',
         start: 0,
         end: 100
-      },
-      {
-        type: 'slider',
-        start: 0,
-        end: 100,
-        height: 20,
-        bottom: 10
       }
     ]
   }
@@ -1050,20 +1167,37 @@ onBeforeUnmount(() => {
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 20px; /* 缩小间距 */
 }
 
 .chart-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 30px;
+  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
+  border: 1px solid #e4e7ed; /* 共用边框 */
+  border-radius: 4px;
+  padding: 16px; /* 减少padding */
+  background: #fff;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .chart-wrapper {
-  background: #fff;
-  border-radius: 4px;
-  padding: 20px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  /* 移除单独的边框和背景，因为已经在chart-row中设置了 */
+  padding: 0;
+}
+
+.chart-box {
+  /* 图表框：包含标题、图例、图表 */
+  margin-bottom: 8px;
+}
+
+.info-box {
+  /* 说明框：无背景色，位于图表框下方 */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  background-color: transparent;
 }
 
 .chart-title {

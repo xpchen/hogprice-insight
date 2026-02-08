@@ -1,6 +1,6 @@
 """农历对齐服务"""
-from typing import Dict, Optional
-from datetime import date, datetime
+from typing import Dict, Optional, List, Tuple
+from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
@@ -8,7 +8,7 @@ from app.models import FactIndicatorTs
 
 # 尝试导入lunar-python库，如果没有则使用简化实现
 try:
-    from lunar_python import Lunar
+    from lunar_python import Lunar, Solar
     HAS_LUNAR_LIB = True
 except ImportError:
     HAS_LUNAR_LIB = False
@@ -33,22 +33,54 @@ def solar_to_lunar(solar_date: date) -> Dict:
     """
     if HAS_LUNAR_LIB:
         # 使用lunar-python库
-        lunar = Lunar.fromYmd(solar_date.year, solar_date.month, solar_date.day)
-        lunar_year = lunar.getYear()
-        lunar_month = lunar.getMonth()
-        lunar_day = lunar.getDay()
-        is_leap_month = lunar.isLeapMonth()
-        
-        # 计算lunar_day_index（以正月初八为起点）
-        lunar_day_index = _calculate_lunar_day_index(lunar_year, lunar_month, lunar_day, is_leap_month)
-        
-        return {
-            "lunar_year": lunar_year,
-            "lunar_month": lunar_month,
-            "lunar_day": lunar_day,
-            "is_leap_month": is_leap_month,
-            "lunar_day_index": lunar_day_index
-        }
+        try:
+            # 注意：Lunar.fromYmd() 的参数是农历日期，不是公历日期！
+            # 我们需要先创建公历日期（Solar），然后转换为农历（Lunar）
+            solar = Solar.fromYmd(solar_date.year, solar_date.month, solar_date.day)
+            lunar = solar.getLunar()
+            lunar_year = lunar.getYear()
+            lunar_month = lunar.getMonth()
+            lunar_day = lunar.getDay()
+            
+            
+            # 检查是否为闰月：通过月份中文名称判断
+            is_leap_month = False
+            try:
+                # 方法：通过月份中文名称判断（如果包含"闰"字则为闰月）
+                month_str = str(lunar.getMonthInChinese())
+                is_leap_month = '闰' in month_str
+            except Exception as e:
+                # 如果无法获取中文月份，尝试其他方法
+                try:
+                    # 尝试通过创建该月第一天来判断
+                    lunar_first = Lunar.fromYmd(lunar_year, lunar_month, 1)
+                    month_str = str(lunar_first.getMonthInChinese())
+                    is_leap_month = '闰' in month_str
+                except:
+                    is_leap_month = False
+            
+            # 计算lunar_day_index（以正月初八为起点）
+            lunar_day_index = _calculate_lunar_day_index(lunar_year, lunar_month, lunar_day, is_leap_month)
+            
+            result = {
+                "lunar_year": lunar_year,
+                "lunar_month": lunar_month,
+                "lunar_day": lunar_day,
+                "is_leap_month": is_leap_month,
+                "lunar_day_index": lunar_day_index
+            }
+            
+            
+            return result
+        except Exception:
+            # 降级处理
+            return {
+                "lunar_year": solar_date.year,
+                "lunar_month": solar_date.month,
+                "lunar_day": solar_date.day,
+                "is_leap_month": False,
+                "lunar_day_index": None
+            }
     else:
         # 简化实现：返回基本结构，实际计算需要安装lunar-python
         return {
@@ -56,50 +88,155 @@ def solar_to_lunar(solar_date: date) -> Dict:
             "lunar_month": solar_date.month,
             "lunar_day": solar_date.day,
             "is_leap_month": False,
-            "lunar_day_index": solar_date.timetuple().tm_yday  # 使用公历天数作为临时替代
+            "lunar_day_index": None  # 需要lunar-python库才能计算
         }
 
 
-def _calculate_lunar_day_index(lunar_year: int, lunar_month: int, lunar_day: int, is_leap_month: bool) -> int:
+def _calculate_lunar_day_index(lunar_year: int, lunar_month: int, lunar_day: int, is_leap_month: bool) -> Optional[int]:
     """
-    计算农历日期索引（以正月初八为起点，index=1）
+    计算农历日期索引（以正月初八为起点，index=1，到腊月二十八结束）
     
     对齐规则：
     - 正月初八 = index 1
     - 正月初九 = index 2
     - ...
-    - 闰月单独计算（从1开始）
+    - 腊月二十八 = 最后一个有效索引
+    - 闰月：返回None，需要单独处理
+    
+    Returns:
+        int: 农历日期索引（1开始），如果是闰月或不在范围内则返回None
     """
     if HAS_LUNAR_LIB:
-        # 计算从正月初一到当前日期的天数
-        # 正月初八是第8天，所以index = 天数 - 7
         try:
-            # 获取正月初一的日期
+            from lunar_python import Solar
+            # 获取正月初一的日期（先创建农历日期，再转换为公历）
             lunar_new_year = Lunar.fromYmd(lunar_year, 1, 1)
-            current_lunar = Lunar.fromYmd(lunar_year, lunar_month, lunar_day)
+            # 如果当前日期是闰月，需要特殊处理
+            # 先尝试创建正常月份，如果失败再尝试闰月
+            try:
+                current_lunar = Lunar.fromYmd(lunar_year, lunar_month, lunar_day)
+            except:
+                # 如果是闰月，可能需要使用不同的方法
+                # 暂时使用正常月份
+                current_lunar = Lunar.fromYmd(lunar_year, lunar_month, lunar_day)
             
+            # 闰月单独处理，返回None
             if is_leap_month:
-                # 闰月：单独计算，从1开始
-                # 简化处理：使用月份*30+日期作为索引
-                return lunar_month * 30 + lunar_day
+                return None
             
             # 计算从正月初一到当前日期的天数
-            days_diff = (current_lunar.getSolar().toYmd() - lunar_new_year.getSolar().toYmd()).days
+            solar_new_year = lunar_new_year.getSolar()
+            solar_current = current_lunar.getSolar()
+            
+            # 获取公历日期对象（toYmd()返回字符串，需要转换为date对象）
+            # lunar-python的getSolar()返回Solar对象，需要获取年月日
+            from datetime import date as date_class
+            new_year_date = date_class(solar_new_year.getYear(), solar_new_year.getMonth(), solar_new_year.getDay())
+            current_date = date_class(solar_current.getYear(), solar_current.getMonth(), solar_current.getDay())
+            
+            # 计算天数差
+            days_diff = (current_date - new_year_date).days
             
             # 正月初八是第8天，所以index = days_diff - 7
             lunar_day_index = days_diff - 7
             
-            # 确保index >= 1
-            if lunar_day_index < 1:
-                lunar_day_index = 1
+            # 调试：打印计算过程
+            # 注意：这里的lunar_year/lunar_month/lunar_day是传入的参数（应该已经是正确的农历日期）
+            # current_date是转换后的公历日期（用于计算天数差）
+            # 如果看到"农历=2025年11月14日, 公历=2026-01-02"这样的错误，说明传入的参数本身就是错的
+            # 应该在调用此函数之前（solar_to_lunar函数中）验证转换结果
+            
+            # 检查是否在有效范围内（正月初八到腊月二十八）
+            # 获取腊月二十八的日期（农历日期转换为公历）
+            try:
+                lunar_dec_28 = Lunar.fromYmd(lunar_year, 12, 28)
+                solar_dec_28 = lunar_dec_28.getSolar()
+                
+                # 获取腊月二十八的公历日期
+                solar_dec_28_date = date_class(solar_dec_28.getYear(), solar_dec_28.getMonth(), solar_dec_28.getDay())
+                days_to_dec_28 = (solar_dec_28_date - new_year_date).days - 7
+                
+                # 如果当前日期在正月初八之前，返回None
+                if lunar_day_index < 1:
+                    return None
+                
+                # 放宽限制：允许超出腊月二十八的数据（最多到400天）
+                # 这样可以包含跨年的数据（如2026年2月的数据可能属于2025年农历年）
+                if lunar_day_index > days_to_dec_28:
+                    # 如果超出太多（>400天），返回None；否则允许
+                    if lunar_day_index > 400:
+                        return None
+            except Exception as e:
+                # 如果无法获取腊月二十八，使用简化判断
+                if lunar_day_index < 1:
+                    return None
+                # 允许最大400天的范围
+                if lunar_day_index > 400:
+                    return None
             
             return lunar_day_index
-        except:
-            # 如果计算失败，使用简化方法
-            return lunar_month * 30 + lunar_day
+        except Exception as e:
+            # 如果计算失败，返回None
+            return None
     else:
-        # 简化实现
-        return lunar_month * 30 + lunar_day
+        # 简化实现：如果没有lunar-python库，返回None
+        return None
+
+
+def get_leap_month_info(lunar_year: int) -> Optional[Dict]:
+    """
+    获取指定农历年份的闰月信息
+    
+    Returns:
+        {
+            "leap_month": int,  # 闰月月份（如6表示闰六月）
+            "leap_month_start": date,  # 闰月开始日期（公历）
+            "leap_month_end": date  # 闰月结束日期（公历）
+        } 或 None（如果没有闰月）
+    """
+    if not HAS_LUNAR_LIB:
+        return None
+    
+    try:
+        # 检查是否有闰月
+        # 遍历12个月，查找闰月
+        for month in range(1, 13):
+            try:
+                # 尝试创建该月的日期
+                lunar_test = Lunar.fromYmd(lunar_year, month, 1)
+                
+                # 检查是否为闰月：通过月份中文名称判断
+                is_leap = False
+                try:
+                    month_str = str(lunar_test.getMonthInChinese())
+                    is_leap = '闰' in month_str
+                except:
+                    pass
+                
+                if is_leap:
+                    # 找到闰月
+                    leap_start = lunar_test.getSolar().toYmd()
+                    # 获取闰月最后一天
+                    try:
+                        leap_days = lunar_test.getDayCount()
+                        leap_end_date = leap_start + timedelta(days=leap_days - 1)
+                    except:
+                        # 如果无法获取天数，使用估算值（30天）
+                        leap_end_date = leap_start + timedelta(days=29)
+                    
+                    return {
+                        "leap_month": month,
+                        "leap_month_start": leap_start,
+                        "leap_month_end": leap_end_date
+                    }
+            except Exception as e:
+                print(f"检查月份 {month} 失败: {e}")
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"获取闰月信息失败: {e}")
+        return None
 
 
 def add_lunar_fields(
@@ -214,3 +351,53 @@ def get_seasonality_data_with_lunar(
         result[year]["dates"].append(record.trade_date.isoformat())
     
     return result
+
+
+def get_lunar_year_date_range(lunar_year: int) -> Optional[Tuple[date, date]]:
+    """
+    获取农历年度的日期范围（2月20日至次年2月10日）
+    
+    条件：
+    - 2月20日必须对应农历的正月
+    - 2月10日（次年）必须对应农历的腊月或之前
+    
+    Args:
+        lunar_year: 农历年份（如2024）
+    
+    Returns:
+        (start_date, end_date) 或 None（如果不符合条件）
+    """
+    if not HAS_LUNAR_LIB:
+        return None
+    
+    try:
+        # 获取农历年对应的公历年份范围
+        # 农历年通常跨越两个公历年份
+        # 例如：2024年农历年从2024年2月10日（正月初一）到2025年1月28日（腊月二十九）
+        
+        # 获取正月初一的公历日期
+        lunar_new_year = Lunar.fromYmd(lunar_year, 1, 1)
+        solar_new_year = lunar_new_year.getSolar().toYmd()
+        
+        # 计算2月20日（正月初一所在公历年份）
+        solar_year = solar_new_year.year
+        feb_20 = date(solar_year, 2, 20)
+        
+        # 计算次年2月10日
+        next_year_feb_10 = date(solar_year + 1, 2, 10)
+        
+        # 检查条件：
+        # 1. 2月20日必须对应农历的正月
+        feb_20_lunar = Lunar.fromYmd(solar_year, 2, 20)
+        if feb_20_lunar.getMonth() != 1:
+            return None
+        
+        # 2. 次年2月10日必须对应农历的腊月或之前
+        next_feb_10_lunar = Lunar.fromYmd(solar_year + 1, 2, 10)
+        if next_feb_10_lunar.getMonth() > 12:
+            return None
+        
+        return (feb_20, next_year_feb_10)
+    except Exception as e:
+        print(f"获取农历年度日期范围失败: {e}")
+        return None

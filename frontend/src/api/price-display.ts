@@ -13,6 +13,8 @@ export interface SeasonalitySeries {
     lunar_day_index?: number | null
   }>
   color?: string | null
+  is_leap_month?: boolean | null  // 是否为闰月系列
+  leap_month?: number | null  // 如果是闰月，记录闰月月份
 }
 
 export interface SeasonalityResponse {
@@ -21,6 +23,7 @@ export interface SeasonalityResponse {
   series: SeasonalitySeries[]
   update_time: string | null
   latest_date: string | null
+  x_axis_labels?: Record<number, string> | null  // 索引到农历日期标签的映射
 }
 
 // 价格和价差响应

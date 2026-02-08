@@ -1,10 +1,12 @@
 <template>
   <div class="time-range-selector">
     <el-radio-group v-model="selectedRange" @change="handleRangeChange" size="small">
-      <el-radio-button label="1m">近1月</el-radio-button>
       <el-radio-button label="3m">近3月</el-radio-button>
       <el-radio-button label="6m">近6月</el-radio-button>
       <el-radio-button label="1y">近1年</el-radio-button>
+      <el-radio-button label="2y">近2年</el-radio-button>
+      <el-radio-button label="3y">近3年</el-radio-button>
+      <el-radio-button label="all">全部日期</el-radio-button>
       <el-radio-button label="custom">自定义</el-radio-button>
     </el-radio-group>
     <el-date-picker
@@ -35,18 +37,15 @@ const emit = defineEmits<{
   'change': [value: [string, string]]
 }>()
 
-const selectedRange = ref<string>('1y')
+const selectedRange = ref<string>('all')
 const customRange = ref<[Date, Date] | null>(null)
 
 // 计算日期范围
-const getDateRange = (range: string): [string, string] => {
+const getDateRange = (range: string): [string, string] | undefined => {
   const end = new Date()
   const start = new Date()
   
   switch (range) {
-    case '1m':
-      start.setMonth(start.getMonth() - 1)
-      break
     case '3m':
       start.setMonth(start.getMonth() - 3)
       break
@@ -56,6 +55,15 @@ const getDateRange = (range: string): [string, string] => {
     case '1y':
       start.setFullYear(start.getFullYear() - 1)
       break
+    case '2y':
+      start.setFullYear(start.getFullYear() - 2)
+      break
+    case '3y':
+      start.setFullYear(start.getFullYear() - 3)
+      break
+    case 'all':
+      // 全部日期：返回undefined，表示不限制日期范围
+      return undefined
     case 'custom':
       if (customRange.value) {
         return [
@@ -63,7 +71,9 @@ const getDateRange = (range: string): [string, string] => {
           customRange.value[1].toISOString().split('T')[0]
         ]
       }
-      break
+      return undefined
+    default:
+      return undefined
   }
   
   return [
@@ -75,8 +85,15 @@ const getDateRange = (range: string): [string, string] => {
 const handleRangeChange = () => {
   if (selectedRange.value !== 'custom') {
     const range = getDateRange(selectedRange.value)
-    emit('update:modelValue', range)
-    emit('change', range)
+    // 如果range是undefined（全部日期），传递一个很大的日期范围
+    if (range === undefined) {
+      const allRange: [string, string] = ['2000-01-01', '2099-12-31']
+      emit('update:modelValue', allRange)
+      emit('change', allRange)
+    } else {
+      emit('update:modelValue', range)
+      emit('change', range)
+    }
   }
 }
 

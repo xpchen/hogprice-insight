@@ -69,10 +69,6 @@
             <el-icon><DataAnalysis /></el-icon>
             <template #title>B1. 省区范围</template>
           </el-menu-item>
-          <el-menu-item index="/province-summary/indicators">
-            <el-icon><DataAnalysis /></el-icon>
-            <template #title>B2. 省区指标包</template>
-          </el-menu-item>
         </el-sub-menu>
 
         <!-- C. 期货市场数据 -->
@@ -120,6 +116,10 @@
           <el-menu-item index="/enterprise-statistics/structure-analysis">
             <el-icon><DataAnalysis /></el-icon>
             <template #title>D4. 结构分析</template>
+          </el-menu-item>
+          <el-menu-item index="/enterprise-statistics/group-price">
+            <el-icon><DataAnalysis /></el-icon>
+            <template #title>D4. 集团价格</template>
           </el-menu-item>
         </el-sub-menu>
 
