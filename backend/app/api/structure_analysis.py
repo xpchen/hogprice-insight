@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 from typing import List, Optional
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from pydantic import BaseModel
 import math
 
@@ -20,6 +20,33 @@ from app.models.raw_file import RawFile
 router = APIRouter(prefix="/api/v1/structure-analysis", tags=["structure-analysis"])
 
 
+def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None):
+    """获取raw_table数据"""
+    import json
+    query = db.query(RawSheet).join(RawFile)
+    
+    if filename_pattern:
+        query = query.filter(RawFile.filename.like(f'%{filename_pattern}%'))
+    
+    sheet = query.filter(RawSheet.sheet_name == sheet_name).first()
+    
+    if not sheet:
+        return None
+    
+    raw_table = db.query(RawTable).filter(
+        RawTable.raw_sheet_id == sheet.id
+    ).first()
+    
+    if not raw_table:
+        return None
+    
+    table_data = raw_table.table_json
+    if isinstance(table_data, str):
+        table_data = json.loads(table_data)
+    
+    return table_data
+
+
 class StructureDataPoint(BaseModel):
     """结构分析数据点"""
     date: str  # 日期 YYYY-MM-DD
@@ -27,10 +54,27 @@ class StructureDataPoint(BaseModel):
     value: Optional[float] = None  # 环比值（百分比）
 
 
+class StructureTableRow(BaseModel):
+    """结构分析表格行"""
+    month: str  # 月份 YYYY-MM
+    cr20: Optional[float] = None  # CR20集团出栏环比
+    yongyi: Optional[float] = None  # 涌益出栏环比
+    ganglian: Optional[float] = None  # 钢联出栏环比（全国）
+    ministry_scale: Optional[float] = None  # 农业部规模场出栏环比
+    ministry_scattered: Optional[float] = None  # 农业部散户出栏环比
+    slaughter: Optional[float] = None  # 定点企业屠宰环比
+
+
 class StructureAnalysisResponse(BaseModel):
-    """结构分析响应"""
+    """结构分析响应（图表格式）"""
     data: List[StructureDataPoint]
     latest_date: Optional[str] = None  # 最新数据日期
+
+
+class StructureTableResponse(BaseModel):
+    """结构分析表格响应"""
+    data: List[StructureTableRow]
+    latest_month: Optional[str] = None  # 最新月份
 
 
 def _get_cr20_month_on_month(db: Session) -> List[StructureDataPoint]:
@@ -302,8 +346,19 @@ def _get_yongyi_month_on_month(db: Session) -> List[StructureDataPoint]:
 def _get_ganglian_month_on_month(db: Session, scale_type: str = "全国") -> List[StructureDataPoint]:
     """获取钢联月度出栏环比
     scale_type: 全国、规模场、中小散户
+    数据来源：钢联自动更新模板 -> 月度出栏 sheet
     """
-    # 查找"月度数据"sheet中的出栏数指标
+    # 优先从"月度出栏"sheet读取原始数据
+    monthly_output_data = _get_raw_table_data(db, "月度出栏", "钢联自动更新模板")
+    
+    if monthly_output_data and len(monthly_output_data) > 2:
+        # 从原始数据中提取
+        # 需要分析sheet结构来确定列索引
+        # 暂时先尝试从fact_observation获取
+        pass
+    
+    # 如果"月度出栏"sheet不存在或没有数据，尝试从fact_observation获取
+    # 查找"月度数据"sheet中的出栏数指标（作为备选方案）
     output_metric = db.query(DimMetric).filter(
         DimMetric.sheet_name == "月度数据",
         DimMetric.raw_header == "猪：出栏数：中国（月）"
@@ -349,60 +404,162 @@ def _get_ganglian_month_on_month(db: Session, scale_type: str = "全国") -> Lis
 def _get_ministry_agriculture_month_on_month(db: Session, scale_type: str = "全国") -> List[StructureDataPoint]:
     """获取农业部出栏环比
     scale_type: 全国、规模场、中小散户
+    数据来源：NYB sheet（来自2、【生猪产业数据】.xlsx）
+    - T列（索引19）：出栏环比-全国
+    - U列（索引20）：出栏环比-规模场
+    - V列（索引21）：出栏环比-小散户
     """
-    # TODO: 需要确认农业部数据的指标名称和sheet名称
-    # 目前未找到农业部数据，返回空列表
-    return []
+    # 获取NYB数据
+    nyb_data = _get_raw_table_data(db, "NYB", "2、【生猪产业数据】")
+    
+    if not nyb_data or len(nyb_data) < 3:
+        return []
+    
+    # 确定列索引
+    col_idx = None
+    if scale_type == "全国":
+        col_idx = 19  # T列
+    elif scale_type == "规模场":
+        col_idx = 20  # U列
+    elif scale_type == "中小散户" or scale_type == "散户":
+        col_idx = 21  # V列
+    else:
+        return []
+    
+    result = []
+    # 从第3行开始（索引2）解析数据
+    for row_idx in range(2, len(nyb_data)):
+        row = nyb_data[row_idx]
+        
+        if len(row) <= col_idx:
+            continue
+        
+        date_val = row[1] if len(row) > 1 else None  # B列（索引1）是日期
+        value_val = row[col_idx] if len(row) > col_idx else None
+        
+        if not date_val or value_val is None or value_val == "":
+            continue
+        
+        # 解析日期
+        date_obj = None
+        if isinstance(date_val, str):
+            try:
+                if 'T' in date_val:
+                    date_str = date_val.split('T')[0]
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                else:
+                    date_str = date_val.split()[0] if ' ' in date_val else date_val
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except:
+                continue
+        elif isinstance(date_val, (int, float)):
+            try:
+                excel_epoch = datetime(1899, 12, 30)
+                date_obj = (excel_epoch + timedelta(days=int(date_val))).date()
+            except:
+                continue
+        elif hasattr(date_val, 'date'):
+            date_obj = date_val.date()
+        elif isinstance(date_val, date):
+            date_obj = date_val
+        
+        if not date_obj:
+            continue
+        
+        # 解析环比值
+        try:
+            value_float = float(value_val)
+            if math.isnan(value_float) or math.isinf(value_float):
+                continue
+            
+            # 如果值小于1，认为是小数形式（如0.05），需要乘以100转换为百分比
+            # 如果值大于1，认为已经是百分比形式（如5）
+            if abs(value_float) < 1:
+                value_float = value_float * 100
+            
+            result.append(StructureDataPoint(
+                date=date_obj.isoformat(),
+                source=f"农业部-{scale_type}",
+                value=round(value_float, 2)
+            ))
+        except (ValueError, TypeError):
+            continue
+    
+    return sorted(result, key=lambda x: x.date)
 
 
 def _get_slaughter_month_on_month(db: Session) -> List[StructureDataPoint]:
-    """获取定点企业屠宰环比"""
-    # 查找屠宰相关的指标（日度屠宰量）
-    slaughter_metric = db.query(DimMetric).filter(
-        DimMetric.raw_header.like('%屠宰%'),
-        or_(
-            DimMetric.raw_header.like('%日度屠宰量%'),
-            DimMetric.raw_header.like('%日屠宰量%')
-        )
-    ).first()
+    """获取定点企业屠宰环比
+    数据来源：A1供给预测 sheet（来自2、【生猪产业数据】.xlsx）
+    - AG列（索引32）：定点屠宰
+    - AH列（索引33）：环比
+    """
+    # 获取A1供给预测数据
+    a1_data = _get_raw_table_data(db, "A1供给预测", "2、【生猪产业数据】")
     
-    if not slaughter_metric:
+    if not a1_data or len(a1_data) < 3:
         return []
     
-    # 查询月度聚合数据（需要按月份聚合日度数据）
-    # 先查询所有日度数据
-    daily_obs = db.query(
-        func.date_format(FactObservation.obs_date, '%Y-%m-01').label('month'),
-        func.sum(FactObservation.value).label('monthly_total')
-    ).filter(
-        FactObservation.metric_id == slaughter_metric.id,
-        FactObservation.period_type == 'day'
-    ).group_by('month').order_by('month').all()
-    
-    if len(daily_obs) < 2:
-        return []
-    
-    # 计算环比
     result = []
-    for i in range(1, len(daily_obs)):
-        prev_value = float(daily_obs[i-1].monthly_total) if daily_obs[i-1].monthly_total else None
-        curr_value = float(daily_obs[i].monthly_total) if daily_obs[i].monthly_total else None
+    # 从第3行开始（索引2）解析数据
+    for row_idx in range(2, len(a1_data)):
+        row = a1_data[row_idx]
         
-        # 检查值是否有效（不是None、NaN或0）
-        if (prev_value is not None and curr_value is not None and
-            not math.isnan(prev_value) and not math.isnan(curr_value) and
-            prev_value > 0):
-            mom = (curr_value - prev_value) / prev_value * 100
-            # 检查计算结果是否为NaN或Inf
-            if not math.isnan(mom) and not math.isinf(mom):
-                # 使用月份的第一天作为日期
-                result.append(StructureDataPoint(
-                    date=f"{daily_obs[i].month}-01",
-                    source="定点企业屠宰",
-                    value=round(mom, 2)
-                ))
+        if len(row) <= 33:
+            continue
+        
+        date_val = row[1] if len(row) > 1 else None  # B列（索引1）是日期
+        mom_val = row[33] if len(row) > 33 else None  # AH列（索引33）是环比
+        
+        if not date_val or mom_val is None or mom_val == "":
+            continue
+        
+        # 解析日期
+        date_obj = None
+        if isinstance(date_val, str):
+            try:
+                if 'T' in date_val:
+                    date_str = date_val.split('T')[0]
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                else:
+                    date_str = date_val.split()[0] if ' ' in date_val else date_val
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except:
+                continue
+        elif isinstance(date_val, (int, float)):
+            try:
+                excel_epoch = datetime(1899, 12, 30)
+                date_obj = (excel_epoch + timedelta(days=int(date_val))).date()
+            except:
+                continue
+        elif hasattr(date_val, 'date'):
+            date_obj = date_val.date()
+        elif isinstance(date_val, date):
+            date_obj = date_val
+        
+        if not date_obj:
+            continue
+        
+        # 解析环比值
+        try:
+            mom_float = float(mom_val)
+            if math.isnan(mom_float) or math.isinf(mom_float):
+                continue
+            
+            # 如果值小于1，认为是小数形式（如0.05），需要乘以100转换为百分比
+            # 如果值大于1，认为已经是百分比形式（如5）
+            if abs(mom_float) < 1:
+                mom_float = mom_float * 100
+            
+            result.append(StructureDataPoint(
+                date=date_obj.isoformat(),
+                source="定点企业屠宰",
+                value=round(mom_float, 2)
+            ))
+        except (ValueError, TypeError):
+            continue
     
-    return result
+    return sorted(result, key=lambda x: x.date)
 
 
 @router.get("/data", response_model=StructureAnalysisResponse)
@@ -411,7 +568,7 @@ async def get_structure_analysis_data(
     db: Session = Depends(get_db)
 ):
     """
-    获取结构分析数据
+    获取结构分析数据（图表格式）
     """
     # 解析数据源列表
     if sources:
@@ -465,4 +622,90 @@ async def get_structure_analysis_data(
     return StructureAnalysisResponse(
         data=filtered_data,
         latest_date=latest_date
+    )
+
+
+@router.get("/table", response_model=StructureTableResponse)
+async def get_structure_analysis_table(
+    db: Session = Depends(get_db)
+):
+    """
+    获取结构分析表格数据
+    返回格式：按月份组织的表格数据，每行包含所有列的值
+    """
+    # 获取所有数据源的数据
+    cr20_data = _get_cr20_month_on_month(db)
+    yongyi_data = _get_yongyi_month_on_month(db)
+    ganglian_data = _get_ganglian_month_on_month(db, "全国")  # 钢联使用全国数据
+    ministry_scale_data = _get_ministry_agriculture_month_on_month(db, "规模场")
+    ministry_scattered_data = _get_ministry_agriculture_month_on_month(db, "散户")  # 使用"散户"而不是"中小散户"
+    slaughter_data = _get_slaughter_month_on_month(db)
+    
+    # 将所有数据转换为月份格式（YYYY-MM）的字典
+    def date_to_month(date_str: str) -> str:
+        """将日期字符串转换为月份字符串 YYYY-MM"""
+        try:
+            date_obj = datetime.strptime(date_str.split('T')[0], '%Y-%m-%d').date()
+            return date_obj.strftime('%Y-%m')
+        except:
+            return date_str[:7] if len(date_str) >= 7 else date_str
+    
+    # 构建月份到数据的映射
+    data_map = {}
+    
+    for item in cr20_data:
+        month = date_to_month(item.date)
+        if month not in data_map:
+            data_map[month] = {}
+        data_map[month]['cr20'] = item.value
+    
+    for item in yongyi_data:
+        month = date_to_month(item.date)
+        if month not in data_map:
+            data_map[month] = {}
+        data_map[month]['yongyi'] = item.value
+    
+    for item in ganglian_data:
+        month = date_to_month(item.date)
+        if month not in data_map:
+            data_map[month] = {}
+        data_map[month]['ganglian'] = item.value
+    
+    for item in ministry_scale_data:
+        month = date_to_month(item.date)
+        if month not in data_map:
+            data_map[month] = {}
+        data_map[month]['ministry_scale'] = item.value
+    
+    for item in ministry_scattered_data:
+        month = date_to_month(item.date)
+        if month not in data_map:
+            data_map[month] = {}
+        data_map[month]['ministry_scattered'] = item.value
+    
+    for item in slaughter_data:
+        month = date_to_month(item.date)
+        if month not in data_map:
+            data_map[month] = {}
+        data_map[month]['slaughter'] = item.value
+    
+    # 构建表格行数据
+    table_rows = []
+    for month in sorted(data_map.keys()):
+        row_data = data_map[month]
+        table_rows.append(StructureTableRow(
+            month=month,
+            cr20=row_data.get('cr20'),
+            yongyi=row_data.get('yongyi'),
+            ganglian=row_data.get('ganglian'),
+            ministry_scale=row_data.get('ministry_scale'),
+            ministry_scattered=row_data.get('ministry_scattered'),
+            slaughter=row_data.get('slaughter')
+        ))
+    
+    latest_month = table_rows[-1].month if table_rows else None
+    
+    return StructureTableResponse(
+        data=table_rows,
+        latest_month=latest_month
     )

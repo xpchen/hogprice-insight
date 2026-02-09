@@ -27,11 +27,7 @@ export interface OutputSlaughterResponse {
 
 export interface ImportMeatPoint {
   month: string
-  total_volume?: number | null
-  top_country1?: string | null
-  top_country1_volume?: number | null
-  top_country2?: string | null
-  top_country2_volume?: number | null
+  price_coefficient?: number | null  // 猪价系数（月度均值/历年平均值）
 }
 
 export interface ImportMeatResponse {

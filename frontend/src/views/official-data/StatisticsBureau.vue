@@ -65,9 +65,9 @@
         </div>
       </div>
 
-      <!-- 图2：猪肉进口 -->
+      <!-- 图2：猪肉进口（实际是猪价系数） -->
       <div class="chart-section">
-        <h3>图2：猪肉进口</h3>
+        <h3>图2：猪肉进口（猪价系数）</h3>
         <div class="chart-container">
           <div ref="chart2Ref" style="width: 100%; height: 500px" v-loading="loadingChart2"></div>
         </div>
@@ -372,7 +372,7 @@ const updateChart2 = () => {
   if (data.length === 0) {
     chart2Instance.setOption({
       title: {
-        text: '猪肉进口',
+        text: '猪肉进口（猪价系数）',
         left: 'center'
       },
       graphic: {
@@ -390,57 +390,17 @@ const updateChart2 = () => {
   }
 
   const months = data.map(d => d.month)
-  const totalVolumes = data.map(d => d.total_volume)
-  const country1Volumes = data.map(d => d.top_country1_volume)
-  const country2Volumes = data.map(d => d.top_country2_volume)
-  const country1Names = data.map(d => d.top_country1).filter((name, idx) => country1Volumes[idx] !== null)
-  const country2Names = data.map(d => d.top_country2).filter((name, idx) => country2Volumes[idx] !== null)
-
-  // 构建系列数据
-  const series: any[] = [
-    {
-      name: '进口总量',
-      type: 'bar',
-      data: totalVolumes,
-      itemStyle: {
-        color: '#5470c6'
-      }
-    }
-  ]
-
-  // 如果有国家1数据，添加系列
-  if (country1Volumes.some(v => v !== null)) {
-    series.push({
-      name: country1Names[0] || '最大国家1',
-      type: 'bar',
-      data: country1Volumes,
-      itemStyle: {
-        color: '#91cc75'
-      }
-    })
-  }
-
-  // 如果有国家2数据，添加系列
-  if (country2Volumes.some(v => v !== null)) {
-    series.push({
-      name: country2Names[0] || '最大国家2',
-      type: 'bar',
-      data: country2Volumes,
-      itemStyle: {
-        color: '#fac858'
-      }
-    })
-  }
+  const priceCoefficients = data.map(d => d.price_coefficient)
 
   const option: echarts.EChartsOption = {
     title: {
-      text: '猪肉进口',
+      text: '猪肉进口（猪价系数）',
       left: 'center'
     },
     tooltip: {
       trigger: 'axis',
       axisPointer: {
-        type: 'shadow'
+        type: 'cross'
       },
       formatter: (params: any) => {
         if (!Array.isArray(params)) return ''
@@ -449,7 +409,7 @@ const updateChart2 = () => {
         
         params.forEach((param: any) => {
           if (param.value !== null && param.value !== undefined) {
-            result += `${param.seriesName}: ${param.value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}万吨<br/>`
+            result += `${param.seriesName}: ${param.value.toFixed(4)}<br/>`
           }
         })
         
@@ -457,7 +417,8 @@ const updateChart2 = () => {
       }
     },
     legend: {
-      show: false // 图例不需要注释
+      data: ['猪价系数'],
+      top: 30
     },
     grid: {
       left: '3%',
@@ -467,11 +428,12 @@ const updateChart2 = () => {
     },
     xAxis: {
       type: 'category',
+      boundaryGap: false,
       data: months
     },
     yAxis: {
       type: 'value',
-      name: '进口量(万吨)',
+      name: '系数',
       axisLabel: {
         formatter: '{value}'
       }
@@ -491,27 +453,21 @@ const updateChart2 = () => {
         end: 100
       }
     ],
-    series: series
+    series: [
+      {
+        name: '猪价系数',
+        type: 'line',
+        smooth: true,
+        data: priceCoefficients,
+        connectNulls: false,
+        itemStyle: {
+          color: '#5470c6'
+        }
+      }
+    ]
   }
 
   chart2Instance.setOption(option)
-
-  // 添加点击事件，显示详细信息
-  chart2Instance.off('click')
-  chart2Instance.on('click', (params: any) => {
-    const month = params.name
-    const dataPoint = data.find(d => d.month === month)
-    if (dataPoint) {
-      let message = `进口总量: ${dataPoint.total_volume?.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) || '-'}万吨`
-      if (dataPoint.top_country1 && dataPoint.top_country1_volume) {
-        message += `\n${dataPoint.top_country1}进口量: ${dataPoint.top_country1_volume.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}万吨`
-      }
-      if (dataPoint.top_country2 && dataPoint.top_country2_volume) {
-        message += `\n${dataPoint.top_country2}进口量: ${dataPoint.top_country2_volume.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}万吨`
-      }
-      ElMessage.info(message)
-    }
-  })
 }
 
 // 监听窗口大小变化

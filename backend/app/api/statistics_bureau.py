@@ -3,7 +3,7 @@ E4. 统计局数据汇总 API
 包含：
 1. 表1：统计局季度数据汇总（B-Y列）
 2. 图1：统计局生猪出栏量&屠宰量（季度出栏量J列、定点屠宰量P列、规模化率）
-3. 图2：猪肉进口（月度进口量，分国别）
+3. 图2：猪肉进口（实际是钢联全国猪价的月度均值/历年平均值系数）
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -17,6 +17,9 @@ from app.core.database import get_db
 from app.models.raw_sheet import RawSheet
 from app.models.raw_table import RawTable
 from app.models.raw_file import RawFile
+from app.models.dim_metric import DimMetric
+from app.models.fact_observation import FactObservation
+from sqlalchemy import func, or_
 
 router = APIRouter(prefix="/api/v1/statistics-bureau", tags=["statistics-bureau"])
 
@@ -48,17 +51,13 @@ class OutputSlaughterResponse(BaseModel):
 
 
 class ImportMeatPoint(BaseModel):
-    """猪肉进口数据点"""
+    """猪肉进口数据点（实际是猪价系数）"""
     month: str  # 月份 YYYY-MM
-    total_volume: Optional[float] = None  # 进口总量（万吨）
-    top_country1: Optional[str] = None  # 最大国家1
-    top_country1_volume: Optional[float] = None  # 最大国家1进口量
-    top_country2: Optional[str] = None  # 最大国家2
-    top_country2_volume: Optional[float] = None  # 最大国家2进口量
+    price_coefficient: Optional[float] = None  # 猪价系数（月度均值/历年平均值）
 
 
 class ImportMeatResponse(BaseModel):
-    """猪肉进口响应"""
+    """猪肉进口响应（实际是猪价系数响应）"""
     data: List[ImportMeatPoint]
     latest_month: Optional[str] = None
 
@@ -150,34 +149,72 @@ def get_quarterly_data(
     """
     获取统计局季度数据汇总（表1）
     数据来源：03.统计局季度数据 sheet，B-Y列
+    
+    数据结构：
+    - 第1行（索引0）：主表头（B列是"季度"，C列是"能繁母猪"，F列是"生猪存栏"等）
+    - 第2行（索引1）：子表头（C列是"存栏量"，D列是"环比"，E列是"同比"等）
+    - 第3行（索引2）开始：数据行（B列是季度日期，C-Y列是数据）
     """
     table_data = _get_raw_table_data(db, "03.统计局季度数据")
     
-    if not table_data or len(table_data) == 0:
+    if not table_data or len(table_data) < 3:
         return QuarterlyDataResponse(headers=[], data=[])
     
-    # 假设第一行是表头，B-Y列是索引1-24
+    # 合并第1行和第2行的表头，生成完整的列名
     headers = []
-    if len(table_data) > 0:
-        header_row = table_data[0]
-        # B-Y列（索引1-24）
-        headers = [str(header_row[i]) if i < len(header_row) else f"列{chr(66+i)}" for i in range(1, 25)]
+    main_header_row = table_data[0]  # 第1行：主表头
+    sub_header_row = table_data[1]   # 第2行：子表头
     
-    # 解析数据行
+    # B-Y列（索引1-24）
+    for col_idx in range(1, 25):
+        col_letter = chr(65 + col_idx)  # B=66, C=67, ..., Y=89
+        
+        # 获取主表头（第1行）
+        main_header = ""
+        if col_idx < len(main_header_row) and main_header_row[col_idx]:
+            main_header = str(main_header_row[col_idx]).strip()
+        
+        # 获取子表头（第2行）
+        sub_header = ""
+        if col_idx < len(sub_header_row) and sub_header_row[col_idx]:
+            sub_header = str(sub_header_row[col_idx]).strip()
+        
+        # 合并表头
+        if main_header and sub_header:
+            header_name = f"{main_header}-{sub_header}"
+        elif main_header:
+            header_name = main_header
+        elif sub_header:
+            header_name = sub_header
+        else:
+            header_name = col_letter
+        
+        headers.append(header_name)
+    
+    # 解析数据行（从第3行开始，索引2）
     data_rows = []
-    for row_idx, row in enumerate(table_data[1:], start=1):
+    for row_idx, row in enumerate(table_data[2:], start=3):
         if len(row) < 2:
             continue
         
-        # 假设A列（索引0）是季度标识
-        period_str = str(row[0]) if len(row) > 0 and row[0] else None
+        # B列（索引1）是季度日期
+        period_str = row[1] if len(row) > 1 and row[1] else None
         if not period_str:
             continue
         
-        period = _parse_quarter(period_str)
-        if not period:
-            # 如果无法解析季度，尝试使用原始字符串
-            period = period_str
+        # 解析季度日期
+        period = None
+        parsed_date = _parse_excel_date(period_str)
+        if parsed_date:
+            # 转换为季度格式：YYYYQ格式
+            year = parsed_date.year
+            quarter = (parsed_date.month - 1) // 3 + 1
+            period = f"{year}Q{quarter}"
+        else:
+            # 尝试直接解析季度字符串
+            period = _parse_quarter(str(period_str))
+            if not period:
+                period = str(period_str)
         
         # 提取B-Y列数据（索引1-24）
         row_data = {}
@@ -193,7 +230,7 @@ def get_quarterly_data(
                             row_data[col_letter] = float_val
                         else:
                             row_data[col_letter] = None
-                    except:
+                    except (ValueError, TypeError):
                         row_data[col_letter] = None
                 else:
                     row_data[col_letter] = None
@@ -215,27 +252,43 @@ def get_output_slaughter(
     - J列（索引9）：季度出栏量
     - P列（索引15）：定点屠宰量
     - 规模化率 = 屠宰量 / 出栏量
+    
+    数据结构：
+    - 第1行（索引0）：主表头
+    - 第2行（索引1）：子表头
+    - 第3行（索引2）开始：数据行（B列是季度日期，J列是出栏量，P列是屠宰量）
     """
     table_data = _get_raw_table_data(db, "03.统计局季度数据")
     
-    if not table_data or len(table_data) == 0:
+    if not table_data or len(table_data) < 3:
         return OutputSlaughterResponse(data=[], latest_period=None)
     
     data_points = []
     latest_period = None
     
-    for row_idx, row in enumerate(table_data[1:], start=1):
+    # 从第3行开始解析数据（索引2）
+    for row_idx, row in enumerate(table_data[2:], start=3):
         if len(row) < 16:
             continue
         
-        # A列（索引0）是季度标识
-        period_str = str(row[0]) if len(row) > 0 and row[0] else None
+        # B列（索引1）是季度日期
+        period_str = row[1] if len(row) > 1 and row[1] else None
         if not period_str:
             continue
         
-        period = _parse_quarter(period_str)
-        if not period:
-            period = period_str
+        # 解析季度日期
+        period = None
+        parsed_date = _parse_excel_date(period_str)
+        if parsed_date:
+            # 转换为季度格式：YYYYQ格式
+            year = parsed_date.year
+            quarter = (parsed_date.month - 1) // 3 + 1
+            period = f"{year}Q{quarter}"
+        else:
+            # 尝试直接解析季度字符串
+            period = _parse_quarter(str(period_str))
+            if not period:
+                period = str(period_str)
         
         # J列（索引9）：季度出栏量
         output_val = row[9] if len(row) > 9 else None
@@ -245,7 +298,7 @@ def get_output_slaughter(
                 output_volume = float(output_val)
                 if math.isnan(output_volume) or math.isinf(output_volume):
                     output_volume = None
-            except:
+            except (ValueError, TypeError):
                 pass
         
         # P列（索引15）：定点屠宰量
@@ -256,7 +309,7 @@ def get_output_slaughter(
                 slaughter_volume = float(slaughter_val)
                 if math.isnan(slaughter_volume) or math.isinf(slaughter_volume):
                     slaughter_volume = None
-            except:
+            except (ValueError, TypeError):
                 pass
         
         # 计算规模化率
@@ -286,95 +339,78 @@ def get_import_meat(
 ):
     """
     获取猪肉进口数据（图2）
-    数据来源：钢联模板 sheet "猪肉进口" 或 涌益周度数据 "进口肉"
-    目前使用"进口肉"sheet：
-    - M列（索引12）：日期（Excel序列号）
-    - N列（索引13）：猪肉(万吨)
-    - 需要查找分国别数据（如果存在）
+    实际返回：钢联全国猪价的月度均值/历年平均值系数
+    数据来源：钢联全国猪价（日度数据，按月聚合）
+    计算公式：系数 = 月度均值 / 历年平均值
     """
-    # 先尝试查找"猪肉进口"sheet（钢联模板）
-    table_data = _get_raw_table_data(db, "猪肉进口")
+    # 1. 获取钢联全国猪价数据（日度，需要按月聚合）
+    # 优先查找：分省区猪价sheet中的"中国"列
+    price_metric = db.query(DimMetric).filter(
+        DimMetric.sheet_name == "分省区猪价",
+        or_(
+            DimMetric.raw_header.like('%中国%'),
+            DimMetric.raw_header.like('%全国%')
+        ),
+        DimMetric.freq.in_(["D", "daily"])
+    ).first()
     
-    # 如果没找到，尝试"进口肉"sheet（涌益周度数据）
-    if not table_data:
-        table_data = _get_raw_table_data(db, "进口肉")
+    # 如果没找到，尝试通过metric_key查找
+    if not price_metric:
+        price_metric = db.query(DimMetric).filter(
+            func.json_extract(DimMetric.parse_json, '$.metric_key') == 'GL_D_PRICE_NATION',
+            DimMetric.freq.in_(["D", "daily"])
+        ).first()
     
-    if not table_data or len(table_data) < 4:
+    # 如果还没找到，尝试其他方式
+    if not price_metric:
+        price_metric = db.query(DimMetric).filter(
+            DimMetric.sheet_name.like('%钢联%'),
+            or_(
+                DimMetric.raw_header.like('%全国%价%'),
+                DimMetric.raw_header.like('%中国%价%')
+            ),
+            DimMetric.freq.in_(["D", "daily"])
+        ).first()
+    
+    if not price_metric:
         return ImportMeatResponse(data=[], latest_month=None)
     
+    # 2. 查询价格数据并按月聚合
+    price_monthly = db.query(
+        func.date_format(FactObservation.obs_date, '%Y-%m-01').label('month'),
+        func.avg(FactObservation.value).label('monthly_avg')
+    ).filter(
+        FactObservation.metric_id == price_metric.id,
+        FactObservation.period_type == 'day'
+    ).group_by('month').order_by('month').all()
+    
+    if not price_monthly:
+        return ImportMeatResponse(data=[], latest_month=None)
+    
+    # 3. 计算历年平均值
+    price_values = [float(item.monthly_avg) for item in price_monthly if item.monthly_avg]
+    price_avg = sum(price_values) / len(price_values) if price_values else None
+    
+    if not price_avg or price_avg <= 0:
+        return ImportMeatResponse(data=[], latest_month=None)
+    
+    # 4. 计算系数并构建数据点
     data_points = []
     latest_month = None
     
-    # 分析表头，找出日期列和总量列
-    # 从之前的分析看，"进口肉"sheet的结构：
-    # - 第3行（索引2）是年份行
-    # - 第4行（索引3）是表头行，M列是"日期"，N列是"猪肉(万吨)"，P列是"猪总量(万吨)"
-    # - 数据从第5行（索引4）开始
-    
-    # 查找日期列和总量列
-    date_col_idx = None
-    total_col_idx = None
-    
-    if len(table_data) > 3:
-        header_row = table_data[3]  # 第4行是表头
-        for col_idx, header in enumerate(header_row):
-            if header:
-                header_str = str(header).strip()
-                if "日期" in header_str:
-                    date_col_idx = col_idx
-                elif "猪总量" in header_str or "总量" in header_str:
-                    total_col_idx = col_idx
-    
-    # 如果没找到，使用默认位置（M列索引12，P列索引15）
-    if date_col_idx is None:
-        date_col_idx = 12
-    if total_col_idx is None:
-        total_col_idx = 15
-    
-    # 解析数据行
-    for row_idx in range(4, len(table_data)):
-        row = table_data[row_idx]
-        
-        if len(row) <= max(date_col_idx, total_col_idx):
+    for item in price_monthly:
+        if not item.monthly_avg:
             continue
         
-        # 解析日期
-        date_val = row[date_col_idx] if date_col_idx < len(row) else None
-        if not date_val:
-            continue
+        month_str = item.month
+        monthly_avg = float(item.monthly_avg)
         
-        obs_date = _parse_excel_date(date_val)
-        if not obs_date:
-            continue
-        
-        month_str = obs_date.strftime("%Y-%m")
-        
-        # 解析总量
-        total_val = row[total_col_idx] if total_col_idx < len(row) else None
-        total_volume = None
-        if total_val is not None and total_val != "":
-            try:
-                total_volume = float(total_val)
-                if math.isnan(total_volume) or math.isinf(total_volume):
-                    total_volume = None
-            except:
-                pass
-        
-        # TODO: 查找分国别数据
-        # 目前"进口肉"sheet中没有分国别数据，需要查找其他sheet或等数据导入
-        # 暂时只返回总量
-        top_country1 = None
-        top_country1_volume = None
-        top_country2 = None
-        top_country2_volume = None
+        # 计算系数：月度均值 / 历年平均值
+        price_coef = monthly_avg / price_avg
         
         data_points.append(ImportMeatPoint(
             month=month_str,
-            total_volume=total_volume,
-            top_country1=top_country1,
-            top_country1_volume=top_country1_volume,
-            top_country2=top_country2,
-            top_country2_volume=top_country2_volume
+            price_coefficient=round(price_coef, 4)
         ))
         
         if month_str and (not latest_month or month_str > latest_month):
