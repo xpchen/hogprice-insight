@@ -163,7 +163,7 @@ export async function getSlaughterData(
   endDate: string
 ): Promise<SlaughterData> {
   const limit = 2000 // 3 年日度约 1100 条，留余量
-  const timeout = 60000 // 屠宰量&价格 可能数据量大，60 秒超时
+  const timeout = 600000 // 10分钟超时，数据量大时避免超时
   const [slaughterData, priceData] = await Promise.all([
     // 日度屠宰量（价格+宰量 sheet）
     queryObservations(

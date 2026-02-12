@@ -122,6 +122,11 @@ const routes = [
         name: 'FuturesMarketVolatility',
         component: () => import('../views/futures-market/Volatility.vue')
       },
+      {
+        path: 'futures-market/warehouse-receipt',
+        name: 'FuturesMarketWarehouseReceipt',
+        component: () => import('../views/futures-market/WarehouseReceipt.vue')
+      },
       // D. 集团企业统计
       {
         path: 'enterprise-statistics/cr5-daily',

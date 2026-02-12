@@ -57,7 +57,7 @@ export const ingestApi = {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
-      timeout: 120000 // 2分钟超时，预览也需要一些时间
+      timeout: 600000 // 10分钟超时
     })
   },
 
@@ -67,7 +67,7 @@ export const ingestApi = {
         'Content-Type': 'multipart/form-data'
       },
       params: templateType ? { template_type: templateType } : undefined,
-      timeout: 600000 // 10分钟超时，大文件导入需要更长时间
+      timeout: 600000 // 10分钟超时
     })
   },
 

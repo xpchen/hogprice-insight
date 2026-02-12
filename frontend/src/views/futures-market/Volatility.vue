@@ -3,8 +3,12 @@
     <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
-          <span>C4. 波动率数据</span>
+          <span>波动率</span>
           <div style="display: flex; gap: 10px; align-items: center">
+            <el-radio-group v-model="windowDays" @change="loadData" size="small">
+              <el-radio-button :label="5">5日波动率</el-radio-button>
+              <el-radio-button :label="10">10日波动率</el-radio-button>
+            </el-radio-group>
             <el-select v-model="selectedContract" size="small" @change="loadData" style="width: 120px">
               <el-option label="全部合约" :value="null" />
               <el-option v-for="month in contractMonths" :key="month" :label="`${month.toString().padStart(2, '0')}合约`" :value="month" />
@@ -35,8 +39,9 @@ import { futuresApi, type VolatilityResponse } from '@/api/futures'
 import { axisLabelPercentFormatter } from '@/utils/chart-style'
 
 const loading = ref(false)
+const windowDays = ref<number>(10)
 const selectedContract = ref<number | null>(null)
-const contractMonths = [3, 5, 7, 9, 11, 1]
+const contractMonths = [1, 3, 5, 7, 9, 11]
 const volatilityData = ref<VolatilityResponse>({ series: [], update_time: null })
 const chartInstances = new Map<number, echarts.ECharts>()
 const chartRefs = new Map<number, HTMLDivElement>()
@@ -53,7 +58,8 @@ const loadData = async () => {
   loading.value = true
   try {
     const result = await futuresApi.getVolatility({
-      contract_month: selectedContract.value || undefined
+      contract_month: selectedContract.value || undefined,
+      window_days: windowDays.value
     })
     volatilityData.value = result
     await nextTick()
@@ -83,9 +89,7 @@ const renderCharts = () => {
     const yearMap = new Map<number, Array<typeof series.data[0]>>()
     series.data.forEach(point => {
       const year = point.year || new Date(point.date).getFullYear()
-      if (!yearMap.has(year)) {
-        yearMap.set(year, [])
-      }
+      if (!yearMap.has(year)) yearMap.set(year, [])
       yearMap.get(year)!.push(point)
     })
     
@@ -117,6 +121,17 @@ const renderCharts = () => {
       return aDay - bDay
     })
     
+    const tooltipLookup = new Map<string, { settle_price?: number; open_interest?: number }>()
+    series.data.forEach(point => {
+      const year = point.year ?? new Date(point.date).getFullYear()
+      const d = new Date(point.date)
+      const mmdd = `${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')}`
+      tooltipLookup.set(`${year}-${mmdd}`, {
+        settle_price: point.settle_price,
+        open_interest: point.open_interest
+      })
+    })
+    
     const seriesData: any[] = []
     
     years.forEach((year, idx) => {
@@ -139,28 +154,40 @@ const renderCharts = () => {
         lineStyle: { color },
         symbol: 'circle',
         symbolSize: 4,
-        smooth: true
+        smooth: true,
+        connectNulls: true
       })
     })
     
     const option: echarts.EChartsOption = {
       title: {
         text: `${series.contract_month.toString().padStart(2, '0')}合约波动率季节性图`,
-        left: 'left'
+        left: 'left',
+        top: 8
       },
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross' },
         formatter: (params: any) => {
           if (!Array.isArray(params)) return ''
-          let result = `<div style="margin-bottom: 4px;"><strong>${params[0].axisValue}</strong></div>`
+          const cat = params[0]?.axisValue
+          let result = `<div style="margin-bottom: 4px;"><strong>${cat}</strong></div>`
           params.forEach((param: any) => {
             if (param.value !== null && param.value !== undefined) {
-              const value = typeof param.value === 'number' ? param.value.toFixed(2) : param.value
+              const v = typeof param.value === 'number' ? param.value.toFixed(2) : param.value
+              const yearMatch = param.seriesName?.match(/^(\d{4})年?/)
+              const year = yearMatch ? yearMatch[1] : ''
               result += `<div style="margin: 2px 0;">
-                <span style="display: inline-block; width: 10px; height: 10px; background-color: ${param.color}; margin-right: 5px;"></span>
-                ${param.seriesName}: <strong>${value}%</strong>
+                <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
+                ${param.seriesName}: <strong>${v}%</strong>
               </div>`
+              if (year) {
+                const extra = tooltipLookup.get(`${year}-${cat}`)
+                if (extra) {
+                  if (extra.settle_price != null) result += `<div style="margin: 2px 0; color:#666;">主力合约结算价: ${extra.settle_price.toFixed(2)}</div>`
+                  if (extra.open_interest != null) result += `<div style="margin: 2px 0; color:#666;">持仓量: ${extra.open_interest.toLocaleString()}</div>`
+                }
+              }
             }
           })
           return result
@@ -168,19 +195,19 @@ const renderCharts = () => {
       },
       legend: {
         data: seriesData.map(s => s.name),
-        bottom: 10,
+        top: 36,
+        left: 'left',
         type: 'plain',
         icon: 'circle',
         itemWidth: 10,
         itemHeight: 10,
-        itemGap: 15,
-        left: 'left'
+        itemGap: 18
       },
       grid: {
         left: '3%',
         right: '4%',
         bottom: '15%',
-        top: '15%',
+        top: '22%',
         containLabel: true
       },
       xAxis: {

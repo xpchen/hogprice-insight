@@ -11,8 +11,8 @@ engine = create_engine(
     pool_recycle=3600,  # MySQL连接回收时间
     connect_args={
         "connect_timeout": 60,
-        "read_timeout": 300,
-        "write_timeout": 300,
+        "read_timeout": 600,   # 10分钟，数据量大时避免超时
+        "write_timeout": 600,  # 10分钟
         "charset": "utf8mb4"
     }
 )

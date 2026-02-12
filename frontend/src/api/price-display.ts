@@ -53,8 +53,8 @@ export interface PriceChangesResponse {
   unit: string
 }
 
-// A1 价格（全国）接口可能涉及大量数据与农历计算，适当延长超时
-const A1_REQUEST_TIMEOUT = 60000 // 60 秒
+// A1 价格（全国）接口可能涉及大量数据与农历计算，10分钟超时
+const A1_REQUEST_TIMEOUT = 600000 // 10 分钟
 
 /**
  * 获取全国猪价季节性数据
@@ -170,7 +170,7 @@ export function getPriceChanges(
     url: '/v1/price-display/price-changes',
     method: 'get',
     params: { metric_type: metricType },
-    timeout: 15000 // 涨跌接口数据量小，15 秒即可
+    timeout: 600000 // 10分钟
   })
 }
 

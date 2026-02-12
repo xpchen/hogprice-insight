@@ -100,16 +100,26 @@ const updateChart = () => {
   
   // 是否为月-日格式的日度数据（用于 X 轴显示与稀疏化）
   const isMonthDayData = Array.isArray(x_values) && x_values.length > 0 && typeof x_values[0] === 'string' && /^\d{1,2}-\d{1,2}$/.test(String(x_values[0]))
+  // 是否为密集日度数据（农历索引等，点数过多需稀疏显示）
+  const isDenseDailyData = x_values.length > 60
   
   // 格式化x轴标签
   const formatXLabel = (value: number | string): string => {
     if (typeof value === 'number') {
       return `第${value}周`
     } else {
-      // "MM-DD"格式
+      // "MM-DD"格式或农历索引
       return value
     }
   }
+  
+  // 密集数据时只显示约 12～15 个刻度，避免重叠
+  const denseStep = Math.max(1, Math.floor(x_values.length / 12))
+  const axisLabelInterval = isDenseDailyData
+    ? (index: number) => index % denseStep === 0
+    : isMonthDayData
+      ? 'auto'
+      : 0
   
   const option: echarts.EChartsOption = {
     tooltip: {
@@ -163,11 +173,15 @@ const updateChart = () => {
       boundaryGap: false,
       name: '',
       axisLabel: {
-        rotate: isMonthDayData ? 45 : 0,
-        interval: isMonthDayData ? 'auto' : 0,
+        rotate: isMonthDayData || isDenseDailyData ? 45 : 0,
+        interval: axisLabelInterval,
         formatter: (value: string) => {
-          // 月-日格式（如 01-16）：直接显示，避免 parseInt 误判导致空白
+          // 月-日格式（如 01-16）：直接显示
           if (/^\d{1,2}-\d{1,2}$/.test(value)) {
+            return value
+          }
+          // 农历索引等纯数字：直接显示（interval 已控制显示数量）
+          if (/^\d+$/.test(value)) {
             return value
           }
           // 周序号格式（如 第1周）：只显示部分标签
@@ -299,6 +313,22 @@ watch(() => props.loading, (loading) => {
     setTimeout(updateChart, 100)
   }
 })
+
+/** 获取图表为 base64 PNG（用于 Word 导出） */
+const getChartImage = (): string | null => {
+  if (!chartInstance) return null
+  try {
+    return chartInstance.getDataURL({
+      type: 'png',
+      pixelRatio: 2,
+      backgroundColor: '#fff'
+    })
+  } catch {
+    return null
+  }
+}
+
+defineExpose({ getChartImage })
 
 onBeforeUnmount(() => {
   if (chartInstance) {

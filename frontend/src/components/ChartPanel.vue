@@ -300,6 +300,22 @@ const handleModeChange = () => {
   updateChart()
 }
 
+/** 获取图表为 base64 PNG（用于 Word 导出） */
+const getChartImage = (): string | null => {
+  if (!chartInstance) return null
+  try {
+    return chartInstance.getDataURL({
+      type: 'png',
+      pixelRatio: 2,
+      backgroundColor: '#fff'
+    })
+  } catch {
+    return null
+  }
+}
+
+defineExpose({ getChartImage })
+
 const handleSaveAsPng = () => {
   if (!chartInstance || !props.data) {
     ElMessage.warning('图表数据未加载，无法保存')

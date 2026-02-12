@@ -93,6 +93,10 @@
             <el-icon><TrendCharts /></el-icon>
             <template #title>C4. 波动率数据</template>
           </el-menu-item>
+          <el-menu-item index="/futures-market/warehouse-receipt">
+            <el-icon><TrendCharts /></el-icon>
+            <template #title>C5. 仓单数据</template>
+          </el-menu-item>
         </el-sub-menu>
 
         <!-- D. 集团企业统计 -->

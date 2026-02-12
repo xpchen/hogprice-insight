@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 600000, // 10分钟，数据量大时避免超时
   headers: {
     'Content-Type': 'application/json'
   }

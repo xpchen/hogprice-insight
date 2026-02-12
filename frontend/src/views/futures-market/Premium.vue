@@ -272,7 +272,8 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     data: series.data.map(d => [d.date, d.spot_price]),
     yAxisIndex: 0,
     lineStyle: { color: '#999', type: 'dashed' },
-    symbol: 'none'
+    symbol: 'none',
+    connectNulls: true
   })
   
   // 每个年份的合约价格和升贴水
@@ -288,7 +289,9 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       yAxisIndex: 0,
       lineStyle: { color },
       symbol: 'circle',
-      symbolSize: 4
+      symbolSize: 4,
+      smooth: true,
+      connectNulls: true
     })
     
     // 升贴水
@@ -299,14 +302,17 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       yAxisIndex: 0,
       lineStyle: { color, type: 'dashed' },
       symbol: 'circle',
-      symbolSize: 4
+      symbolSize: 4,
+      smooth: true,
+      connectNulls: true
     })
   })
   
   const option: echarts.EChartsOption = {
     title: {
       text: `${series.contract_name}的升贴水`,
-      left: 'left'
+      left: 'left',
+      top: 8
     },
     tooltip: {
       trigger: 'axis',
@@ -329,19 +335,19 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     },
     legend: {
       data: seriesData.map(s => s.name),
-      bottom: 10,
+      top: 36,
+      left: 'left',
       type: 'plain',
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
-      itemGap: 15,
-      left: 'left'
+      itemGap: 18
     },
     grid: {
       left: '3%',
       right: '4%',
       bottom: '15%',
-      top: '15%',
+      top: '22%',
       containLabel: true
     },
     xAxis: {
@@ -440,14 +446,16 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       lineStyle: { color },
       symbol: 'circle',
       symbolSize: 4,
-      smooth: true
+      smooth: true,
+      connectNulls: true
     })
   })
   
   const option: echarts.EChartsOption = {
     title: {
       text: `${series.contract_name}升贴水比率`,
-      left: 'left'
+      left: 'left',
+      top: 8
     },
     tooltip: {
       trigger: 'axis',
@@ -469,19 +477,19 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     },
     legend: {
       data: seriesData.map(s => s.name),
-      bottom: 10,
+      top: 36,
+      left: 'left',
       type: 'plain',
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
-      itemGap: 15,
-      left: 'left'
+      itemGap: 18
     },
     grid: {
       left: '3%',
       right: '4%',
       bottom: '15%',
-      top: '15%',
+      top: '22%',
       containLabel: true
     },
     xAxis: {

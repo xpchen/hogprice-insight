@@ -56,6 +56,7 @@ class GanglianPriceExtractor:
         results = {
             "batch_id": batch.id,
             "national_price": self._extract_national_price(batch.id),
+            "provincial_price": self._extract_provincial_price(batch.id),
             "fat_std_spread": self._extract_fat_std_spread(batch.id),
             "slaughter_data": self._extract_slaughter_data(batch.id),
             "region_spread": self._extract_region_spread(batch.id),
@@ -232,6 +233,163 @@ class GanglianPriceExtractor:
         self.extraction_log.append(log_entry)
         
         return {"inserted": inserted_count, "log": log_entry}
+
+    def _extract_provincial_price(self, batch_id: int) -> Dict:
+        """提取各省份出栏均价（从分省区猪价sheet，贵州、四川、云南、广东、广西、江苏、内蒙古等）"""
+        import re
+        print("提取各省份出栏均价...")
+        
+        sheet_name = "分省区猪价"
+        excel_file = pd.ExcelFile(self.file_path, engine='openpyxl')
+        
+        indicator_names_df = pd.read_excel(
+            excel_file, sheet_name=sheet_name,
+            header=None, nrows=1, skiprows=1
+        )
+        indicator_names = indicator_names_df.iloc[0].tolist()
+        
+        units_df = pd.read_excel(
+            excel_file, sheet_name=sheet_name,
+            header=None, nrows=1, skiprows=2
+        )
+        units = units_df.iloc[0].tolist()
+        
+        df = pd.read_excel(
+            excel_file, sheet_name=sheet_name,
+            header=None, skiprows=4
+        )
+        
+        # 目标省份（排除中国/全国，已在 national_price 中处理）
+        target_provinces = ["贵州", "四川", "云南", "广东", "广西", "江苏", "内蒙古"]
+        
+        total_inserted = 0
+        province_results = {}
+        
+        for col_idx in range(1, len(indicator_names)):
+            raw_header = indicator_names[col_idx] if col_idx < len(indicator_names) else None
+            if pd.isna(raw_header) or not raw_header:
+                continue
+            
+            raw_header_str = str(raw_header)
+            if "中国" in raw_header_str or "全国" in raw_header_str:
+                continue
+            
+            province_name = None
+            match = re.search(r'：([^：（）]+)（', raw_header_str)
+            if match:
+                province_name = match.group(1).strip()
+            else:
+                for p in target_provinces:
+                    if p in raw_header_str:
+                        province_name = p
+                        break
+            
+            if not province_name or province_name not in target_provinces:
+                continue
+            
+            metric_key = f"GL_D_PRICE_{province_name}"
+            metric = self._get_or_create_metric(
+                metric_key=metric_key,
+                metric_name=f"{province_name}出栏均价",
+                source_code="GANGLIAN",
+                sheet_name=sheet_name,
+                unit=units[col_idx] if col_idx < len(units) else "元/公斤",
+                raw_header=raw_header_str,
+                freq="D"
+            )
+            
+            inserted_count = 0
+            for row_idx, row in df.iterrows():
+                try:
+                    date_val = row.iloc[0]
+                    if pd.isna(date_val):
+                        continue
+                    if isinstance(date_val, str):
+                        trade_date = pd.to_datetime(date_val).date()
+                    else:
+                        trade_date = date_val.date() if hasattr(date_val, 'date') else pd.to_datetime(date_val).date()
+                    
+                    price_val = row.iloc[col_idx]
+                    if pd.isna(price_val):
+                        continue
+                    value = clean_numeric_value(price_val)
+                    if value is None:
+                        continue
+                    
+                    geo_code = province_name
+                    tags = {"province": province_name, "source": "GANGLIAN"}
+                    dedup_key = self._generate_dedup_key(
+                        source_code="GANGLIAN",
+                        sheet_name=sheet_name,
+                        metric_key=metric_key,
+                        geo_code=geo_code,
+                        obs_date=trade_date,
+                        tags=tags
+                    )
+                    
+                    existing = self.db.query(FactObservation).filter(
+                        FactObservation.dedup_key == dedup_key
+                    ).first()
+                    
+                    if existing:
+                        existing.value = value
+                        existing.batch_id = batch_id
+                    else:
+                        obs = FactObservation(
+                            batch_id=batch_id,
+                            metric_id=metric.id,
+                            obs_date=trade_date,
+                            period_type="day",
+                            value=value,
+                            geo_id=None,
+                            tags_json=tags,
+                            dedup_key=dedup_key
+                        )
+                        self.db.add(obs)
+                        self.db.flush()
+                        tag_obs = FactObservationTag(
+                            observation_id=obs.id,
+                            tag_key="province",
+                            tag_value=province_name
+                        )
+                        self.db.add(tag_obs)
+                        inserted_count += 1
+                        
+                except Exception as e:
+                    from sqlalchemy.exc import IntegrityError
+                    if isinstance(e, IntegrityError) and "Duplicate entry" in str(getattr(e, 'orig', str(e))):
+                        self.db.rollback()
+                        self.db.begin()
+                        ex2 = self.db.query(FactObservation).filter(
+                            FactObservation.dedup_key == dedup_key
+                        ).first()
+                        if ex2:
+                            ex2.value = value
+                            ex2.batch_id = batch_id
+                            self.db.flush()
+                    else:
+                        print(f"  处理 {province_name} 第{row_idx}行失败: {e}")
+                        self.db.rollback()
+                        self.db.begin()
+                    continue
+            
+            self.db.flush()
+            total_inserted += inserted_count
+            province_results[province_name] = inserted_count
+            print(f"  {province_name}: 插入 {inserted_count} 条")
+        
+        log_entry = {
+            "sheet": sheet_name,
+            "metric": "各省份出栏均价",
+            "inserted": total_inserted,
+            "provinces": province_results,
+            "date_range": {
+                "start": str(df.iloc[0, 0]) if len(df) > 0 else None,
+                "end": str(df.iloc[-1, 0]) if len(df) > 0 else None
+            }
+        }
+        self.extraction_log.append(log_entry)
+        return {"inserted": total_inserted, "provinces": province_results, "log": log_entry}
     
     def _extract_fat_std_spread(self, batch_id: int) -> Dict:
         """提取标肥价差数据（从肥标价差sheet，提取所有省区）"""
@@ -1328,6 +1486,7 @@ class GanglianPriceExtractor:
             "batch_id": results["batch_id"],
             "results": {
                 "national_price": results["national_price"].get("log", {}),
+                "provincial_price": results.get("provincial_price", {}).get("log", {}),
                 "fat_std_spread": results["fat_std_spread"].get("log", {}),
                 "slaughter_data": results["slaughter_data"].get("log", {}),
                 "region_spread": results["region_spread"].get("log", {}),
@@ -1337,6 +1496,7 @@ class GanglianPriceExtractor:
             },
             "total_inserted": (
                 results["national_price"].get("inserted", 0) +
+                results.get("provincial_price", {}).get("inserted", 0) +
                 results["fat_std_spread"].get("inserted", 0) +
                 results["slaughter_data"].get("inserted", 0) +
                 results["region_spread"].get("inserted", 0) +
@@ -1393,6 +1553,13 @@ def main():
         print(f"批次ID: {results['batch_id']}")
         print(f"全国猪价: 插入 {results['national_price'].get('inserted', 0)} 条")
         
+        # 各省份出栏均价统计
+        provincial_result = results.get('provincial_price', {})
+        print(f"\n各省份出栏均价: 总计插入 {provincial_result.get('inserted', 0)} 条")
+        if provincial_result.get('provinces'):
+            for province, count in provincial_result['provinces'].items():
+                print(f"  {province}: {count} 条")
+        
         # 标肥价差分省区统计
         spread_result = results['fat_std_spread']
         print(f"\n标肥价差（分省区）: 总计插入 {spread_result.get('inserted', 0)} 条")
@@ -1431,7 +1598,11 @@ def main():
             for indicator, count in monthly_result['indicators'].items():
                 print(f"    {indicator}: {count} 条")
         
-        print(f"\n总计: {results['national_price'].get('inserted', 0) + spread_result.get('inserted', 0) + results['slaughter_data'].get('inserted', 0) + region_spread_result.get('inserted', 0) + frozen_result.get('inserted', 0) + weight_result.get('inserted', 0) + monthly_result.get('inserted', 0)} 条")
+        total = (results['national_price'].get('inserted', 0) + provincial_result.get('inserted', 0) +
+                 spread_result.get('inserted', 0) + results['slaughter_data'].get('inserted', 0) +
+                 region_spread_result.get('inserted', 0) + frozen_result.get('inserted', 0) +
+                 weight_result.get('inserted', 0) + monthly_result.get('inserted', 0))
+        print(f"\n总计: {total} 条")
         
     except Exception as e:
         print(f"提取失败: {e}")

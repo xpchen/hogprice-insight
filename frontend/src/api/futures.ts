@@ -91,6 +91,8 @@ export interface RegionPremiumResponse {
 export interface VolatilityDataPoint {
   date: string
   close_price: number | null
+  settle_price?: number | null
+  open_interest?: number | null
   volatility: number | null
   year?: number | null
 }
@@ -104,6 +106,29 @@ export interface VolatilitySeries {
 export interface VolatilityResponse {
   series: VolatilitySeries[]
   update_time: string | null
+}
+
+export interface WarehouseReceiptChartPoint {
+  date: string
+  total: number | null
+  enterprises: Record<string, number | null>
+}
+
+export interface WarehouseReceiptChartResponse {
+  data: WarehouseReceiptChartPoint[]
+  date_range: { start: string | null; end: string | null }
+  top2_enterprises: string[]
+}
+
+export interface WarehouseReceiptTableRow {
+  enterprise: string
+  total: number | null
+  warehouses: Array<{ name: string; quantity?: number }>
+}
+
+export interface WarehouseReceiptTableResponse {
+  data: WarehouseReceiptTableRow[]
+  enterprises: string[]
 }
 
 export const futuresApi = {
@@ -145,6 +170,7 @@ export const futuresApi = {
 
   getVolatility: (params: {
     contract_month?: number
+    window_days?: number  // 5=5日波动率，10=10日波动率
     min_volatility?: number
     max_volatility?: number
     start_date?: string
@@ -160,5 +186,18 @@ export const futuresApi = {
     format_type?: string
   }): Promise<PremiumResponseV2> => {
     return request.get('/futures/premium/v2', { params })
+  },
+
+  getWarehouseReceiptChart: (params?: {
+    start_date?: string
+    end_date?: string
+  }): Promise<WarehouseReceiptChartResponse> => {
+    return request.get('/futures/warehouse-receipt/chart', { params })
+  },
+
+  getWarehouseReceiptTable: (params?: {
+    enterprises?: string
+  }): Promise<WarehouseReceiptTableResponse> => {
+    return request.get('/futures/warehouse-receipt/table', { params })
   }
 }
