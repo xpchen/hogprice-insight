@@ -185,12 +185,13 @@
       "sheet_name": "华宝和牧原白条",
       "parser": "HUABAO_MUYUAN_WHITE_STRIP",
       "header": {
-        "header_row": 0
+        "header_row": 0,
+        "sub_header_row": 1
       },
       "metrics_from_columns": [
         {
           "column_pattern": "华宝肉条",
-          "metric_name": "白条价格",
+          "metric_name": "华宝白条价格",
           "metric_key": "WHITE_STRIP_PRICE_HUABAO",
           "unit": "元/公斤",
           "metric_group": "white_strip",
@@ -199,18 +200,8 @@
           }
         },
         {
-          "column_pattern": "牧原白条",
-          "metric_name": "白条价格",
-          "metric_key": "WHITE_STRIP_PRICE_MUYUAN",
-          "unit": "元/公斤",
-          "metric_group": "white_strip",
-          "tags": {
-            "company": "牧原白条"
-          }
-        },
-        {
           "column_pattern": "华东",
-          "metric_name": "白条价格",
+          "metric_name": "华东白条价格",
           "metric_key": "WHITE_STRIP_PRICE_EAST_CHINA",
           "unit": "元/公斤",
           "metric_group": "white_strip",
@@ -220,7 +211,7 @@
         },
         {
           "column_pattern": "河南山东",
-          "metric_name": "白条价格",
+          "metric_name": "河南山东白条价格",
           "metric_key": "WHITE_STRIP_PRICE_HENAN_SHANDONG",
           "unit": "元/公斤",
           "metric_group": "white_strip",
@@ -230,7 +221,7 @@
         },
         {
           "column_pattern": "湖北陕西",
-          "metric_name": "白条价格",
+          "metric_name": "湖北陕西白条价格",
           "metric_key": "WHITE_STRIP_PRICE_HUBEI_SHANXI",
           "unit": "元/公斤",
           "metric_group": "white_strip",
@@ -240,7 +231,7 @@
         },
         {
           "column_pattern": "京津冀",
-          "metric_name": "白条价格",
+          "metric_name": "京津冀白条价格",
           "metric_key": "WHITE_STRIP_PRICE_JINGJINJI",
           "unit": "元/公斤",
           "metric_group": "white_strip",
@@ -250,12 +241,22 @@
         },
         {
           "column_pattern": "东北",
-          "metric_name": "白条价格",
+          "metric_name": "东北白条价格",
           "metric_key": "WHITE_STRIP_PRICE_NORTHEAST",
           "unit": "元/公斤",
           "metric_group": "white_strip",
           "tags": {
             "region": "东北"
+          }
+        },
+        {
+          "column_pattern": "牧原白条",
+          "metric_name": "牧原白条价格",
+          "metric_key": "WHITE_STRIP_PRICE_MUYUAN",
+          "unit": "元/公斤",
+          "metric_group": "white_strip",
+          "tags": {
+            "company": "牧原白条"
           }
         }
       ]

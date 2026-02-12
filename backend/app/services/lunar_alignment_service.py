@@ -401,3 +401,42 @@ def get_lunar_year_date_range(lunar_year: int) -> Optional[Tuple[date, date]]:
     except Exception as e:
         print(f"获取农历年度日期范围失败: {e}")
         return None
+
+
+def get_lunar_year_date_range_la_ba(lunar_year: int) -> Optional[Tuple[date, date]]:
+    """
+    获取农历年度的阳历日期范围：正月初八（含）至腊月二十八（含）。
+    用于「屠宰&价格 相关走势」等按年筛选、用阳历日期展示的图表。
+
+    Args:
+        lunar_year: 农历年份（如 2024）
+
+    Returns:
+        (start_date, end_date) 阳历日期，或 None
+    """
+    if not HAS_LUNAR_LIB:
+        return None
+    try:
+        from datetime import date as date_class
+        # 正月初八
+        lunar_jan_8 = Lunar.fromYmd(lunar_year, 1, 8)
+        solar_jan_8 = lunar_jan_8.getSolar()
+        start_date = date_class(
+            solar_jan_8.getYear(),
+            solar_jan_8.getMonth(),
+            solar_jan_8.getDay(),
+        )
+        # 腊月二十八
+        lunar_dec_28 = Lunar.fromYmd(lunar_year, 12, 28)
+        solar_dec_28 = lunar_dec_28.getSolar()
+        end_date = date_class(
+            solar_dec_28.getYear(),
+            solar_dec_28.getMonth(),
+            solar_dec_28.getDay(),
+        )
+        if start_date > end_date:
+            return None
+        return (start_date, end_date)
+    except Exception as e:
+        print(f"get_lunar_year_date_range_la_ba 失败 lunar_year={lunar_year}: {e}")
+        return None

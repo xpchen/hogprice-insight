@@ -1,6 +1,6 @@
 <template>
   <div class="weight-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>A2. 均重（全国）</span>
@@ -38,7 +38,7 @@
               <ChangeAnnotation
                 :current-change="preSlaughterCurrentChange"
                 :yoy-change="preSlaughterYoyChange"
-                unit="kg"
+                unit=""
               />
               <DataSourceInfo
                 :source-name="'涌益'"
@@ -68,7 +68,7 @@
               <ChangeAnnotation
                 :current-change="outWeightCurrentChange"
                 :yoy-change="outWeightYoyChange"
-                unit="kg"
+                unit=""
               />
               <DataSourceInfo
                 :source-name="'涌益'"
@@ -101,7 +101,7 @@
               <ChangeAnnotation
                 :current-change="scaleFarmCurrentChange"
                 :yoy-change="scaleFarmYoyChange"
-                unit="kg"
+                unit=""
               />
               <DataSourceInfo
                 :source-name="'涌益'"
@@ -131,7 +131,7 @@
               <ChangeAnnotation
                 :current-change="retailCurrentChange"
                 :yoy-change="retailYoyChange"
-                unit="kg"
+                unit=""
               />
               <DataSourceInfo
                 :source-name="'涌益'"
@@ -218,6 +218,7 @@ import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import { getWeightData } from '@/api/national-data'
 import { useRouter } from 'vue-router'
+import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 const router = useRouter()
 const loading = ref(false)
@@ -300,10 +301,10 @@ const calculateChanges = (data: any[]) => {
 const loadData = async () => {
   loading.value = true
   try {
-    // 查询最近3年的数据
+    // 查询最近6年的数据（约从2020年起，与出栏均重数据年份一致）
     const endDate = new Date()
     const startDate = new Date()
-    startDate.setFullYear(endDate.getFullYear() - 3)
+    startDate.setFullYear(endDate.getFullYear() - 6)
     
     const result = await getWeightData(
       startDate.toISOString().split('T')[0],
@@ -403,22 +404,6 @@ let retailChart: echarts.ECharts | null = null
 let ratio90kgChart: echarts.ECharts | null = null
 let ratio150kgChart: echarts.ECharts | null = null
 
-// 年份颜色映射
-const yearColors: Record<number, string> = {
-  2021: '#FFB6C1',
-  2022: '#FF69B4',
-  2023: '#4169E1',
-  2024: '#D3D3D3',
-  2025: '#1E90FF',
-  2026: '#FF0000',
-  2027: '#32CD32',
-  2028: '#FFA500',
-}
-
-const getYearColor = (year: number): string => {
-  return yearColors[year] || '#888888'
-}
-
 // 格式化更新日期（只显示年月日）
 const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
   if (!dateStr) return null
@@ -462,10 +447,6 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
   // 按年份分组
   const years = [...new Set(weekData.map(d => d.year))].sort((a, b) => b - a) // 降序排列
   
-  // 计算最近三年（用于颜色规则）
-  const sortedYears = [...years].sort((a, b) => b - a)
-  const recentThreeYears = new Set(sortedYears.slice(0, 3))
-  
   const series = years.map(year => {
     const yearData = weekData.filter(d => d.year === year)
     const values = Array(52).fill(null)
@@ -474,9 +455,7 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
         values[d.week - 1] = d.value
       }
     })
-    // 最近三年有颜色，其他年份灰色
-    const isRecentYear = recentThreeYears.has(year)
-    const lineColor = isRecentYear ? getYearColor(year) : '#D3D3D3'
+    const lineColor = getYearColor(year)
     
     return {
       name: `${year}年`,
@@ -528,7 +507,7 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
       itemHeight: 10,
       itemGap: 15,
       orient: 'horizontal',
-      left: 'center'
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -554,14 +533,13 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     },
     yAxis: {
       type: 'value',
-      // Y轴不显示单位
       name: '',
       nameLocation: 'end',
       nameGap: 20,
-      // 自动调整范围
       min: yMin - yPadding,
       max: yMax + yPadding,
-      scale: false
+      scale: false,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     // 只保留内部缩放，删除日期筛选进度条
@@ -624,51 +602,53 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .weight-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.weight-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 20px; /* 缩小间距 */
+  gap: 4px;
 }
 
 .chart-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
-  border: 1px solid #e4e7ed; /* 共用边框 */
+  gap: 4px;
+  border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 16px; /* 减少padding */
+  padding: 4px;
   background: #fff;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .chart-wrapper {
-  /* 移除单独的边框和背景，因为已经在chart-row中设置了 */
   padding: 0;
 }
 
 .chart-box {
-  /* 图表框：包含标题、图例、图表 */
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .info-box {
-  /* 说明框：无背景色，位于图表框下方 */
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
+  padding-top: 6px;
   background-color: transparent;
 }
 
 .chart-title {
-  margin: 0 0 20px 0;
+  margin: 0 0 6px 0;
   font-size: 16px;
   font-weight: 600;
   color: #303133;
   line-height: 1.5;
+  text-align: left;
 }
 
 .chart-container {

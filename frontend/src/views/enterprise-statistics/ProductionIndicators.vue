@@ -1,6 +1,6 @@
 <template>
   <div class="production-indicators-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>规模场数据汇总</span>
@@ -171,7 +171,7 @@ const updateChart1 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '母猪效能（分娩窝数）',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -182,7 +182,12 @@ const updateChart1 = () => {
     },
     legend: {
       data: ['分娩窝数'],
-      bottom: 10
+      bottom: 10,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -197,7 +202,8 @@ const updateChart1 = () => {
     },
     yAxis: {
       type: 'value',
-      name: '窝数'
+      name: '窝数',
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
       {
@@ -240,7 +246,7 @@ const updateChart2 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '压栏系数（窝均健仔数-河南）',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -251,7 +257,12 @@ const updateChart2 = () => {
     },
     legend: {
       data: ['窝均健仔数（河南）'],
-      bottom: 10
+      bottom: 10,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -266,7 +277,8 @@ const updateChart2 = () => {
     },
     yAxis: {
       type: 'value',
-      name: '窝均健仔数'
+      name: '窝均健仔数',
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
       {
@@ -329,7 +341,7 @@ const updateChart3 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '涌益生产指标（窝均健仔数）',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -343,7 +355,12 @@ const updateChart3 = () => {
     },
     legend: {
       data: displayIndicators.value,
-      bottom: 10
+      bottom: 10,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -358,7 +375,8 @@ const updateChart3 = () => {
     },
     yAxis: {
       type: 'value',
-      name: '窝均健仔数'
+      name: '窝均健仔数',
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
       {
@@ -414,13 +432,20 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .production-indicators-page {
+  padding: 4px;
+  
+  :deep(.el-card__body) {
+    padding: 4px 6px;
+  }
+  
   .chart-section {
-    margin-bottom: 40px;
+    margin-bottom: 12px;
     
     h3 {
-      margin-bottom: 15px;
+      margin-bottom: 6px;
       font-size: 16px;
       font-weight: 600;
+      text-align: left;
     }
   }
 
@@ -438,7 +463,7 @@ onBeforeUnmount(() => {
   }
 
   .chart-container {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
   }
 }
 </style>

@@ -27,7 +27,7 @@
           </el-select>
         </div>
 
-        <!-- 价格表格 -->
+        <!-- 价格表格：牧原白条为多表头，下属华东、河南山东、湖北陕西、京津冀、东北 -->
         <div class="table-container">
           <el-table
             :data="table1DisplayData"
@@ -37,27 +37,49 @@
             style="width: 100%"
             height="400"
           >
-            <el-table-column prop="date" label="日期" width="120" fixed="left">
+            <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
               <template #default="{ row }">
                 {{ formatDate(row.date) }}
               </template>
             </el-table-column>
             <el-table-column
-              v-for="company in table1Data?.companies || []"
+              v-for="company in table1FlatColumns"
               :key="company"
               :label="company"
-              width="140"
+              width="120"
               align="right"
+              header-align="center"
             >
               <template #default="{ row }">
                 <div v-if="getCompanyPrice(row, company) !== null">
-                  <div class="price-value">{{ formatPrice(getCompanyPrice(row, company)) }}</div>
+                  <div class="price-value">{{ formatCompanyPrice(company, getCompanyPrice(row, company)) }}</div>
                   <div class="premium-discount" v-if="getPremiumDiscount(company) !== null && getPremiumDiscount(company) !== 0">
                     ({{ formatPremiumDiscount(getPremiumDiscount(company)) }})
                   </div>
                 </div>
                 <span v-else>-</span>
               </template>
+            </el-table-column>
+            <!-- 牧原白条 多表头：始终展示，一级「牧原白条」，二级 华东、河南山东、湖北陕西、京津冀、东北（来源：3.3、白条市场跟踪.xlsx） -->
+            <el-table-column
+              label="牧原白条"
+              align="center"
+              header-align="center"
+            >
+              <el-table-column
+                v-for="region in MUYUAN_WHITE_STRIP_REGIONS"
+                :key="region"
+                :label="region"
+                :prop="region"
+                width="110"
+                align="right"
+                header-align="center"
+              >
+                <template #default="{ row }">
+                  <span v-if="getCompanyPrice(row, region) !== null">{{ formatPrice(getCompanyPrice(row, region)) }}</span>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
             </el-table-column>
           </el-table>
         </div>
@@ -148,6 +170,17 @@ const selectedDays = ref(15)
 const selectedDays2 = ref(15)
 const dateRange = ref<[Date, Date] | null>(null)
 const rangeChangeResult = ref<number | null>(null)
+
+// 牧原白条多表头：来源于 3.3、白条市场跟踪.xlsx 华宝和牧原白条 sheet，一级「牧原白条」，二级为以下区域
+const MUYUAN_WHITE_STRIP_REGIONS = ['华东', '河南山东', '湖北陕西', '京津冀', '东北']
+
+// 表格1 平铺列（不含牧原白条及下属华东等 5 列，该部分用多表头展示）
+const table1FlatColumns = computed(() => {
+  const companies = table1Data.value?.companies || []
+  return companies.filter(
+    (c: string) => c !== '牧原白条' && !MUYUAN_WHITE_STRIP_REGIONS.includes(c)
+  )
+})
 
 // 表格1显示数据（按日期分组）
 const table1DisplayData = computed(() => {
@@ -287,6 +320,13 @@ const formatDate = (dateStr: string) => {
 const formatPrice = (price: number | null | undefined) => {
   if (price === null || price === undefined) return '-'
   return price.toFixed(2)
+}
+
+// 华宝白条列当前数据源为升贴水（元），非价格（元/公斤），展示时注明
+const formatCompanyPrice = (company: string, value: number) => {
+  const s = value.toFixed(2)
+  if (company === '华宝白条') return `${s} (升贴水)`
+  return s
 }
 
 const formatValue = (value: number | null | undefined) => {

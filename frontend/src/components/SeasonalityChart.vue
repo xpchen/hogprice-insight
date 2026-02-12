@@ -3,30 +3,19 @@
     <template #header>
       <div style="display: flex; justify-content: space-between; align-items: center">
         <span>{{ title || '季节性图表' }}</span>
-        <div style="display: flex; gap: 10px; align-items: center; flex: 1; justify-content: flex-end; margin-left: 20px">
-          <div v-if="changeInfo" class="change-info" style="display: flex; gap: 20px; font-size: 14px; margin-right: 10px">
-            <span v-if="changeInfo.period_change !== null" class="change-item">
-              本期涨跌：
-              <span :class="getChangeClass(changeInfo.period_change)">
-                {{ formatChange(changeInfo.period_change) }}
-              </span>
+        <div v-if="changeInfo" class="change-info" style="display: flex; gap: 20px; font-size: 14px">
+          <span v-if="changeInfo.period_change !== null" class="change-item">
+            本期涨跌：
+            <span :class="getChangeClass(changeInfo.period_change)">
+              {{ formatChange(changeInfo.period_change) }}
             </span>
-            <span v-if="changeInfo.yoy_change !== null" class="change-item">
-              较去年同期涨跌：
-              <span :class="getChangeClass(changeInfo.yoy_change)">
-                {{ formatChange(changeInfo.yoy_change) }}
-              </span>
+          </span>
+          <span v-if="changeInfo.yoy_change !== null" class="change-item">
+            较去年同期涨跌：
+            <span :class="getChangeClass(changeInfo.yoy_change)">
+              {{ formatChange(changeInfo.yoy_change) }}
             </span>
-          </div>
-          <el-radio-group v-model="xMode" size="small" @change="handleModeChange">
-            <el-radio-button label="week_of_year">周序号</el-radio-button>
-            <el-radio-button label="month_day">月-日</el-radio-button>
-            <el-radio-button v-if="lunarAlignment" label="lunar_day_index">农历对齐</el-radio-button>
-          </el-radio-group>
-          <el-button size="small" @click="handleSaveAsPng" :disabled="!data">
-            <el-icon><Download /></el-icon>
-            保存为PNG
-          </el-button>
+          </span>
         </div>
       </div>
     </template>
@@ -43,9 +32,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 export interface SeasonalityData {
   x_values: number[] | string[]  // 1..52 或 "01-01".."12-31"
@@ -80,21 +68,6 @@ const xMode = ref<'week_of_year' | 'month_day' | 'lunar_day_index'>('week_of_yea
 // 图例选中状态（用于控制显示/隐藏）
 const legendSelected = ref<Record<string, boolean>>({})
 
-// 年份颜色映射（固定颜色，保证一致性）
-const yearColors: Record<number, string> = {
-  2021: '#FFB6C1',  // 浅粉
-  2022: '#FF69B4',  // 粉
-  2023: '#4169E1',  // 中蓝
-  2024: '#D3D3D3',  // 浅灰
-  2025: '#1E90FF',  // 深蓝
-  2026: '#FF0000',  // 红
-  2027: '#32CD32',  // 绿
-  2028: '#FFA500',  // 橙
-}
-
-const getYearColor = (year: number): string => {
-  return yearColors[year] || `#${Math.floor(Math.random() * 16777215).toString(16)}`
-}
 
 const updateChart = () => {
   if (!chartRef.value || !chartInstance || !props.data) {
@@ -116,10 +89,6 @@ const updateChart = () => {
     })
   }
   
-  // 计算最近三年（用于颜色规则）
-  const sortedYears = [...series.map(s => s.year)].sort((a, b) => b - a)
-  const recentThreeYears = new Set(sortedYears.slice(0, 3))
-  
   // 计算Y轴范围（自动调整）
   const allValues = series.flatMap(s => s.values).filter(v => v !== null && v !== undefined) as number[]
   const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
@@ -128,6 +97,9 @@ const updateChart = () => {
   
   // 根据xMode过滤x_values（如果数据包含两种模式）
   let displayXValues = x_values
+  
+  // 是否为月-日格式的日度数据（用于 X 轴显示与稀疏化）
+  const isMonthDayData = Array.isArray(x_values) && x_values.length > 0 && typeof x_values[0] === 'string' && /^\d{1,2}-\d{1,2}$/.test(String(x_values[0]))
   
   // 格式化x轴标签
   const formatXLabel = (value: number | string): string => {
@@ -173,10 +145,8 @@ const updateChart = () => {
       itemWidth: 10,
       itemHeight: 10,
       itemGap: 15,
-      // 分2-3行显示
       orient: 'horizontal',
-      left: 'center',
-      top: 10,
+      left: 'left',
       // 计算每行显示的数量（假设总共显示所有年份）
       formatter: (name: string) => name
     },
@@ -191,18 +161,19 @@ const updateChart = () => {
       type: 'category',
       data: displayXValues.map(formatXLabel),
       boundaryGap: false,
-      // X轴不显示标签（默认时间轴）
       name: '',
       axisLabel: {
-        rotate: xMode.value === 'month_day' ? 45 : 0,
-        interval: xMode.value === 'month_day' ? 'auto' : 0,
+        rotate: isMonthDayData ? 45 : 0,
+        interval: isMonthDayData ? 'auto' : 0,
         formatter: (value: string) => {
-          // 如果是周序号模式，只显示部分标签
-          if (xMode.value === 'week_of_year') {
-            const weekNum = parseInt(value.replace('第', '').replace('周', ''))
-            if (weekNum % 4 === 0 || weekNum === 1 || weekNum === 52) {
-              return value
-            }
+          // 月-日格式（如 01-16）：直接显示，避免 parseInt 误判导致空白
+          if (/^\d{1,2}-\d{1,2}$/.test(value)) {
+            return value
+          }
+          // 周序号格式（如 第1周）：只显示部分标签
+          const weekNum = parseInt(value.replace('第', '').replace('周', ''), 10)
+          if (!isNaN(weekNum)) {
+            if (weekNum % 4 === 0 || weekNum === 1 || weekNum === 52) return value
             return ''
           }
           return value
@@ -211,21 +182,18 @@ const updateChart = () => {
     },
     yAxis: {
       type: 'value',
-      // Y轴不显示单位
       name: '',
       nameLocation: 'end',
       nameGap: 20,
-      // 自动调整范围
       min: yMin - yPadding,
       max: yMax + yPadding,
-      scale: false
+      scale: false,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series.map(s => {
       const isLeap = (s as any).is_leap_month
       const seriesName = `${s.year}年${isLeap ? '(闰月)' : ''}`
-      // 最近三年有颜色，其他年份灰色
-      const isRecentYear = recentThreeYears.has(s.year)
-      const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
+      const lineColor = getYearColor(s.year)
       
       return {
         name: seriesName,
@@ -285,42 +253,6 @@ const updateChart = () => {
       })
     }
   })
-}
-
-const handleModeChange = () => {
-  updateChart()
-}
-
-const handleSaveAsPng = () => {
-  if (!chartInstance || !props.data) {
-    ElMessage.warning('图表数据未加载，无法保存')
-    return
-  }
-  
-  try {
-    // 获取图表数据URL（PNG格式）
-    const dataURL = chartInstance.getDataURL({
-      type: 'png',
-      pixelRatio: 2, // 提高清晰度
-      backgroundColor: '#fff'
-    })
-    
-    // 创建下载链接
-    const link = document.createElement('a')
-    const fileName = `${props.title || '季节性图表'}_${new Date().toISOString().slice(0, 10)}.png`
-    link.download = fileName
-    link.href = dataURL
-    
-    // 触发下载
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    
-    ElMessage.success('图表已保存为PNG')
-  } catch (error) {
-    console.error('保存图表失败:', error)
-    ElMessage.error('保存图表失败，请稍后重试')
-  }
 }
 
 onMounted(() => {
@@ -396,7 +328,7 @@ const getChangeClass = (value: number | null): string => {
 
 <style scoped>
 .seasonality-chart-panel {
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 
 .change-info {
@@ -429,7 +361,7 @@ const getChangeClass = (value: number | null): string => {
   font-size: 12px;
   color: #909399;
   text-align: right;
-  margin-top: 8px;
+  margin-top: 6px;
   padding-right: 8px;
 }
 

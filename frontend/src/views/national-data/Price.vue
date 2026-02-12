@@ -1,6 +1,6 @@
 <template>
   <div class="price-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>A1. 价格（全国）</span>
@@ -193,6 +193,7 @@ import {
 } from '@/api/price-display'
 import { downloadSQL, generateInsertSQL } from '@/utils/sql-generator'
 import type { MetricConfig, SQLGenerationOptions } from '@/utils/sql-generator'
+import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 // 加载状态
 const loadingPrice = ref(false)
@@ -248,22 +249,6 @@ let slaughterLunarChart: echarts.ECharts | null = null
 // SQL生成
 const showSQLDialog = ref(false)
 const generatedSQL = ref('')
-
-// 年份颜色映射
-const yearColors: Record<number, string> = {
-  2021: '#FFB6C1',
-  2022: '#FF69B4',
-  2023: '#4169E1',
-  2024: '#D3D3D3',
-  2025: '#1E90FF',
-  2026: '#FF0000',
-  2027: '#32CD32',
-  2028: '#FFA500',
-}
-
-const getYearColor = (year: number): string => {
-  return yearColors[year] || '#888888'
-}
 
 // 格式化更新日期（只显示年月日）
 const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
@@ -456,7 +441,7 @@ const renderPriceSeasonalityChart = () => {
       symbolSize: 4,
       lineStyle: { width: 2 },
       itemStyle: { color: getYearColor(s.year) },
-      connectNulls: false
+      connectNulls: true
     }
   })
   
@@ -482,8 +467,13 @@ const renderPriceSeasonalityChart = () => {
     legend: {
       data: priceSeasonalityData.value.series.map(s => `${s.year}年`),
       top: 10,
-      type: 'scroll',
-      orient: 'horizontal'
+      type: 'plain',
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      orient: 'horizontal',
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -503,7 +493,8 @@ const renderPriceSeasonalityChart = () => {
     },
     yAxis: {
       type: 'value',
-      name: `价格（${priceSeasonalityData.value.unit}）`
+      name: '价格',
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     dataZoom: [
@@ -586,7 +577,7 @@ const renderSpreadSeasonalityChart = () => {
       symbolSize: 4,
       lineStyle: { width: 2 },
       itemStyle: { color: getYearColor(s.year) },
-      connectNulls: false
+      connectNulls: true
     }
   })
   
@@ -612,8 +603,13 @@ const renderSpreadSeasonalityChart = () => {
     legend: {
       data: spreadSeasonalityData.value.series.map(s => `${s.year}年`),
       top: 10,
-      type: 'scroll',
-      orient: 'horizontal'
+      type: 'plain',
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      orient: 'horizontal',
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -633,7 +629,8 @@ const renderSpreadSeasonalityChart = () => {
     },
     yAxis: {
       type: 'value',
-      name: `价差（${spreadSeasonalityData.value.unit}）`
+      name: '价差',
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     dataZoom: [
@@ -684,6 +681,9 @@ const renderPriceSpreadChart = () => {
   
   priceSpreadChart = echarts.init(priceSpreadChartRef.value)
   
+  // 统一日期为 YYYY-MM-DD，避免 API 返回带时间或时区时与价格日期不一致导致价差断联
+  const normDate = (s: string) => s.slice(0, 10)
+
   // 根据选中的年份过滤数据（如果已选择年份）
   const filteredPriceData = selectedYear.value !== null
     ? priceSpreadData.value.price_data.filter(item => item.year === selectedYear.value)
@@ -696,10 +696,10 @@ const renderPriceSpreadChart = () => {
   filteredPriceData.sort((a, b) => a.date.localeCompare(b.date))
   filteredSpreadData.sort((a, b) => a.date.localeCompare(b.date))
   
-  // 构建X轴：合并所有日期并排序
+  // 构建X轴：合并所有日期并排序（用统一格式，避免同一天因格式不同被拆成两点）
   const allDates = new Set<string>()
-  filteredPriceData.forEach(item => allDates.add(item.date))
-  filteredSpreadData.forEach(item => allDates.add(item.date))
+  filteredPriceData.forEach(item => allDates.add(normDate(item.date)))
+  filteredSpreadData.forEach(item => allDates.add(normDate(item.date)))
   const sortedDates = Array.from(allDates).sort()
   
   // 格式化X轴标签（MM-DD格式）
@@ -708,22 +708,22 @@ const renderPriceSpreadChart = () => {
     return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
   })
   
-  // 创建日期到值的映射
+  // 创建日期到值的映射（键统一为 YYYY-MM-DD）
   const priceMap = new Map<string, number | null>()
   filteredPriceData.forEach(item => {
-    priceMap.set(item.date, item.value)
+    priceMap.set(normDate(item.date), item.value)
   })
-  
   const spreadMap = new Map<string, number | null>()
   filteredSpreadData.forEach(item => {
-    spreadMap.set(item.date, item.value)
+    spreadMap.set(normDate(item.date), item.value)
   })
   
-  // 构建两个指标系列
+  // 构建两个指标系列（缺数用 null，connectNulls 使曲线连续）
   const series: any[] = []
-  
+  const toNull = (v: number | null | undefined) => (v === undefined || v === null ? null : v)
+
   // 价格指标（左Y轴）
-  const priceValues = sortedDates.map(date => priceMap.get(date) ?? null)
+  const priceValues = sortedDates.map(date => toNull(priceMap.get(date)))
   if (priceValues.some(v => v !== null)) {
     series.push({
       name: '价格',
@@ -735,12 +735,12 @@ const renderPriceSpreadChart = () => {
       symbolSize: 4,
       lineStyle: { width: 2 },
       itemStyle: { color: '#409EFF' },
-      connectNulls: false
+      connectNulls: true  // 缺数时连线不断开
     })
   }
-  
+
   // 价差指标（右Y轴）
-  const spreadValues = sortedDates.map(date => spreadMap.get(date) ?? null)
+  const spreadValues = sortedDates.map(date => toNull(spreadMap.get(date)))
   if (spreadValues.some(v => v !== null)) {
     series.push({
       name: '标肥价差',
@@ -752,7 +752,7 @@ const renderPriceSpreadChart = () => {
       symbolSize: 4,
       lineStyle: { width: 2, type: 'dashed' },
       itemStyle: { color: '#67C23A' },
-      connectNulls: false
+      connectNulls: true  // 缺数时连线不断开
     })
   }
   
@@ -769,11 +769,12 @@ const renderPriceSpreadChart = () => {
         if (!Array.isArray(params)) return ''
         let result = `<div style="margin-bottom: 4px;"><strong>${params[0].axisValue}</strong></div>`
         params.forEach((param: any) => {
+          if (!param.seriesName) return
           const value = param.value !== null && param.value !== undefined 
             ? param.value.toFixed(2) 
             : '-'
           const unit = param.seriesName === '价格' ? '元/公斤' : '元/公斤'
-          const yAxisName = param.series.yAxisIndex === 1 ? '（右轴）' : '（左轴）'
+          const yAxisName = param.series?.yAxisIndex === 1 ? '（右轴）' : '（左轴）'
           result += `<div style="margin: 2px 0;">
             <span style="display:inline-block;width:10px;height:10px;background-color:${param.color};border-radius:50%;margin-right:5px;"></span>
             ${param.seriesName}${yAxisName}: <strong>${value}${unit}</strong>
@@ -785,8 +786,13 @@ const renderPriceSpreadChart = () => {
     legend: {
       data: series.map(s => s.name),
       top: 10,
-      type: 'scroll',
-      orient: 'horizontal'
+      type: 'plain',
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      orient: 'horizontal',
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -807,13 +813,15 @@ const renderPriceSpreadChart = () => {
     yAxis: [
       {
         type: 'value',
-        name: '价格（元/公斤）',
-        position: 'left'
+        name: '价格',
+        position: 'left',
+        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       },
       {
         type: 'value',
-        name: '价差（元/公斤）',
-        position: 'right'
+        name: '价差',
+        position: 'right',
+        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       }
     ],
     series: series,
@@ -833,7 +841,8 @@ const renderPriceSpreadChart = () => {
     ]
   }
   
-  priceSpreadChart.setOption(option)
+  // notMerge: true 确保 connectNulls 等配置完整生效，避免被合并覆盖导致价差断联
+  priceSpreadChart.setOption(option, { notMerge: true })
   
   // 确保图表正确渲染
   setTimeout(() => {
@@ -881,10 +890,6 @@ const renderSlaughterLunarChart = () => {
   })
   
   
-  // 计算最近三年（用于颜色规则）
-  const sortedYears = [...slaughterLunarData.value.series.map(s => s.year)].sort((a, b) => b - a)
-  const recentThreeYears = new Set(sortedYears.slice(0, 3))
-  
   // 为每个年份构建数据，对齐到X轴
   const series = slaughterLunarData.value.series.map(s => {
     // 创建month_day到value的映射
@@ -902,9 +907,7 @@ const renderSlaughterLunarChart = () => {
     const isLeapMonth = s.is_leap_month === true
     const leapMonth = s.leap_month
     
-    // 最近三年有颜色，其他年份灰色（闰月也遵循这个规则）
-    const isRecentYear = recentThreeYears.has(s.year)
-    const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
+    const lineColor = getYearColor(s.year)
     
     // 图例名称：如果是闰月，显示"2025年闰6月"；否则显示"2025年"
     const seriesName = isLeapMonth && leapMonth 
@@ -961,15 +964,15 @@ const renderSlaughterLunarChart = () => {
       }
     },
     legend: {
-      data: series.map(s => s.name),  // 使用series中的name（已经处理了闰月）
+      data: series.map(s => s.name),
       top: 10,
-      type: 'plain', // 不使用滚动
+      type: 'plain',
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
       itemGap: 15,
       orient: 'horizontal',
-      left: 'center'
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -982,33 +985,28 @@ const renderSlaughterLunarChart = () => {
       type: 'category',
       boundaryGap: false,
       data: xAxisData,
-      // X轴不显示标签（默认时间轴）
       name: '',
       axisLabel: {
         rotate: 45,
         interval: 'auto',
-        // 如果有x_axis_labels，使用农历日期标签（MM-dd格式）；否则使用索引
         formatter: (value: string) => {
           const index = parseInt(value)
           if (slaughterLunarData.value.x_axis_labels && slaughterLunarData.value.x_axis_labels[index]) {
             return slaughterLunarData.value.x_axis_labels[index]
           }
-          // 如果没有标签，显示索引（作为后备）
           return value
         }
       }
     },
     yAxis: {
       type: 'value',
-      // Y轴不显示单位
       name: '',
-      // 自动调整范围
       min: yMin - yPadding,
       max: yMax + yPadding,
-      scale: false
+      scale: false,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
-    // 只保留内部缩放，删除日期筛选进度条
     dataZoom: [
       {
         type: 'inside',
@@ -1161,58 +1159,60 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .price-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.price-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 20px; /* 缩小间距 */
+  gap: 4px;
 }
 
 .chart-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
-  border: 1px solid #e4e7ed; /* 共用边框 */
+  gap: 4px;
+  border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 16px; /* 减少padding */
+  padding: 4px;
   background: #fff;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .chart-wrapper {
-  /* 移除单独的边框和背景，因为已经在chart-row中设置了 */
   padding: 0;
 }
 
 .chart-box {
-  /* 图表框：包含标题、图例、图表 */
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .info-box {
-  /* 说明框：无背景色，位于图表框下方 */
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
+  padding-top: 6px;
   background-color: transparent;
 }
 
 .chart-title {
-  margin: 0 0 20px 0;
+  margin: 0 0 6px 0;
   font-size: 16px;
   font-weight: 600;
   color: #303133;
   line-height: 1.5;
+  text-align: left;
 }
 
 .chart-title-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 6px;
   flex-wrap: wrap;
   gap: 10px;
 }

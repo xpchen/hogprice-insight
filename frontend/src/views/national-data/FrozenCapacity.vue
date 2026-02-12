@@ -300,11 +300,11 @@ onMounted(() => {
 
 <style scoped>
 .frozen-capacity-page {
-  padding: 20px;
+  padding: 4px;
 }
 
 .filter-card {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .province-filter {

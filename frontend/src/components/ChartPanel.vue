@@ -24,6 +24,7 @@ import { ref, onMounted, watch, onBeforeUnmount, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import { axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 export interface ChartSeries {
   name: string
@@ -106,13 +107,13 @@ const getYAxisConfig = (series: ChartSeries[]) => {
   if (!needsDualYAxis.value) {
     return [{
       type: 'value',
-      // Y轴不显示单位
       name: '',
       nameLocation: 'end',
       nameGap: 20,
       min: yMin - yPadding,
       max: yMax + yPadding,
-      scale: false
+      scale: false,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     }]
   }
   
@@ -142,13 +143,10 @@ const getYAxisConfig = (series: ChartSeries[]) => {
       min: leftMin - leftPadding,
       max: leftMax + leftPadding,
       scale: false,
-      axisLabel: {
-        formatter: '{value}'
-      }
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     {
       type: 'value',
-      // Y轴不显示单位
       name: '',
       nameLocation: 'end',
       nameGap: 20,
@@ -156,9 +154,7 @@ const getYAxisConfig = (series: ChartSeries[]) => {
       min: rightMin - rightPadding,
       max: rightMax + rightPadding,
       scale: false,
-      axisLabel: {
-        formatter: '{value}'
-      }
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     }
   ]
 }
@@ -368,6 +364,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chart-panel {
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 </style>

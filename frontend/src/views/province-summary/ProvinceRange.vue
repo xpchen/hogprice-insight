@@ -277,11 +277,15 @@ onMounted(() => {
 
 <style scoped>
 .province-range-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.province-range-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .province-selector-card {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .provinces-grid {
@@ -302,13 +306,13 @@ onMounted(() => {
 }
 
 .charts-container {
-  margin-top: 20px;
+  margin-top: 12px;
 }
 
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  gap: 8px;
 }
 
 .chart-wrapper {

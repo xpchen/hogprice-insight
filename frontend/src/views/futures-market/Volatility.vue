@@ -1,6 +1,6 @@
 <template>
   <div class="volatility-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>C4. 波动率数据</span>
@@ -14,55 +14,14 @@
         </div>
       </template>
 
-      <!-- 筛选条件 -->
-      <el-card style="margin-bottom: 20px">
-        <template #header>
-          <span>筛选条件</span>
-        </template>
-        <el-form :model="filters" inline>
-          <el-form-item label="5日波动率范围">
-            <el-input-number v-model="filters.min_volatility_5d" :precision="2" :step="0.1" placeholder="最小值" style="width: 120px" />
-            <span style="margin: 0 10px">-</span>
-            <el-input-number v-model="filters.max_volatility_5d" :precision="2" :step="0.1" placeholder="最大值" style="width: 120px" />
-          </el-form-item>
-          <el-form-item label="10日波动率范围">
-            <el-input-number v-model="filters.min_volatility_10d" :precision="2" :step="0.1" placeholder="最小值" style="width: 120px" />
-            <span style="margin: 0 10px">-</span>
-            <el-input-number v-model="filters.max_volatility_10d" :precision="2" :step="0.1" placeholder="最大值" style="width: 120px" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="loadData">应用筛选</el-button>
-            <el-button @click="resetFilters">重置</el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
-
-      <!-- 数据表格 -->
+      <!-- 波动率季节性图 -->
       <div v-loading="loading">
-        <div v-for="series in volatilityData.series" :key="series.contract_code" style="margin-bottom: 30px">
-          <h3>{{ series.contract_code }} - 波动率数据</h3>
-          <el-table :data="series.data" stripe border style="width: 100%">
-            <el-table-column prop="date" label="日期" width="120" />
-            <el-table-column prop="close_price" label="收盘价" width="120" align="right">
-              <template #default="{ row }">
-                {{ row.close_price !== null ? row.close_price.toFixed(2) : '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="volatility_5d" label="5日波动率（年化）" width="180" align="right">
-              <template #default="{ row }">
-                <span :style="{ color: getVolatilityColor(row.volatility_5d) }">
-                  {{ row.volatility_5d !== null ? row.volatility_5d.toFixed(2) + '%' : '-' }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="volatility_10d" label="10日波动率（年化）" width="180" align="right">
-              <template #default="{ row }">
-                <span :style="{ color: getVolatilityColor(row.volatility_10d) }">
-                  {{ row.volatility_10d !== null ? row.volatility_10d.toFixed(2) + '%' : '-' }}
-                </span>
-              </template>
-            </el-table-column>
-          </el-table>
+        <div v-for="series in volatilityData.series" :key="series.contract_code" style="margin-bottom: 12px">
+          <h3>{{ `${series.contract_month.toString().padStart(2, '0')}合约` }} - 波动率季节性图</h3>
+          <div
+            :ref="el => setChartRef(series.contract_month, el)"
+            class="chart"
+          ></div>
         </div>
       </div>
     </el-card>
@@ -70,32 +29,35 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
+import * as echarts from 'echarts'
 import { futuresApi, type VolatilityResponse } from '@/api/futures'
+import { axisLabelPercentFormatter } from '@/utils/chart-style'
 
 const loading = ref(false)
 const selectedContract = ref<number | null>(null)
 const contractMonths = [3, 5, 7, 9, 11, 1]
 const volatilityData = ref<VolatilityResponse>({ series: [], update_time: null })
+const chartInstances = new Map<number, echarts.ECharts>()
+const chartRefs = new Map<number, HTMLDivElement>()
 
-const filters = ref({
-  min_volatility_5d: null as number | null,
-  max_volatility_5d: null as number | null,
-  min_volatility_10d: null as number | null,
-  max_volatility_10d: null as number | null
-})
+const setChartRef = (key: number, el: HTMLDivElement | null) => {
+  if (el) {
+    chartRefs.set(key, el)
+  } else {
+    chartRefs.delete(key)
+  }
+}
 
 const loadData = async () => {
   loading.value = true
   try {
     const result = await futuresApi.getVolatility({
-      contract_month: selectedContract.value || undefined,
-      min_volatility_5d: filters.value.min_volatility_5d || undefined,
-      max_volatility_5d: filters.value.max_volatility_5d || undefined,
-      min_volatility_10d: filters.value.min_volatility_10d || undefined,
-      max_volatility_10d: filters.value.max_volatility_10d || undefined
+      contract_month: selectedContract.value || undefined
     })
     volatilityData.value = result
+    await nextTick()
+    renderCharts()
   } catch (error) {
     console.error('加载波动率数据失败:', error)
   } finally {
@@ -103,36 +65,178 @@ const loadData = async () => {
   }
 }
 
-const resetFilters = () => {
-  filters.value = {
-    min_volatility_5d: null,
-    max_volatility_5d: null,
-    min_volatility_10d: null,
-    max_volatility_10d: null
-  }
-  loadData()
+const renderCharts = () => {
+  volatilityData.value.series.forEach(series => {
+    const key = series.contract_month
+    const el = chartRefs.get(key)
+    if (!el) return
+    
+    // 销毁旧实例
+    if (chartInstances.has(key)) {
+      chartInstances.get(key)?.dispose()
+    }
+    
+    const chartInstance = echarts.init(el)
+    chartInstances.set(key, chartInstance)
+    
+    // 按年份分组数据
+    const yearMap = new Map<number, Array<typeof series.data[0]>>()
+    series.data.forEach(point => {
+      const year = point.year || new Date(point.date).getFullYear()
+      if (!yearMap.has(year)) {
+        yearMap.set(year, [])
+      }
+      yearMap.get(year)!.push(point)
+    })
+    
+    const years = Array.from(yearMap.keys()).sort()
+    const colors = [
+      '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
+      '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3'
+    ]
+    
+    // 获取所有日期（MM-DD格式），季节性图日期从4月1日到2月28日
+    const dateSet = new Set<string>()
+    series.data.forEach(d => {
+      const date = new Date(d.date)
+      const month = date.getMonth() + 1
+      const day = date.getDate()
+      // 只包含4月1日到2月28日的数据
+      if ((month === 4 && day >= 1) || (month > 4 && month <= 12) || (month >= 1 && month <= 2 && day <= 28)) {
+        const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+        dateSet.add(monthDay)
+      }
+    })
+    const categories = Array.from(dateSet).sort((a, b) => {
+      // 排序：4月1日-12月31日，然后1月1日-2月28日
+      const [aMonth, aDay] = a.split('-').map(Number)
+      const [bMonth, bDay] = b.split('-').map(Number)
+      const aOrder = aMonth >= 4 ? aMonth : aMonth + 12
+      const bOrder = bMonth >= 4 ? bMonth : bMonth + 12
+      if (aOrder !== bOrder) return aOrder - bOrder
+      return aDay - bDay
+    })
+    
+    const seriesData: any[] = []
+    
+    years.forEach((year, idx) => {
+      const yearData = yearMap.get(year)!
+      const color = colors[idx % colors.length]
+      const dataMap = new Map<string, number | null>()
+      
+      yearData.forEach(d => {
+        const date = new Date(d.date)
+        const month = date.getMonth() + 1
+        const day = date.getDate()
+        const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+        dataMap.set(monthDay, d.volatility)
+      })
+      
+      seriesData.push({
+        name: `${year}年`,
+        type: 'line',
+        data: categories.map(cat => dataMap.get(cat) || null),
+        lineStyle: { color },
+        symbol: 'circle',
+        symbolSize: 4,
+        smooth: true
+      })
+    })
+    
+    const option: echarts.EChartsOption = {
+      title: {
+        text: `${series.contract_month.toString().padStart(2, '0')}合约波动率季节性图`,
+        left: 'left'
+      },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'cross' },
+        formatter: (params: any) => {
+          if (!Array.isArray(params)) return ''
+          let result = `<div style="margin-bottom: 4px;"><strong>${params[0].axisValue}</strong></div>`
+          params.forEach((param: any) => {
+            if (param.value !== null && param.value !== undefined) {
+              const value = typeof param.value === 'number' ? param.value.toFixed(2) : param.value
+              result += `<div style="margin: 2px 0;">
+                <span style="display: inline-block; width: 10px; height: 10px; background-color: ${param.color}; margin-right: 5px;"></span>
+                ${param.seriesName}: <strong>${value}%</strong>
+              </div>`
+            }
+          })
+          return result
+        }
+      },
+      legend: {
+        data: seriesData.map(s => s.name),
+        bottom: 10,
+        type: 'plain',
+        icon: 'circle',
+        itemWidth: 10,
+        itemHeight: 10,
+        itemGap: 15,
+        left: 'left'
+      },
+      grid: {
+        left: '3%',
+        right: '4%',
+        bottom: '15%',
+        top: '15%',
+        containLabel: true
+      },
+      xAxis: {
+        type: 'category',
+        data: categories,
+        boundaryGap: false,
+        axisLabel: {
+          rotate: 45
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: '波动率（%）',
+        axisLabel: { formatter: (v: number) => axisLabelPercentFormatter(v) }
+      },
+      series: seriesData,
+      dataZoom: [
+        { type: 'inside', start: 0, end: 100 },
+        { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }
+      ]
+    }
+    
+    chartInstance.setOption(option, true)
+    window.addEventListener('resize', () => chartInstance.resize())
+  })
 }
 
-const getVolatilityColor = (volatility: number | null): string => {
-  if (volatility === null) return '#666'
-  if (volatility < 20) return 'green'
-  if (volatility < 30) return 'orange'
-  return 'red'
-}
+watch(() => volatilityData.value.series, () => {
+  nextTick(() => {
+    renderCharts()
+  })
+}, { deep: true })
 
 onMounted(() => {
   loadData()
 })
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .volatility-page {
-  padding: 20px;
-}
-
-h3 {
-  margin-bottom: 10px;
-  font-size: 16px;
-  font-weight: 600;
+  padding: 4px;
+  
+  :deep(.el-card__body) {
+    padding: 4px 6px;
+  }
+  
+  h3 {
+    margin-bottom: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    text-align: left;
+  }
+  
+  .chart {
+    width: 100%;
+    height: 400px;
+  }
 }
 </style>

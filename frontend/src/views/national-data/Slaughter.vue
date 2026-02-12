@@ -1,6 +1,6 @@
 <template>
   <div class="slaughter-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>A3. 日度屠宰量（全国，涌益）</span>
@@ -46,27 +46,44 @@
             </div>
           </div>
 
-          <!-- (2) 屠宰量&价格 -->
+          <!-- (2) 屠宰量&价格：按年筛选，阳历 正月初八～腊月二十八 -->
           <div class="chart-wrapper">
             <div class="chart-box">
-              <h3 class="chart-title">屠宰量&价格</h3>
-              <div v-if="loadingTrend" class="loading-placeholder">
+              <div class="chart-title-row">
+                <h3 class="chart-title">屠宰量&价格</h3>
+                <el-select
+                  v-model="selectedSolarYear"
+                  placeholder="选择年份"
+                  size="small"
+                  style="width: 100px"
+                  @change="loadSolarTrendData"
+                >
+                  <el-option
+                    v-for="y in solarTrendAvailableYears"
+                    :key="y"
+                    :label="`${y}年`"
+                    :value="y"
+                  />
+                </el-select>
+              </div>
+              <div v-if="loadingSolarTrend" class="loading-placeholder">
                 <el-icon class="is-loading"><Loading /></el-icon>
                 <span style="margin-left: 10px">加载中...</span>
               </div>
-              <div v-else-if="!trendData || (trendData.slaughter_data.length === 0 && trendData.price_data.length === 0)" class="no-data-placeholder">
-                <el-empty description="暂无数据">
-                  <el-button type="primary" @click="handleGenerateSQL">生成INSERT SQL</el-button>
-                </el-empty>
+              <div v-else-if="!solarTrendData || (solarTrendData.slaughter_data.length === 0 && solarTrendData.price_data.length === 0)" class="no-data-placeholder">
+                <el-empty description="暂无数据" />
               </div>
               <div v-else>
-                <div ref="trendChartRef" class="chart-container"></div>
+                <div ref="solarTrendChartRef" class="chart-container"></div>
               </div>
             </div>
             <div class="info-box">
+              <span v-if="solarTrendData?.start_date && solarTrendData?.end_date" class="date-range-hint">
+                区间：{{ solarTrendData.start_date }} ～ {{ solarTrendData.end_date }}（农历正月初八～腊月二十八）
+              </span>
               <DataSourceInfo
                 :source-name="'涌益'"
-                :update-date="formatUpdateDate(slaughterUpdateTime)"
+                :update-date="formatUpdateDate(solarTrendData?.latest_date)"
               />
             </div>
           </div>
@@ -100,25 +117,22 @@ import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import {
   getSlaughterLunar,
-  type SeasonalityResponse
+  getSlaughterPriceTrendSolar,
+  type SeasonalityResponse,
+  type SlaughterPriceTrendSolarResponse
 } from '@/api/price-display'
 import { getSlaughterData } from '@/api/national-data'
 import { generateInsertSQL, downloadSQL } from '@/utils/sql-generator'
 import type { MetricConfig, SQLGenerationOptions } from '@/utils/sql-generator'
+import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 // 加载状态
 const loadingSlaughterLunar = ref(false)
-const loadingTrend = ref(false)
 
 // 数据
 const slaughterLunarData = ref<SeasonalityResponse | null>(null)
-const trendData = ref<{
-  slaughter_data: Array<{ date: string; year: number; value: number | null }>
-  price_data: Array<{ date: string; year: number; value: number | null }>
-  available_years: number[]
-} | null>(null)
 
-// 涨跌数据
+// 涨跌数据（日度屠宰量农历图）
 const slaughterChanges = ref<{
   month_change: number | null
   yoy_change: number | null
@@ -131,36 +145,21 @@ const slaughterChanges = ref<{
 const slaughterUpdateTime = ref<string | null>(null)
 const lastDataDate = ref<string | null>(null)
 
-// 年度筛选（单选）
-const availableYears = ref<number[]>([])
-const selectedYear = ref<number | null>(null)
+// 屠宰量&价格：按年筛选，阳历 正月初八～腊月二十八
+const loadingSolarTrend = ref(false)
+const solarTrendData = ref<SlaughterPriceTrendSolarResponse | null>(null)
+const solarTrendAvailableYears = ref<number[]>([])
+const selectedSolarYear = ref<number | null>(null)
+const solarTrendChartRef = ref<HTMLDivElement>()
+let solarTrendChart: echarts.ECharts | null = null
 
 // 图表引用
 const slaughterLunarChartRef = ref<HTMLDivElement>()
-const trendChartRef = ref<HTMLDivElement>()
-
 let slaughterLunarChart: echarts.ECharts | null = null
-let trendChart: echarts.ECharts | null = null
 
 // SQL生成
 const showSQLDialog = ref(false)
 const generatedSQL = ref('')
-
-// 年份颜色映射
-const yearColors: Record<number, string> = {
-  2021: '#FFB6C1',
-  2022: '#FF69B4',
-  2023: '#4169E1',
-  2024: '#D3D3D3',
-  2025: '#1E90FF',
-  2026: '#FF0000',
-  2027: '#32CD32',
-  2028: '#FFA500',
-}
-
-const getYearColor = (year: number): string => {
-  return yearColors[year] || '#888888'
-}
 
 // 格式化更新日期（只显示年月日）
 const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
@@ -266,91 +265,6 @@ const calculateSlaughterChanges = async () => {
   }
 }
 
-// 加载量价走势数据
-const loadTrendData = async () => {
-  loadingTrend.value = true
-  try {
-    // 获取最近3年的数据
-    const endDate = new Date().toISOString().split('T')[0]
-    const startDate = new Date(Date.now() - 3 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    
-    const result = await getSlaughterData(startDate, endDate)
-    
-    // 按年份分组数据
-    const slaughterByYear: Record<number, Array<{ date: string; value: number | null }>> = {}
-    const priceByYear: Record<number, Array<{ date: string; value: number | null }>> = {}
-    
-    result.slaughterData.forEach(d => {
-      const year = new Date(d.obs_date || '').getFullYear()
-      if (!slaughterByYear[year]) {
-        slaughterByYear[year] = []
-      }
-      slaughterByYear[year].push({
-        date: d.obs_date || '',
-        value: d.value
-      })
-    })
-    
-    result.priceData.forEach(d => {
-      const year = new Date(d.obs_date || '').getFullYear()
-      if (!priceByYear[year]) {
-        priceByYear[year] = []
-      }
-      priceByYear[year].push({
-        date: d.obs_date || '',
-        value: d.value
-      })
-    })
-    
-    // 构建响应数据
-    const years = [...new Set([...Object.keys(slaughterByYear), ...Object.keys(priceByYear)].map(Number))].sort()
-    availableYears.value = years
-    
-    // 初始化选中年份：默认选择去年
-    if (selectedYear.value === null && years.length > 0) {
-      const currentYear = new Date().getFullYear()
-      const lastYear = currentYear - 1
-      if (years.includes(lastYear)) {
-        selectedYear.value = lastYear
-      } else {
-        selectedYear.value = Math.max(...years)
-      }
-    }
-    
-    const slaughterData: Array<{ date: string; year: number; value: number | null }> = []
-    const priceData: Array<{ date: string; year: number; value: number | null }> = []
-    
-    years.forEach(year => {
-      if (slaughterByYear[year]) {
-        slaughterByYear[year].forEach(d => {
-          slaughterData.push({ ...d, year })
-        })
-      }
-      if (priceByYear[year]) {
-        priceByYear[year].forEach(d => {
-          priceData.push({ ...d, year })
-        })
-      }
-    })
-    
-    trendData.value = {
-      slaughter_data: slaughterData,
-      price_data: priceData,
-      available_years: years
-    }
-    
-    await nextTick()
-    setTimeout(() => {
-      renderTrendChart()
-    }, 200)
-  } catch (error: any) {
-    console.error('加载量价走势数据失败:', error)
-    ElMessage.error('加载数据失败: ' + (error.message || '未知错误'))
-  } finally {
-    loadingTrend.value = false
-  }
-}
-
 // 渲染农历日度屠宰量图表
 const renderSlaughterLunarChart = () => {
   if (!slaughterLunarChartRef.value || !slaughterLunarData.value || slaughterLunarData.value.series.length === 0) {
@@ -390,10 +304,6 @@ const renderSlaughterLunarChart = () => {
     return numA - numB
   })
   
-  // 计算最近三年（用于颜色规则）
-  const sortedYears = [...slaughterLunarData.value.series.map(s => s.year)].sort((a, b) => b - a)
-  const recentThreeYears = new Set(sortedYears.slice(0, 3))
-  
   // 为每个年份构建数据，对齐到X轴
   const series = slaughterLunarData.value.series.map(s => {
     // 创建month_day到value的映射
@@ -411,9 +321,7 @@ const renderSlaughterLunarChart = () => {
     const isLeapMonth = s.is_leap_month === true
     const leapMonth = s.leap_month
     
-    // 最近三年有颜色，其他年份灰色（闰月也遵循这个规则）
-    const isRecentYear = recentThreeYears.has(s.year)
-    const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
+    const lineColor = getYearColor(s.year)
     
     // 图例名称：如果是闰月，显示"2025年闰6月"；否则显示"2025年"
     const seriesName = isLeapMonth && leapMonth 
@@ -478,7 +386,7 @@ const renderSlaughterLunarChart = () => {
       itemHeight: 10,
       itemGap: 15,
       orient: 'horizontal',
-      left: 'center'
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -491,33 +399,28 @@ const renderSlaughterLunarChart = () => {
       type: 'category',
       boundaryGap: false,
       data: xAxisData,
-      // X轴不显示标签（默认时间轴）
       name: '',
       axisLabel: {
         rotate: 45,
         interval: 'auto',
-        // 如果有x_axis_labels，使用农历日期标签（MM-dd格式）；否则使用索引
         formatter: (value: string) => {
           const index = parseInt(value)
           if (slaughterLunarData.value.x_axis_labels && slaughterLunarData.value.x_axis_labels[index]) {
             return slaughterLunarData.value.x_axis_labels[index]
           }
-          // 如果没有标签，显示索引（作为后备）
           return value
         }
       }
     },
     yAxis: {
       type: 'value',
-      // Y轴不显示单位
       name: '',
-      // 自动调整范围
       min: yMin - yPadding,
       max: yMax + yPadding,
-      scale: false
+      scale: false,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
-    // 只保留内部缩放，删除日期筛选进度条
     dataZoom: [
       {
         type: 'inside',
@@ -533,218 +436,6 @@ const renderSlaughterLunarChart = () => {
   setTimeout(() => {
     slaughterLunarChart?.resize()
   }, 100)
-}
-
-// 渲染量价走势图（年度筛选，阳历日期对齐）
-const renderTrendChart = () => {
-  if (!trendChartRef.value || !trendData.value) {
-    console.warn('渲染条件不满足:', {
-      hasRef: !!trendChartRef.value,
-      hasData: !!trendData.value
-    })
-    return
-  }
-  
-  if (trendChart) {
-    trendChart.dispose()
-    trendChart = null
-  }
-  
-  // 确保容器有尺寸
-  if (trendChartRef.value.offsetWidth === 0 || trendChartRef.value.offsetHeight === 0) {
-    console.warn('图表容器尺寸为0，延迟渲染')
-    setTimeout(() => renderTrendChart(), 100)
-    return
-  }
-  
-  trendChart = echarts.init(trendChartRef.value)
-  
-  // 根据选中的年份过滤数据
-  const filteredSlaughterData = selectedYear.value !== null
-    ? trendData.value.slaughter_data.filter(item => item.year === selectedYear.value)
-    : [...trendData.value.slaughter_data]
-  
-  const filteredPriceData = selectedYear.value !== null
-    ? trendData.value.price_data.filter(item => item.year === selectedYear.value)
-    : [...trendData.value.price_data]
-  
-  // 按日期排序
-  filteredSlaughterData.sort((a, b) => a.date.localeCompare(b.date))
-  filteredPriceData.sort((a, b) => a.date.localeCompare(b.date))
-  
-  // 构建X轴：合并所有日期并排序（阳历日期）
-  const allDates = new Set<string>()
-  filteredSlaughterData.forEach(item => allDates.add(item.date))
-  filteredPriceData.forEach(item => allDates.add(item.date))
-  const sortedDates = Array.from(allDates).sort()
-  
-  // 格式化X轴标签（MM-DD格式）
-  const xAxisData = sortedDates.map(dateStr => {
-    const date = new Date(dateStr)
-    return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-  })
-  
-  // 创建日期到值的映射
-  const slaughterMap = new Map<string, number | null>()
-  filteredSlaughterData.forEach(item => {
-    slaughterMap.set(item.date, item.value)
-  })
-  
-  const priceMap = new Map<string, number | null>()
-  filteredPriceData.forEach(item => {
-    priceMap.set(item.date, item.value)
-  })
-  
-  // 构建两个指标系列
-  const series: any[] = []
-  
-  // 屠宰量指标（左Y轴）
-  const slaughterValues = sortedDates.map(date => slaughterMap.get(date) ?? null)
-  if (slaughterValues.some(v => v !== null)) {
-    // 计算Y轴范围（自动调整）
-    const slaughterNumbers = slaughterValues.filter(v => v !== null) as number[]
-    const slaughterMin = slaughterNumbers.length > 0 ? Math.min(...slaughterNumbers) : 0
-    const slaughterMax = slaughterNumbers.length > 0 ? Math.max(...slaughterNumbers) : 100
-    const slaughterPadding = (slaughterMax - slaughterMin) * 0.1
-    
-    series.push({
-      name: '屠宰量',
-      type: 'line',
-      data: slaughterValues,
-      yAxisIndex: 0,
-      smooth: true,
-      // 移除数据点
-      symbol: 'none',
-      // 处理断点：使用连续曲线
-      connectNulls: true,
-      lineStyle: { width: 2 },
-      itemStyle: { color: '#409EFF' }
-    })
-  }
-  
-  // 价格指标（右Y轴）
-  const priceValues = sortedDates.map(date => priceMap.get(date) ?? null)
-  if (priceValues.some(v => v !== null)) {
-    // 计算Y轴范围（自动调整）
-    const priceNumbers = priceValues.filter(v => v !== null) as number[]
-    const priceMin = priceNumbers.length > 0 ? Math.min(...priceNumbers) : 0
-    const priceMax = priceNumbers.length > 0 ? Math.max(...priceNumbers) : 100
-    const pricePadding = (priceMax - priceMin) * 0.1
-    
-    series.push({
-      name: '价格',
-      type: 'line',
-      data: priceValues,
-      yAxisIndex: 1,
-      smooth: true,
-      // 移除数据点
-      symbol: 'none',
-      // 处理断点：使用连续曲线
-      connectNulls: true,
-      lineStyle: { width: 2, type: 'dashed' },
-      itemStyle: { color: '#67C23A' }
-    })
-  }
-  
-  if (series.length === 0 || xAxisData.length === 0) {
-    console.warn('没有数据系列或X轴数据为空，不渲染图表')
-    return
-  }
-  
-  const option: echarts.EChartsOption = {
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
-      formatter: (params: any) => {
-        if (!Array.isArray(params)) return ''
-        let result = `<div style="margin-bottom: 4px;"><strong>${params[0].axisValue}</strong></div>`
-        params.forEach((param: any) => {
-          const value = param.value !== null && param.value !== undefined 
-            ? param.value.toFixed(2) 
-            : '-'
-          const unit = param.seriesName === '价格' ? '元/公斤' : '头'
-          const yAxisName = param.series.yAxisIndex === 1 ? '（右轴）' : '（左轴）'
-          result += `<div style="margin: 2px 0;">
-            <span style="display:inline-block;width:10px;height:10px;background-color:${param.color};border-radius:50%;margin-right:5px;"></span>
-            ${param.seriesName}${yAxisName}: <strong>${value}${unit}</strong>
-          </div>`
-        })
-        return result
-      }
-    },
-    legend: {
-      data: series.map(s => s.name),
-      top: 10,
-      type: 'plain', // 不使用滚动
-      icon: 'circle',
-      itemWidth: 10,
-      itemHeight: 10,
-      itemGap: 15,
-      orient: 'horizontal',
-      left: 'center'
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      top: '15%',
-      bottom: '10%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: xAxisData,
-      // X轴不显示标签（默认时间轴）
-      name: '',
-      axisLabel: {
-        rotate: 45,
-        interval: 'auto'
-      }
-    },
-    yAxis: [
-      {
-        type: 'value',
-        // Y轴不显示单位
-        name: '',
-        position: 'left',
-        // 自动调整范围
-        scale: false
-      },
-      {
-        type: 'value',
-        // Y轴不显示单位
-        name: '',
-        position: 'right',
-        // 自动调整范围
-        scale: false
-      }
-    ],
-    series: series,
-    // 只保留内部缩放，删除日期筛选进度条
-    dataZoom: [
-      {
-        type: 'inside',
-        start: 0,
-        end: 100
-      }
-    ]
-  }
-  
-  trendChart.setOption(option)
-  
-  // 确保图表正确渲染
-  setTimeout(() => {
-    trendChart?.resize()
-  }, 100)
-}
-
-// 年度筛选变化
-const handleYearFilterChange = () => {
-  if (trendData.value) {
-    nextTick(() => {
-      setTimeout(() => renderTrendChart(), 100)
-    })
-  }
 }
 
 // 生成SQL
@@ -793,7 +484,7 @@ const handleDownloadSQL = () => {
 // 窗口大小变化时调整图表
 const handleResize = () => {
   slaughterLunarChart?.resize()
-  trendChart?.resize()
+  solarTrendChart?.resize()
 }
 
 // 监听数据变化，自动重新渲染图表
@@ -805,20 +496,128 @@ watch(() => slaughterLunarData.value, (newVal) => {
   }
 }, { deep: true })
 
-watch(() => [trendData.value, selectedYear.value], () => {
-  if (trendData.value) {
-    nextTick(() => {
-      setTimeout(() => renderTrendChart(), 200)
+// 加载屠宰量&价格（按年，阳历 正月初八～腊月二十八）（按年，阳历 正月初八～腊月二十八）
+const loadSolarTrendData = async () => {
+  loadingSolarTrend.value = true
+  try {
+    const res = await getSlaughterPriceTrendSolar(selectedSolarYear.value ?? undefined)
+    solarTrendData.value = res
+    solarTrendAvailableYears.value = res.available_years || []
+    if (selectedSolarYear.value == null && res.available_years?.length) {
+      selectedSolarYear.value = res.available_years[0]
+    }
+    await nextTick()
+    setTimeout(() => {
+      if (res.slaughter_data?.length || res.price_data?.length) {
+        renderSolarTrendChart()
+      }
+    }, 200)
+  } catch (e: any) {
+    console.error('加载屠宰&价格相关走势失败:', e)
+    ElMessage.error('加载失败: ' + (e.message || '未知错误'))
+  } finally {
+    loadingSolarTrend.value = false
+  }
+}
+
+// 渲染屠宰&价格 相关走势图（阳历日期，双 Y 轴）
+const renderSolarTrendChart = () => {
+  if (!solarTrendChartRef.value || !solarTrendData.value) return
+  const data = solarTrendData.value
+  if (solarTrendChart) {
+    solarTrendChart.dispose()
+    solarTrendChart = null
+  }
+  if (solarTrendChartRef.value.offsetWidth === 0) {
+    setTimeout(renderSolarTrendChart, 100)
+    return
+  }
+  solarTrendChart = echarts.init(solarTrendChartRef.value)
+
+  const allDates = new Set<string>()
+  data.slaughter_data?.forEach(d => allDates.add(d.date))
+  data.price_data?.forEach(d => allDates.add(d.date))
+  const sortedDates = Array.from(allDates).sort()
+  const slaughterMap = new Map(data.slaughter_data?.map(d => [d.date, d.value]) ?? [])
+  const priceMap = new Map(data.price_data?.map(d => [d.date, d.value]) ?? [])
+
+  const slaughterValues = sortedDates.map(d => slaughterMap.get(d) ?? null)
+  const priceValues = sortedDates.map(d => priceMap.get(d) ?? null)
+  // X 轴用完整阳历日期，轴标签显示为 MM-DD
+  const xAxisData = sortedDates
+  const xAxisLabelFormatter = (value: string) => {
+    const [, m, day] = (value || '').slice(0, 10).split('-')
+    return m && day ? `${m}-${day}` : value
+  }
+
+  const series: any[] = []
+  if (slaughterValues.some(v => v != null)) {
+    series.push({
+      name: '屠宰量',
+      type: 'line',
+      data: slaughterValues,
+      yAxisIndex: 0,
+      smooth: true,
+      symbol: 'none',
+      connectNulls: true,
+      lineStyle: { width: 2 },
+      itemStyle: { color: '#409EFF' }
     })
   }
-}, { deep: true })
+  if (priceValues.some(v => v != null)) {
+    series.push({
+      name: '价格',
+      type: 'line',
+      data: priceValues,
+      yAxisIndex: 1,
+      smooth: true,
+      symbol: 'none',
+      connectNulls: true,
+      lineStyle: { width: 2, type: 'dashed' },
+      itemStyle: { color: '#67C23A' }
+    })
+  }
+
+  if (series.length === 0 || xAxisData.length === 0) return
+
+  solarTrendChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      formatter: (params: any) => {
+        if (!Array.isArray(params)) return ''
+        const dateStr = params[0].axisValue
+        let s = `<div style="margin-bottom:4px"><strong>${dateStr}</strong></div>`
+        params.forEach((p: any) => {
+          const v = p.value != null ? Number(p.value).toFixed(2) : '-'
+          const u = p.seriesName === '价格' ? '元/公斤' : '头'
+          s += `<div style="margin:2px 0"><span style="display:inline-block;width:10px;height:10px;background:${p.color};border-radius:50%;margin-right:5px"></span>${p.seriesName}: <strong>${v} ${u}</strong></div>`
+        })
+        return s
+      }
+    },
+    legend: { data: series.map(s => s.name), top: 8, type: 'plain', left: 'left' },
+    grid: { left: '3%', right: '4%', top: '15%', bottom: '12%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: xAxisData,
+      axisLabel: { rotate: 45, interval: 'auto', formatter: xAxisLabelFormatter }
+    },
+    yAxis: [
+      { type: 'value', position: 'left', name: '', axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) } },
+      { type: 'value', position: 'right', name: '', axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) } }
+    ],
+    series,
+    dataZoom: [{ type: 'inside', start: 0, end: 100 }]
+  })
+  setTimeout(() => solarTrendChart?.resize(), 100)
+}
 
 // 生命周期
 onMounted(() => {
   loadSlaughterLunar()
-  loadTrendData()
-  
-  // 监听窗口大小变化
+  loadSolarTrendData()
   window.addEventListener('resize', handleResize)
 })
 
@@ -828,67 +627,82 @@ onBeforeUnmount(() => {
     slaughterLunarChart.dispose()
     slaughterLunarChart = null
   }
-  if (trendChart) {
-    trendChart.dispose()
-    trendChart = null
+  if (solarTrendChart) {
+    solarTrendChart.dispose()
+    solarTrendChart = null
   }
 })
 </script>
 
 <style scoped>
 .slaughter-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.slaughter-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 20px; /* 缩小间距 */
+  gap: 4px;
 }
 
 .chart-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
-  border: 1px solid #e4e7ed; /* 共用边框 */
+  gap: 4px;
+  border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 16px; /* 减少padding */
+  padding: 4px;
   background: #fff;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .chart-wrapper {
-  /* 移除单独的边框和背景，因为已经在chart-row中设置了 */
   padding: 0;
 }
 
+.chart-row-full {
+  grid-template-columns: 1fr;
+}
+
+.chart-wrapper-full {
+  grid-column: 1;
+}
+
+.date-range-hint {
+  font-size: 12px;
+  color: #909399;
+}
+
 .chart-box {
-  /* 图表框：包含标题、图例、图表 */
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .info-box {
-  /* 说明框：无背景色，位于图表框下方 */
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
+  padding-top: 6px;
   background-color: transparent;
 }
 
 .chart-title {
-  margin: 0 0 20px 0;
+  margin: 0 0 6px 0;
   font-size: 16px;
   font-weight: 600;
   color: #303133;
   line-height: 1.5;
+  text-align: left;
 }
 
 .chart-title-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 6px;
   flex-wrap: wrap;
   gap: 10px;
 }

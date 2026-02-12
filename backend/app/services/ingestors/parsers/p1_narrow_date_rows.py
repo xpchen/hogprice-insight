@@ -156,15 +156,20 @@ class P1NarrowDateRowsParser(BaseParser):
             unit = metric_config.get("unit")
             
             # 支持两种列名格式：col（metrics_from_columns）或 raw_header（metrics）
+            # raw_header_aliases：兼容实际 Excel 表头与配置不一致（如「全国」「全国均价」）
             col_name = metric_config.get("col") or metric_config.get("raw_header", "")
+            aliases = metric_config.get("raw_header_aliases") or []
+            col_names_to_try = [col_name] if col_name else []
+            col_names_to_try.extend([a for a in aliases if a and a not in col_names_to_try])
             metric_tags = metric_config.get("tags", {})
             use_col_occurrence = metric_config.get("use_col_occurrence", 1)  # 默认使用第1次出现
             
-            # 查找指标列（支持 use_col_occurrence）
+            # 查找指标列（支持 use_col_occurrence 与 raw_header_aliases）
             metric_col_idx = None
             occurrence_count = 0
             for idx, col in enumerate(df.columns):
-                if str(col).strip() == col_name:
+                cell_val = str(col).strip()
+                if any(cell_val == c for c in col_names_to_try):
                     occurrence_count += 1
                     if occurrence_count == use_col_occurrence:
                         metric_col_idx = idx

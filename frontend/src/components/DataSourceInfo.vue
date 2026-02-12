@@ -18,7 +18,7 @@ defineProps<{
   font-size: 12px;
   color: #909399;
   text-align: right;
-  margin-top: 8px;
+  margin-top: 6px;
   padding-right: 8px;
 }
 

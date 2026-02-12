@@ -152,7 +152,7 @@ const routes = [
       {
         path: 'official-data/scale-farm',
         name: 'OfficialDataScaleFarm',
-        component: () => import('../views/enterprise-statistics/ProductionIndicators.vue')
+        component: () => import('../views/official-data/ScaleFarm.vue')
       },
       {
         path: 'official-data/multi-source',

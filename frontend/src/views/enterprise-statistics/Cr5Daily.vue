@@ -1,6 +1,6 @@
 <template>
   <div class="cr5-daily-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <span>D1. CR5企业日度出栏统计</span>
       </template>
@@ -135,6 +135,7 @@ import * as echarts from 'echarts'
 import { getCr5Daily, getSichuanDaily, getGuangxiDaily, getSouthwestSampleDaily } from '@/api/enterprise-statistics'
 import type { EnterpriseStatisticsResponse } from '@/api/enterprise-statistics'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
+import { axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 // 时间筛选
 const selectedMonths = ref<number>(6)
@@ -295,8 +296,11 @@ const renderChart = (
     legend: {
       data: data.series.map(s => s.name),
       bottom: 0,
+      icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
+      itemGap: 15,
+      left: 'left',
       textStyle: {
         fontSize: 12
       }
@@ -341,9 +345,7 @@ const renderChart = (
       scale: false,
       min: minValue - padding,
       max: maxValue + padding,
-      axisLabel: {
-        formatter: (value: number) => value.toFixed(0)
-      }
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series as any
   }
@@ -469,11 +471,15 @@ onUnmounted(() => {
 
 <style scoped>
 .cr5-daily-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.cr5-daily-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .filter-buttons {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   display: flex;
   gap: 10px;
 }
@@ -481,12 +487,12 @@ onUnmounted(() => {
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 4px;
 }
 
 .chart-row {
   display: flex;
-  gap: 20px;
+  gap: 4px;
 }
 
 .chart-wrapper {
@@ -498,14 +504,15 @@ onUnmounted(() => {
 .chart-box {
   border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 20px;
+  padding: 4px;
   background: #fff;
   display: flex;
   flex-direction: column;
 }
 
 .chart-title {
-  margin: 0 0 15px 0;
+  margin: 0 0 6px 0;
+  text-align: left;
   font-size: 16px;
   font-weight: 600;
   color: #303133;

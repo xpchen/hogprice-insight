@@ -153,29 +153,42 @@ export async function getWeightData(
 }
 
 /**
- * 获取日度屠宰量数据
+ * 获取日度屠宰量数据（用于 A3 屠宰量&价格 图表）
+ * 屠宰量与价格均来自涌益日度「价格+宰量」sheet：
+ * - 屠宰量：YY_D_SLAUGHTER_TOTAL_1（日屠宰量合计1）
+ * - 价格：YY_D_PRICE_NATION_AVG（全国均价）
  */
 export async function getSlaughterData(
   startDate: string,
   endDate: string
 ): Promise<SlaughterData> {
+  const limit = 2000 // 3 年日度约 1100 条，留余量
+  const timeout = 60000 // 屠宰量&价格 可能数据量大，60 秒超时
   const [slaughterData, priceData] = await Promise.all([
-    // 日度屠宰量
-    queryObservations({
-      source_code: 'YONGYI',
-      metric_key: 'YY_D_SLAUGHTER_TOTAL_1',
-      start_date: startDate,
-      end_date: endDate,
-      period_type: 'day'
-    }),
-    // 价格数据
-    queryObservations({
-      source_code: 'YONGYI',
-      metric_key: 'YY_D_PRICE_NATION_AVG',
-      start_date: startDate,
-      end_date: endDate,
-      period_type: 'day'
-    })
+    // 日度屠宰量（价格+宰量 sheet）
+    queryObservations(
+      {
+        source_code: 'YONGYI',
+        metric_key: 'YY_D_SLAUGHTER_TOTAL_1',
+        start_date: startDate,
+        end_date: endDate,
+        period_type: 'day',
+        limit
+      },
+      { timeout }
+    ),
+    // 全国均价（同一 sheet，保证日期一致）
+    queryObservations(
+      {
+        source_code: 'YONGYI',
+        metric_key: 'YY_D_PRICE_NATION_AVG',
+        start_date: startDate,
+        end_date: endDate,
+        period_type: 'day',
+        limit
+      },
+      { timeout }
+    )
   ])
 
   return {

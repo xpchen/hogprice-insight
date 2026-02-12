@@ -229,7 +229,33 @@ def unified_import(
                     if table_config:
                         print(f"     └─ 目标表: {table_config.get('table_name', '未知')}", flush=True)
                     
-                    parser = get_parser(parser_type)
+                    try:
+                        parser = get_parser(parser_type)
+                    except ValueError as e:
+                        error_msg = str(e)
+                        if "未知的解析器类型" in error_msg:
+                            print(f"     └─ ❌ Sheet处理失败: {error_msg}", flush=True)
+                            error_collector.add_error(
+                                sheet_name=sheet_name,
+                                row_no=None,
+                                column=None,
+                                error_type="PARSER_NOT_FOUND",
+                                error_message=f"不支持的解析器类型: {parser_type}",
+                                raw_value=None,
+                                context=f"sheet_name={sheet_name}, parser_type={parser_type}"
+                            )
+                            # 更新sheet状态
+                            update_sheet_parse_status(
+                                db=db,
+                                raw_sheet_id=raw_sheet.id,
+                                parse_status="failed",
+                                parser_type=parser_type,
+                                error_count=1
+                            )
+                            continue
+                        else:
+                            raise
+                    
                     print(f"     └─ 开始解析数据...", flush=True)
                     
                     # 调试：检查sheet_config是否包含metric_template

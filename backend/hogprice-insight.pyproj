@@ -118,6 +118,7 @@
     <Compile Include="scripts\fix_metric_keys.py" />
     <Compile Include="scripts\fix_nation2_indicator.py" />
     <Compile Include="scripts\fix_nation2_indicator_sql.py" />
+    <Compile Include="scripts\import_cull_slaughter_sheets.py" />
     <Compile Include="scripts\import_maobai_spread.py" />
     <Compile Include="scripts\init_base_data.py" />
     <Compile Include="scripts\init_delivery_cities.py" />

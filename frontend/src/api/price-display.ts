@@ -53,6 +53,9 @@ export interface PriceChangesResponse {
   unit: string
 }
 
+// A1 价格（全国）接口可能涉及大量数据与农历计算，适当延长超时
+const A1_REQUEST_TIMEOUT = 60000 // 60 秒
+
 /**
  * 获取全国猪价季节性数据
  */
@@ -67,7 +70,8 @@ export function getNationalPriceSeasonality(
   return request({
     url: '/v1/price-display/national-price/seasonality',
     method: 'get',
-    params
+    params,
+    timeout: A1_REQUEST_TIMEOUT
   })
 }
 
@@ -87,7 +91,8 @@ export function getFatStdSpreadSeasonality(
   return request({
     url: '/v1/price-display/fat-std-spread/seasonality',
     method: 'get',
-    params
+    params,
+    timeout: A1_REQUEST_TIMEOUT
   })
 }
 
@@ -105,7 +110,8 @@ export function getPriceAndSpread(
   return request({
     url: '/v1/price-display/price-and-spread',
     method: 'get',
-    params
+    params,
+    timeout: A1_REQUEST_TIMEOUT
   })
 }
 
@@ -123,7 +129,34 @@ export function getSlaughterLunar(
   return request({
     url: '/v1/price-display/slaughter/lunar',
     method: 'get',
-    params
+    params,
+    timeout: A1_REQUEST_TIMEOUT
+  })
+}
+
+/**
+ * 屠宰&价格 相关走势（按年，阳历 正月初八～腊月二十八）
+ */
+export interface SlaughterPriceTrendSolarResponse {
+  slaughter_data: Array<{ date: string; value: number | null }>
+  price_data: Array<{ date: string; value: number | null }>
+  available_years: number[]
+  start_date?: string | null
+  end_date?: string | null
+  update_time?: string | null
+  latest_date?: string | null
+}
+
+export function getSlaughterPriceTrendSolar(
+  year?: number
+): Promise<SlaughterPriceTrendSolarResponse> {
+  const params: any = {}
+  if (year != null) params.year = year
+  return request({
+    url: '/v1/price-display/slaughter-price-trend/solar',
+    method: 'get',
+    params,
+    timeout: A1_REQUEST_TIMEOUT
   })
 }
 
@@ -136,7 +169,8 @@ export function getPriceChanges(
   return request({
     url: '/v1/price-display/price-changes',
     method: 'get',
-    params: { metric_type: metricType }
+    params: { metric_type: metricType },
+    timeout: 15000 // 涨跌接口数据量小，15 秒即可
   })
 }
 

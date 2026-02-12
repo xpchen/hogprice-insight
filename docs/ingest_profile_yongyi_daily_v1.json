@@ -57,6 +57,7 @@
           "unit": "元/公斤",
           "value_type": "number",
           "raw_header": "全国均价",
+          "raw_header_aliases": ["全国", "中国"],
           "tags": {
             "scope": "nation"
           }

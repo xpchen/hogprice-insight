@@ -1,6 +1,6 @@
 <template>
   <div class="calendar-spread-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>C2. 月间价差</span>
@@ -19,8 +19,8 @@
 
       <div v-loading="loading">
         <div v-if="chartType === 'timeseries'">
-          <div v-for="series in spreadData.series" :key="series.spread_name" style="margin-bottom: 30px">
-            <h3>{{ series.spread_name }} - 历史连续图</h3>
+          <div v-for="series in spreadData.series" :key="series.spread_name" style="margin-bottom: 12px">
+            <h3 style="text-align: left">{{ series.spread_name }} - 历史连续图</h3>
             <ChartPanel
               :data="convertToChartData(series, 'timeseries')"
               :loading="false"
@@ -29,8 +29,8 @@
           </div>
         </div>
         <div v-else>
-          <div v-for="series in spreadData.series" :key="series.spread_name" style="margin-bottom: 30px">
-            <h3>{{ series.spread_name }} - 季节性图</h3>
+          <div v-for="series in spreadData.series" :key="series.spread_name" style="margin-bottom: 12px">
+            <h3 style="text-align: left">{{ series.spread_name }} - 季节性图</h3>
             <ChartPanel
               :data="convertToChartData(series, 'seasonality')"
               :loading="false"
@@ -149,7 +149,11 @@ onMounted(() => {
 
 <style scoped>
 .calendar-spread-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.calendar-spread-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 h3 {

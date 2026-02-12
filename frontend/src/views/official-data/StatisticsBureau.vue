@@ -1,6 +1,6 @@
 <template>
   <div class="statistics-bureau-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>E4. 统计局数据汇总</span>
@@ -229,7 +229,7 @@ const updateChart1 = () => {
     chart1Instance.setOption({
       title: {
         text: '统计局生猪出栏量&屠宰量',
-        left: 'center'
+        left: 'left'
       },
       graphic: {
         type: 'text',
@@ -253,7 +253,7 @@ const updateChart1 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '统计局生猪出栏量&屠宰量',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -277,7 +277,12 @@ const updateChart1 = () => {
     },
     legend: {
       data: ['季度出栏量', '定点屠宰量', '规模化率'],
-      top: 30
+      top: 30,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -295,17 +300,13 @@ const updateChart1 = () => {
         type: 'value',
         name: '出栏量/屠宰量',
         position: 'left',
-        axisLabel: {
-          formatter: '{value}'
-        }
+        axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       },
       {
         type: 'value',
         name: '规模化率(%)',
         position: 'right',
-        axisLabel: {
-          formatter: '{value}%'
-        }
+        axisLabel: { formatter: (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2)) + '%' }
       }
     ],
     dataZoom: [
@@ -373,7 +374,7 @@ const updateChart2 = () => {
     chart2Instance.setOption({
       title: {
         text: '猪肉进口（猪价系数）',
-        left: 'center'
+        left: 'left'
       },
       graphic: {
         type: 'text',
@@ -395,7 +396,7 @@ const updateChart2 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '猪肉进口（猪价系数）',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -418,7 +419,12 @@ const updateChart2 = () => {
     },
     legend: {
       data: ['猪价系数'],
-      top: 30
+      top: 30,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -434,9 +440,7 @@ const updateChart2 = () => {
     yAxis: {
       type: 'value',
       name: '系数',
-      axisLabel: {
-        formatter: '{value}'
-      }
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
       {
@@ -492,17 +496,26 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .statistics-bureau-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.statistics-bureau-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .table-section,
 .chart-section {
-  margin-bottom: 40px;
+  margin-bottom: 12px;
 }
 
-.table-section h3,
-.chart-section h3 {
+.table-section h3 {
   margin-bottom: 20px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.chart-section h3 {
+  margin-bottom: 6px;
   font-size: 18px;
   font-weight: 600;
 }

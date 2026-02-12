@@ -1,6 +1,6 @@
 <template>
   <div class="region-spread-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>A5. 区域价差</span>
@@ -68,6 +68,7 @@ import {
   type SeasonalityResponse,
   type RegionSpreadChangesResponse
 } from '@/api/price-display'
+import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 // 区域对列表（固定列表）
 const regionPairs = ref<string[]>([
@@ -115,22 +116,6 @@ const formatUpdateDate = (dateStr: string | null | undefined): string | null => 
 // 渲染队列控制
 const renderQueue = ref<string[]>([])
 const isRendering = ref(false)
-
-// 年份颜色映射
-const yearColors: Record<number, string> = {
-  2021: '#FFB6C1',
-  2022: '#FF69B4',
-  2023: '#4169E1',
-  2024: '#D3D3D3',
-  2025: '#1E90FF',
-  2026: '#FF0000',
-  2027: '#32CD32',
-  2028: '#FFA500',
-}
-
-const getYearColor = (year: number): string => {
-  return yearColors[year] || '#888888'
-}
 
 // 添加到渲染队列
 const addToRenderQueue = (regionPair: string) => {
@@ -285,10 +270,6 @@ const renderChart = (regionPair: string) => {
   })
   const sortedDates = Array.from(allDates).sort()
   
-  // 计算最近三年（用于颜色规则）
-  const sortedYears = [...data.series.map(s => s.year)].sort((a, b) => b - a)
-  const recentThreeYears = new Set(sortedYears.slice(0, 3))
-  
   // 计算Y轴范围（自动调整）
   const allValues = data.series.flatMap(s => s.data.map(p => p.value)).filter(v => v !== null && v !== undefined) as number[]
   const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
@@ -299,10 +280,7 @@ const renderChart = (regionPair: string) => {
   const series = data.series.map((s) => {
     const yearData = new Map(s.data.map(p => [p.month_day, p.value]))
     const values = sortedDates.map(date => yearData.get(date) ?? null)
-    
-    // 最近三年有颜色，其他年份灰色
-    const isRecentYear = recentThreeYears.has(s.year)
-    const lineColor = isRecentYear ? getYearColor(s.year) : '#D3D3D3'
+    const lineColor = getYearColor(s.year)
     
     return {
       name: `${s.year}年`,
@@ -348,7 +326,7 @@ const renderChart = (regionPair: string) => {
       itemHeight: 10,
       itemGap: 15,
       orient: 'horizontal',
-      left: 'center'
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -360,7 +338,6 @@ const renderChart = (regionPair: string) => {
       type: 'category',
       boundaryGap: false,
       data: sortedDates,
-      // X轴不显示标签（默认时间轴）
       name: '',
       axisLabel: {
         rotate: 45,
@@ -369,15 +346,11 @@ const renderChart = (regionPair: string) => {
     },
     yAxis: {
       type: 'value',
-      // Y轴不显示单位
       name: '',
-      // 自动调整范围
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
-      axisLabel: {
-        formatter: '{value}'
-      }
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series as any
   }
@@ -445,43 +418,45 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .region-spread-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.region-spread-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  gap: 4px;
 }
 
 .chart-wrapper {
   background: #fff;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 16px;
+  padding: 4px;
   min-height: 400px;
 }
 
 .chart-box {
-  /* 图表框：包含标题、图例、图表 */
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .info-box {
-  /* 说明框：无背景色，位于图表框下方 */
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
+  padding-top: 6px;
   background-color: transparent;
 }
 
 .chart-title {
   font-size: 16px;
   font-weight: 500;
-  margin: 0 0 16px 0;
+  margin: 0 0 6px 0;
   color: #303133;
-  text-align: center;
+  text-align: left;
 }
 
 .chart-container {

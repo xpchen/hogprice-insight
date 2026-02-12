@@ -18,6 +18,7 @@ import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import { axisLabelDecimalFormatter } from '@/utils/chart-style'
 
 export interface DualAxisData {
   series1: {
@@ -103,12 +104,15 @@ const updateChart = () => {
       type: 'category',
       boundaryGap: false,
       data: sortedDates,
-      // X轴不显示标签（默认时间轴）
       name: '',
       axisLabel: {
+        rotate: 45,
         formatter: (value: string) => {
           const date = new Date(value)
-          return `${date.getMonth() + 1}/${date.getDate()}`
+          const y = date.getFullYear()
+          const m = date.getMonth() + 1
+          const d = date.getDate()
+          return `${y}/${m}/${d}`
         }
       }
     },
@@ -121,21 +125,16 @@ const updateChart = () => {
         min: y1Min - y1Padding,
         max: y1Max + y1Padding,
         scale: false,
-        axisLabel: {
-          formatter: '{value}'
-        }
+        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       },
       {
         type: 'value',
-        // Y轴不显示单位
         name: '',
         position: props.axis2 || 'right',
         min: y2Min - y2Padding,
         max: y2Max + y2Padding,
         scale: false,
-        axisLabel: {
-          formatter: '{value}'
-        }
+        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       }
     ],
     series: [
@@ -217,5 +216,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .dual-axis-chart-panel {
   width: 100%;
+  margin-bottom: 8px;
 }
 </style>

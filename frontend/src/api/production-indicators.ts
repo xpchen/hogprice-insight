@@ -49,3 +49,21 @@ export function getYongyiProductionIndicators(): Promise<ProductionIndicatorsRes
     method: 'get'
   })
 }
+
+/** A1供给预测表格（多表头）：header_row_0 一级表头，header_row_1 二级表头，rows 数据行 */
+export interface A1SupplyForecastTableResponse {
+  header_row_0: string[]
+  header_row_1: string[]
+  rows: (string | number | null)[][]
+  column_count: number
+}
+
+/**
+ * 获取 A1供给预测 表格数据（C-L、P-S、W-X、AC-AF 列，多表头）
+ */
+export function getA1SupplyForecastTable(): Promise<A1SupplyForecastTableResponse> {
+  return request({
+    url: '/v1/production-indicators/a1-supply-forecast-table',
+    method: 'get'
+  })
+}

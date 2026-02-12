@@ -7,6 +7,8 @@ from datetime import date, datetime, timedelta
 from pydantic import BaseModel
 import math
 import numpy as np
+import json
+import calendar
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -15,6 +17,9 @@ from app.models.sys_user import SysUser
 from app.models import FactFuturesDaily
 from app.models.fact_observation import FactObservation
 from app.models.dim_metric import DimMetric
+from app.models.raw_sheet import RawSheet
+from app.models.raw_table import RawTable
+from app.models.raw_file import RawFile
 from app.utils.contract_parser import parse_futures_contract
 
 router = APIRouter(prefix=f"{settings.API_V1_STR}/futures", tags=["futures"])
@@ -141,6 +146,108 @@ def get_national_spot_price(db: Session, trade_date: date) -> Optional[float]:
     return None
 
 
+def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None):
+    """获取raw_table数据"""
+    query = db.query(RawSheet).join(RawFile)
+    
+    if filename_pattern:
+        query = query.filter(RawFile.filename.like(f'%{filename_pattern}%'))
+    
+    sheet = query.filter(RawSheet.sheet_name == sheet_name).first()
+    
+    if not sheet:
+        return None
+    
+    raw_table = db.query(RawTable).filter(
+        RawTable.raw_sheet_id == sheet.id
+    ).first()
+    
+    if not raw_table:
+        return None
+    
+    table_data = raw_table.table_json
+    if isinstance(table_data, str):
+        table_data = json.loads(table_data)
+    
+    return table_data
+
+
+def _parse_excel_date(excel_date: any) -> Optional[date]:
+    """解析Excel日期"""
+    if isinstance(excel_date, str):
+        try:
+            if 'T' in excel_date:
+                date_str = excel_date.split('T')[0]
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+            else:
+                date_str = excel_date.split()[0] if ' ' in excel_date else excel_date
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+        except:
+            pass
+    elif isinstance(excel_date, (int, float)):
+        try:
+            excel_epoch = datetime(1899, 12, 30)
+            return (excel_epoch + timedelta(days=int(excel_date))).date()
+        except:
+            pass
+    elif isinstance(excel_date, date):
+        return excel_date
+    elif hasattr(excel_date, 'date'):
+        return excel_date.date()
+    return None
+
+
+def _is_weekend(d: date) -> bool:
+    """判断是否为周末"""
+    return d.weekday() >= 5  # 5=Saturday, 6=Sunday
+
+
+def _is_chinese_holiday(d: date) -> bool:
+    """判断是否为中国法定节假日
+    简化实现：只判断春节、国庆等主要节假日
+    实际应该使用holidays库或维护一个节假日列表
+    """
+    # TODO: 实现完整的中国节假日判断逻辑
+    # 这里先返回False，后续可以完善
+    return False
+
+
+def _is_trading_day(d: date) -> bool:
+    """判断是否为交易日（非周末且非节假日）"""
+    return not _is_weekend(d) and not _is_chinese_holiday(d)
+
+
+def is_in_seasonal_range(date_obj: date, contract_month: int) -> bool:
+    """
+    判断日期是否在合约的季节性图时间范围内
+    X月合约的季节性图为X+1月的1日至X-1月的最后一日
+    
+    例如：03合约的季节性图为4月1日至次年2月29日
+    即：从4月1日到次年2月29日（跨年）
+    
+    判断逻辑：对于日期d，如果：
+    - d的月份 >= X+1月 且 d的月份 <= 12月，或者
+    - d的月份 >= 1月 且 d的月份 <= X-1月
+    则d在范围内
+    """
+    month = date_obj.month
+    start_month = (contract_month + 1) % 12
+    if start_month == 0:
+        start_month = 12
+    end_month = contract_month - 1
+    if end_month == 0:
+        end_month = 12
+    
+    # 如果start_month < end_month，说明不跨年（例如07合约：8月到6月，这种情况不存在）
+    # 如果start_month > end_month，说明跨年（例如03合约：4月到2月）
+    if start_month > end_month:
+        # 跨年情况：从start_month到12月，或从1月到end_month
+        return month >= start_month or month <= end_month
+    else:
+        # 不跨年情况（理论上不应该出现，但为了完整性保留）
+        return start_month <= month <= end_month
+
+
 def get_contract_date_range(contract_month: int, year: Optional[int] = None) -> tuple[date, date]:
     """
     获取合约的时间范围
@@ -195,6 +302,7 @@ class PremiumDataPoint(BaseModel):
     futures_settle: Optional[float]  # 期货结算价
     spot_price: Optional[float]  # 现货价格
     premium: Optional[float]  # 升贴水 = 期货结算价 - 现货价格
+    premium_ratio: Optional[float] = None  # 升贴水比率 = (期货结算价 - 现货价格) / 现货价格 * 100
 
 
 class PremiumSeries(BaseModel):
@@ -207,6 +315,31 @@ class PremiumSeries(BaseModel):
 class PremiumResponse(BaseModel):
     """升贴水响应"""
     series: List[PremiumSeries]
+    update_time: Optional[str] = None
+
+
+class PremiumDataPointV2(BaseModel):
+    """升贴水数据点（V2版本，支持区域）"""
+    date: str
+    futures_settle: Optional[float]  # 期货结算价（元/公斤）
+    spot_price: Optional[float]  # 现货价格（元/公斤）
+    premium: Optional[float]  # 升贴水（元/公斤）= 期货结算价 - 现货价格
+    premium_ratio: Optional[float] = None  # 升贴水比率（%）= (期货结算价 - 现货价格) / 现货价格 * 100
+    year: Optional[int] = None  # 年份，用于季节性图
+
+
+class PremiumSeriesV2(BaseModel):
+    """升贴水数据系列（V2版本）"""
+    contract_month: int  # 合约月份，如 3, 5, 7, 9, 11, 1
+    contract_name: str  # 合约名称，如 "03合约"
+    region: str  # 区域名称，如 "全国均价"、"贵州"等
+    data: List[PremiumDataPointV2]
+
+
+class PremiumResponseV2(BaseModel):
+    """升贴水响应（V2版本）"""
+    series: List[PremiumSeriesV2]
+    region_premiums: Dict[str, float] = {}  # 省区升贴水注释，如 {"贵州": -300, "四川": -100}
     update_time: Optional[str] = None
 
 
@@ -405,6 +538,215 @@ async def get_premium_data(
     return PremiumResponse(series=all_series)
 
 
+def get_region_spot_price(db: Session, trade_date: date, region: str) -> Optional[float]:
+    """获取区域现货价格
+    region: 区域名称，如 "全国均价"、"贵州"、"四川"等
+    """
+    if region == "全国均价":
+        return get_national_spot_price(db, trade_date)
+    
+    # 查询区域现货价格
+    metric = db.query(DimMetric).filter(
+        DimMetric.sheet_name == "分省区猪价",
+        DimMetric.raw_header.like(f'%{region}%'),
+        DimMetric.freq.in_(["D", "daily"])
+    ).first()
+    
+    if not metric:
+        return None
+    
+    obs = db.query(FactObservation).filter(
+        FactObservation.metric_id == metric.id,
+        FactObservation.obs_date == trade_date,
+        FactObservation.period_type == "day"
+    ).first()
+    
+    if obs and obs.value:
+        return float(obs.value)
+    return None
+
+
+@router.get("/premium/v2", response_model=PremiumResponseV2)
+async def get_premium_data_v2(
+    contract_month: Optional[int] = Query(None, description="合约月份，如 3, 5, 7, 9, 11, 1。不指定则返回所有6个合约"),
+    region: str = Query("全国均价", description="区域：全国均价、贵州、四川、云南、广东、广西、江苏、内蒙"),
+    view_type: str = Query("全部日期", description="视图类型：季节性、全部日期"),
+    format_type: str = Query("全部格式", description="格式类型：全部格式"),
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取升贴水数据（V2版本，从Excel文件读取）
+    
+    数据来源：4.1、生猪期货升贴水数据（盘面结算价）.xlsx
+    Sheet：期货结算价(1月交割连续)_生猪
+    
+    数据结构：
+    - 第1行：表头（指标名称）
+    - 第2行：单位（元/吨）
+    - 第3行：来源（大连商品交易所）
+    - 第4行开始：数据
+      - A列：日期
+      - B列：01合约（1月交割连续）
+      - C列：03合约（3月交割连续）
+      - D列：05合约（5月交割连续）
+      - E列：07合约（7月交割连续）
+      - F列：09合约（9月交割连续）
+      - G列：11合约（11月交割连续）
+    
+    升贴水 = 期货结算价 - 区域现货价格
+    升贴水比率 = 升贴水 / 合约价格 * 100
+    """
+    # 省区升贴水注释
+    region_premiums = {
+        "贵州": -300,
+        "四川": -100,
+        "内蒙": -300,
+        "广西": -200,
+        "云南": -600,
+        "江苏": 500,
+        "广东": 500,
+        "全国均价": 0  # 全国均价没有升贴水
+    }
+    
+    # 获取Excel数据
+    excel_data = _get_raw_table_data(db, "期货结算价(1月交割连续)_生猪", "4.1、生猪期货升贴水数据")
+    
+    if not excel_data or len(excel_data) < 4:
+        raise HTTPException(status_code=404, detail="未找到期货结算价Excel数据")
+    
+    # 合约月份到列索引的映射
+    contract_col_map = {
+        1: 1,   # B列（索引1）：01合约
+        3: 2,   # C列（索引2）：03合约
+        5: 3,   # D列（索引3）：05合约
+        7: 4,   # E列（索引4）：07合约
+        9: 5,   # F列（索引5）：09合约
+        11: 6   # G列（索引6）：11合约
+    }
+    
+    contract_months = [contract_month] if contract_month else [3, 5, 7, 9, 11, 1]
+    
+    all_series = []
+    
+    for month in contract_months:
+        if month not in contract_col_map:
+            continue
+        
+        col_idx = contract_col_map[month]
+        
+        # 从第4行开始读取数据（索引3）
+        futures_data = []
+        for row_idx in range(3, len(excel_data)):
+            row = excel_data[row_idx]
+            
+            if len(row) <= col_idx:
+                continue
+            
+            date_val = row[0] if len(row) > 0 else None  # A列（索引0）是日期
+            futures_val = row[col_idx] if len(row) > col_idx else None
+            
+            if not date_val or futures_val is None or futures_val == "":
+                continue
+            
+            date_obj = _parse_excel_date(date_val)
+            if not date_obj:
+                continue
+            
+            try:
+                futures_price = float(futures_val)
+                # 期货价格单位是元/吨，转换为元/公斤（除以1000）
+                futures_price_per_kg = futures_price / 1000.0
+                
+                futures_data.append({
+                    'date': date_obj,
+                    'futures_settle': futures_price_per_kg
+                })
+            except (ValueError, TypeError):
+                continue
+        
+        if not futures_data:
+            continue
+        
+        # 获取区域现货价格并计算升贴水
+        data_points = []
+        for item in futures_data:
+            trade_date = item['date']
+            futures_settle = item['futures_settle']
+            
+            # 获取区域现货价格
+            spot_price = get_region_spot_price(db, trade_date, region)
+            
+            # 计算升贴水和升贴水比率
+            # 升贴水 = 期货价格 - 现货价格
+            # 升贴水比率 = 升贴水 / 合约价格
+            premium = None
+            premium_ratio = None
+            
+            if futures_settle is not None and spot_price is not None:
+                premium = futures_settle - spot_price
+                # 升贴水比率 = 升贴水 / 合约价格（不是除以现货价格）
+                if futures_settle > 0:
+                    premium_ratio = (premium / futures_settle) * 100
+            
+            # 判断是否为当月（合约交割月），如果是当月则升贴水比率为空
+            is_delivery_month = False
+            if month == 1:
+                # 01合约的交割月是1月
+                is_delivery_month = trade_date.month == 1
+            else:
+                is_delivery_month = trade_date.month == month
+            
+            # 如果是当月，升贴水比率设为None
+            if is_delivery_month:
+                premium_ratio = None
+            
+            data_points.append(PremiumDataPointV2(
+                date=trade_date.isoformat(),
+                futures_settle=round(futures_settle, 2) if futures_settle else None,
+                spot_price=round(spot_price, 2) if spot_price else None,
+                premium=round(premium, 2) if premium else None,
+                premium_ratio=round(premium_ratio, 2) if premium_ratio else None,
+                year=trade_date.year
+            ))
+        
+        # 根据view_type过滤数据
+        if view_type == "季节性":
+            # 季节性图：X月合约的季节性图为X+1月的1日至X-1月的最后一日，剔除假期和周末
+            seasonal_data = []
+            for point in data_points:
+                point_date = datetime.strptime(point.date.split('T')[0], '%Y-%m-%d').date()
+                
+                # 检查是否在季节性时间范围内（按月份判断，跨年）
+                if is_in_seasonal_range(point_date, month) and _is_trading_day(point_date):
+                    seasonal_data.append(point)
+            
+            data_points = seasonal_data
+        
+        # 按日期排序
+        data_points.sort(key=lambda x: x.date)
+        
+        if data_points:
+            all_series.append(PremiumSeriesV2(
+                contract_month=month,
+                contract_name=f"{month:02d}合约",
+                region=region,
+                data=data_points
+            ))
+    
+    if not all_series:
+        raise HTTPException(
+            status_code=404,
+            detail="未找到升贴水数据"
+        )
+    
+    return PremiumResponseV2(
+        series=all_series,
+        region_premiums={k: v for k, v in region_premiums.items() if k == region or region == "全国均价"},
+        update_time=None
+    )
+
+
 class CalendarSpreadDataPoint(BaseModel):
     """月间价差数据点"""
     date: str
@@ -430,7 +772,8 @@ class CalendarSpreadResponse(BaseModel):
 def get_spread_date_range(near_month: int, far_month: int, year: Optional[int] = None) -> tuple[date, date]:
     """
     获取月间价差的时间范围
-    X-Y价差，时间从Y+1月的1日至X-1月的最后一日
+    X-Y价差，时间从Y的次月1日到X的前一月的最后一日
+    例如：03-05价差，日期从6月1日到2月28日
     
     Args:
         near_month: 近月月份（Y），如 3
@@ -443,14 +786,14 @@ def get_spread_date_range(near_month: int, far_month: int, year: Optional[int] =
     if year is None:
         year = datetime.now().year
     
-    # 开始日期：Y+1月的1日
+    # 开始日期：Y的次月1日（即Y+1月的1日）
     start_month = near_month + 1
     start_year = year
     if start_month > 12:
         start_month = 1
         start_year = year + 1
     
-    # 结束日期：X-1月的最后一日
+    # 结束日期：X的前一月的最后一日（即X-1月的最后一日）
     end_month = far_month - 1
     end_year = year
     if end_month < 1:
@@ -480,12 +823,30 @@ async def get_calendar_spread(
     db: Session = Depends(get_db)
 ):
     """
-    获取月间价差数据
+    获取月间价差数据（从Excel文件读取）
     
+    数据来源：4.1、生猪期货升贴水数据（盘面结算价）.xlsx
     价差 = 远月合约结算价 - 近月合约结算价
     6个价差：03-05、05-07、07-09、09-11、11-01、01-03
-    时间范围：X-Y价差，时间从Y+1月的1日至X-1月的最后一日
+    时间范围：X-Y价差，日期从Y的次月1日到X的前一月的最后一日
+    例如：03-05价差，日期从6月1日到2月28日
     """
+    # 获取Excel数据
+    excel_data = _get_raw_table_data(db, "期货结算价(1月交割连续)_生猪", "4.1、生猪期货升贴水数据")
+    
+    if not excel_data or len(excel_data) < 4:
+        raise HTTPException(status_code=404, detail="未找到期货结算价Excel数据")
+    
+    # 合约月份到列索引的映射
+    contract_col_map = {
+        1: 1,   # B列（索引1）：01合约
+        3: 2,   # C列（索引2）：03合约
+        5: 3,   # D列（索引3）：05合约
+        7: 4,   # E列（索引4）：07合约
+        9: 5,   # F列（索引5）：09合约
+        11: 6   # G列（索引6）：11合约
+    }
+    
     spread_pairs = []
     if spread_pair:
         # 解析价差对，如 "03-05"
@@ -499,85 +860,63 @@ async def get_calendar_spread(
         # 默认6个价差
         spread_pairs = [(3, 5), (5, 7), (7, 9), (9, 11), (11, 1), (1, 3)]
     
-    # 确定年份范围
-    if start_year and end_year:
-        years = list(range(start_year, end_year + 1))
-    elif start_year:
-        years = list(range(start_year, datetime.now().year + 1))
-    elif end_year:
-        years = list(range(2020, end_year + 1))  # 假设从2020年开始有数据
-    else:
-        # 查询数据库中的年份范围
-        min_year = db.query(func.min(extract('year', FactFuturesDaily.trade_date))).scalar()
-        max_year = db.query(func.max(extract('year', FactFuturesDaily.trade_date))).scalar()
-        if min_year and max_year:
-            years = list(range(min_year, max_year + 1))
-        else:
-            years = list(range(2020, datetime.now().year + 1))
-    
     all_series = []
     
     for near_month, far_month in spread_pairs:
-        near_month_str = f"{near_month:02d}"
-        far_month_str = f"{far_month:02d}"
+        if near_month not in contract_col_map or far_month not in contract_col_map:
+            continue
         
-        # 收集所有年份的数据
-        date_dict_near: Dict[date, List[FactFuturesDaily]] = {}
-        date_dict_far: Dict[date, List[FactFuturesDaily]] = {}
+        near_col_idx = contract_col_map[near_month]
+        far_col_idx = contract_col_map[far_month]
         
-        for year in years:
-            # 获取该年份的时间范围
-            start_date, end_date = get_spread_date_range(near_month, far_month, year)
+        # 从Excel读取两个合约的数据
+        near_futures_data = {}
+        far_futures_data = {}
+        
+        for row_idx in range(3, len(excel_data)):
+            row = excel_data[row_idx]
             
-            # 如果指定了年份范围，进一步限制
-            if start_year:
-                start_date = max(start_date, date(start_year, 1, 1))
-            if end_year:
-                end_date = min(end_date, date(end_year, 12, 31))
+            if len(row) <= max(near_col_idx, far_col_idx):
+                continue
             
-            # 查询近月合约
-            near_futures = db.query(FactFuturesDaily).filter(
-                FactFuturesDaily.contract_code.like(f"%{near_month_str}"),
-                FactFuturesDaily.trade_date >= start_date,
-                FactFuturesDaily.trade_date <= end_date
-            ).order_by(FactFuturesDaily.trade_date).all()
+            date_val = row[0] if len(row) > 0 else None
+            near_val = row[near_col_idx] if len(row) > near_col_idx else None
+            far_val = row[far_col_idx] if len(row) > far_col_idx else None
             
-            # 查询远月合约
-            far_futures = db.query(FactFuturesDaily).filter(
-                FactFuturesDaily.contract_code.like(f"%{far_month_str}"),
-                FactFuturesDaily.trade_date >= start_date,
-                FactFuturesDaily.trade_date <= end_date
-            ).order_by(FactFuturesDaily.trade_date).all()
+            if not date_val:
+                continue
             
-            # 按日期分组
-            for f in near_futures:
-                if f.trade_date not in date_dict_near:
-                    date_dict_near[f.trade_date] = []
-                date_dict_near[f.trade_date].append(f)
+            date_obj = _parse_excel_date(date_val)
+            if not date_obj:
+                continue
             
-            for f in far_futures:
-                if f.trade_date not in date_dict_far:
-                    date_dict_far[f.trade_date] = []
-                date_dict_far[f.trade_date].append(f)
+            # 检查日期是否在价差的时间范围内
+            start_date, end_date = get_spread_date_range(near_month, far_month, date_obj.year)
+            if date_obj < start_date or date_obj > end_date:
+                # 如果不在当前年份范围内，尝试下一年
+                start_date_next, end_date_next = get_spread_date_range(near_month, far_month, date_obj.year + 1)
+                if date_obj < start_date_next or date_obj > end_date_next:
+                    continue
+            
+            try:
+                if near_val is not None and near_val != "":
+                    near_price = float(near_val) / 1000.0  # 转换为元/公斤
+                    near_futures_data[date_obj] = near_price
+                
+                if far_val is not None and far_val != "":
+                    far_price = float(far_val) / 1000.0  # 转换为元/公斤
+                    far_futures_data[date_obj] = far_price
+            except (ValueError, TypeError):
+                continue
         
         # 找出两个合约都存在的日期
-        common_dates = set(date_dict_near.keys()) & set(date_dict_far.keys())
+        common_dates = sorted(set(near_futures_data.keys()) & set(far_futures_data.keys()))
         
         # 构建数据点
         data_points = []
-        for trade_date in sorted(common_dates):
-            near_contracts = date_dict_near[trade_date]
-            far_contracts = date_dict_far[trade_date]
-            
-            # 选择持仓量最大的合约
-            near_contract = max(near_contracts, key=lambda x: x.open_interest or 0)
-            far_contract = max(far_contracts, key=lambda x: x.open_interest or 0)
-            
-            # 期货价格单位是元/吨，需要转换为元/公斤（除以1000）
-            near_settle_raw = float(near_contract.settle) if near_contract.settle else None
-            far_settle_raw = float(far_contract.settle) if far_contract.settle else None
-            near_settle = near_settle_raw / 1000.0 if near_settle_raw is not None else None
-            far_settle = far_settle_raw / 1000.0 if far_settle_raw is not None else None
+        for trade_date in common_dates:
+            near_settle = near_futures_data.get(trade_date)
+            far_settle = far_futures_data.get(trade_date)
             
             spread = None
             if near_settle is not None and far_settle is not None:
@@ -591,6 +930,8 @@ async def get_calendar_spread(
             ))
         
         if data_points:
+            near_month_str = f"{near_month:02d}"
+            far_month_str = f"{far_month:02d}"
             all_series.append(CalendarSpreadSeries(
                 spread_name=f"{near_month_str}-{far_month_str}价差",
                 near_month=near_month,
@@ -705,8 +1046,8 @@ class VolatilityDataPoint(BaseModel):
     """波动率数据点"""
     date: str
     close_price: Optional[float]  # 收盘价
-    volatility_5d: Optional[float]  # 5日波动率（年化）
-    volatility_10d: Optional[float]  # 10日波动率（年化）
+    volatility: Optional[float]  # 波动率（年化）
+    year: Optional[int] = None  # 年份，用于季节性图
 
 
 class VolatilitySeries(BaseModel):
@@ -722,42 +1063,52 @@ class VolatilityResponse(BaseModel):
     update_time: Optional[str] = None
 
 
-def calculate_volatility(prices: List[float], window: int) -> Optional[float]:
+def calculate_volatility(prices: List[float], current_idx: int) -> Optional[float]:
     """
     计算波动率
     
+    根据需求：
+    （1）计算收益率：从第11天开始，收益率=ln（当日价格/10日前价格）
+    （2）计算收益率平均值：从第21天开始，计算过去10天收益率的标准差
+    （3）波动率=标准差*（根号252）
+    
     Args:
         prices: 价格列表（按时间顺序）
-        window: 窗口大小（5或10）
+        current_idx: 当前价格在列表中的索引
     
     Returns:
-        年化波动率（百分比）
+        年化波动率（百分比），如果数据不足则返回None
     """
-    if len(prices) < window + 1:
+    # 需要至少21个数据点才能计算波动率
+    if current_idx < 20:
         return None
     
-    # 计算对数收益率
+    # 从第11天开始计算收益率（索引10开始）
+    # 收益率 = ln(当日价格 / 10日前价格)
     returns = []
-    for i in range(1, len(prices)):
-        if prices[i-1] and prices[i] and prices[i-1] > 0:
-            log_return = math.log(prices[i] / prices[i-1])
+    for i in range(10, current_idx + 1):
+        if i >= len(prices) or prices[i] is None or prices[i-10] is None:
+            continue
+        if prices[i-10] > 0 and prices[i] > 0:
+            log_return = math.log(prices[i] / prices[i-10])
             returns.append(log_return)
     
-    if len(returns) < window:
+    # 从第21天开始计算标准差（需要至少10个收益率）
+    if len(returns) < 10:
         return None
     
-    # 取最近window个收益率
-    recent_returns = returns[-window:]
+    # 取最近10个收益率计算标准差
+    recent_returns = returns[-10:]
     
-    # 计算标准差
     if len(recent_returns) < 2:
         return None
     
+    # 计算标准差
     mean_return = sum(recent_returns) / len(recent_returns)
     variance = sum((r - mean_return) ** 2 for r in recent_returns) / (len(recent_returns) - 1)
     std_dev = math.sqrt(variance)
     
-    # 年化处理：乘以√252（一年252个交易日）
+    # 波动率 = 标准差 * √252
     annualized_vol = std_dev * math.sqrt(252) * 100  # 转换为百分比
     
     return annualized_vol
@@ -766,10 +1117,8 @@ def calculate_volatility(prices: List[float], window: int) -> Optional[float]:
 @router.get("/volatility", response_model=VolatilityResponse)
 async def get_volatility(
     contract_month: Optional[int] = Query(None, description="合约月份，如 3, 5, 7, 9, 11, 1。不指定则返回所有6个合约"),
-    min_volatility_5d: Optional[float] = Query(None, description="5日波动率最小值筛选"),
-    max_volatility_5d: Optional[float] = Query(None, description="5日波动率最大值筛选"),
-    min_volatility_10d: Optional[float] = Query(None, description="10日波动率最小值筛选"),
-    max_volatility_10d: Optional[float] = Query(None, description="10日波动率最大值筛选"),
+    min_volatility: Optional[float] = Query(None, description="波动率最小值筛选"),
+    max_volatility: Optional[float] = Query(None, description="波动率最大值筛选"),
     start_date: Optional[date] = Query(None, description="开始日期"),
     end_date: Optional[date] = Query(None, description="结束日期"),
     current_user: SysUser = Depends(get_current_user),
@@ -778,8 +1127,10 @@ async def get_volatility(
     """
     获取波动率数据
     
-    计算5日、10日波动率
-    使用对数收益率和标准差，年化处理（乘以√252）
+    计算波动率：
+    （1）计算收益率：从第11天开始，收益率=ln（当日价格/10日前价格）
+    （2）计算收益率平均值：从第21天开始，计算过去10天收益率的标准差
+    （3）波动率=标准差*（根号252）
     """
     contract_months = [contract_month] if contract_month else [3, 5, 7, 9, 11, 1]
     
@@ -824,44 +1175,26 @@ async def get_volatility(
             dates.append(trade_date)
         
         # 计算每个日期的波动率
+        # 根据需求：从第11天开始计算收益率，从第21天开始计算标准差
         data_points = []
         for i in range(len(prices)):
-            if i < 10:  # 需要至少10个数据点才能计算10日波动率
+            if prices[i] is None:
                 continue
             
-            # 获取最近的价格序列
-            recent_prices = prices[max(0, i-10):i+1]
-            
-            # 过滤掉None值
-            valid_prices = [p for p in recent_prices if p is not None]
-            
-            if len(valid_prices) < 6:  # 至少需要6个有效价格
-                continue
-            
-            # 计算5日和10日波动率
-            vol_5d = None
-            vol_10d = None
-            
-            if len(valid_prices) >= 6:
-                vol_5d = calculate_volatility(valid_prices[-6:], 5)
-            if len(valid_prices) >= 11:
-                vol_10d = calculate_volatility(valid_prices[-11:], 10)
+            # 计算波动率（需要至少21个数据点）
+            volatility = calculate_volatility(prices, i)
             
             # 应用筛选条件
-            if min_volatility_5d is not None and vol_5d is not None and vol_5d < min_volatility_5d:
+            if min_volatility is not None and volatility is not None and volatility < min_volatility:
                 continue
-            if max_volatility_5d is not None and vol_5d is not None and vol_5d > max_volatility_5d:
-                continue
-            if min_volatility_10d is not None and vol_10d is not None and vol_10d < min_volatility_10d:
-                continue
-            if max_volatility_10d is not None and vol_10d is not None and vol_10d > max_volatility_10d:
+            if max_volatility is not None and volatility is not None and volatility > max_volatility:
                 continue
             
             data_points.append(VolatilityDataPoint(
                 date=dates[i].isoformat(),
                 close_price=prices[i],
-                volatility_5d=vol_5d,
-                volatility_10d=vol_10d
+                volatility=volatility,
+                year=dates[i].year
             ))
         
         if data_points:

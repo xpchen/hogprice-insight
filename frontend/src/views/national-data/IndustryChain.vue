@@ -1,6 +1,6 @@
 <template>
   <div class="industry-chain-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <span>A8. 产业链数据汇总（全国）</span>
       </template>
@@ -179,17 +179,21 @@ onMounted(async () => {
 
 <style scoped>
 .industry-chain-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.industry-chain-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .charts-container {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
-  margin-top: 20px;
-  border: 1px solid #e4e7ed; /* 共用边框 */
+  gap: 4px;
+  margin-top: 8px;
+  border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 16px;
+  padding: 4px;
   background: #fff;
 }
 

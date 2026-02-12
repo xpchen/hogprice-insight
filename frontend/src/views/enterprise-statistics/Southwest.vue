@@ -34,7 +34,7 @@
         </el-button>
       </div>
 
-      <!-- 表格容器 -->
+      <!-- 表格容器：多表头，相同省份合并 -->
       <div class="table-container" ref="tableContainerRef">
         <el-table
           :data="allRows"
@@ -44,27 +44,37 @@
           height="500"
           style="width: 100%"
         >
-          <el-table-column prop="date" label="日期" width="120" fixed="left">
+          <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
             <template #default="{ row }">
               {{ formatDate(row.date) }}
             </template>
           </el-table-column>
-          <el-table-column prop="period_type" label="旬度" width="80" fixed="left">
+          <el-table-column prop="period_type" label="旬度" width="80" fixed="left" align="center">
             <template #default="{ row }">
               {{ row.period_type || '-' }}
             </template>
           </el-table-column>
+          <!-- 按省份分组的表头：一级为省份，二级为指标 -->
           <el-table-column
-            v-for="col in displayColumns"
-            :key="col.key"
-            :prop="col.key"
-            :label="col.label"
-            width="130"
-            align="right"
+            v-for="prov in provinceHeaderGroups"
+            :key="prov.province"
+            :label="prov.province"
+            align="center"
+            header-align="center"
           >
-            <template #default="{ row }">
-              {{ formatValue(row[col.key], col.key) }}
-            </template>
+            <el-table-column
+              v-for="col in prov.columns"
+              :key="col.key"
+              :prop="col.key"
+              :label="col.label"
+              width="110"
+              align="right"
+              header-align="center"
+            >
+              <template #default="{ row }">
+                {{ formatValue(row[col.key], col.key) }}
+              </template>
+            </el-table-column>
           </el-table-column>
         </el-table>
       </div>
@@ -154,19 +164,36 @@ const hasMoreData = computed(() => {
   return allRows.value.length > 15
 })
 
-// 处理表格列（排除日期和旬度列，只显示数据列）
-const displayColumns = computed(() => {
+// 多表头：按省份分组，相同省份合并为一级表头
+// 列名格式为 "省份-指标"，如 "广东-出栏计划"、"四川-实际出栏量"
+const provinceHeaderGroups = computed(() => {
   if (!tableData.value || !tableData.value.columns) {
     return []
   }
-  
-  // 过滤掉"日期"和"旬度"列，其他列都是数据列
-  return tableData.value.columns
-    .filter(col => col !== '日期' && col !== '旬度')
-    .map(col => ({
-      key: col,
-      label: col.replace('-', ' ')
-    }))
+  const dataCols = tableData.value.columns.filter(
+    (col: string) => col !== '日期' && col !== '旬度'
+  )
+  const groupMap = new Map<string, Array<{ key: string; label: string }>>()
+  for (const col of dataCols) {
+    const idx = col.indexOf('-')
+    const province = idx > 0 ? col.slice(0, idx) : '其他'
+    const label = idx > 0 ? col.slice(idx + 1) : col
+    if (!groupMap.has(province)) {
+      groupMap.set(province, [])
+    }
+    groupMap.get(province)!.push({ key: col, label })
+  }
+  // 保持列顺序：按首次出现的省份顺序
+  const order: string[] = []
+  for (const col of dataCols) {
+    const idx = col.indexOf('-')
+    const province = idx > 0 ? col.slice(0, idx) : '其他'
+    if (!order.includes(province)) order.push(province)
+  }
+  return order.map(province => ({
+    province,
+    columns: groupMap.get(province) || []
+  }))
 })
 
 // 加载默认时间范围（最近4个月）

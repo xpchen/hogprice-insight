@@ -76,6 +76,13 @@ PREMIUM_DISCOUNT_MAPPING = {
     "贵州富之源": -300,
 }
 
+# 表格列固定显示顺序（含华宝白条、牧原白条）
+COMPANY_DISPLAY_ORDER = [
+    "吉林中粮", "河南牧原", "山东新希望", "广东温氏", "湖南唐人神", "江西温氏", "四川德康", "贵州富之源",
+    "华宝白条", "牧原白条",
+    "华东", "河南山东", "湖北陕西", "京津冀", "东北",
+]
+
 
 def _extract_company_name(raw_header: str) -> Optional[str]:
     """从原始表头提取企业名称"""
@@ -122,15 +129,36 @@ async def get_group_enterprise_price(
             company_metrics[company_name] = metric
     
     # 查找华宝白条和牧原白条数据（从"华宝和牧原白条"sheet）
+    # 优先按 metric_key，若无则按 raw_header/metric_name 包含「华宝」「牧原」匹配
     huabao_metric = db.query(DimMetric).filter(
         DimMetric.sheet_name == "华宝和牧原白条",
         func.json_unquote(func.json_extract(DimMetric.parse_json, '$.metric_key')) == 'WHITE_STRIP_PRICE_HUABAO'
     ).first()
+    if not huabao_metric:
+        huabao_candidates = db.query(DimMetric).filter(
+            DimMetric.sheet_name == "华宝和牧原白条",
+            or_(
+                DimMetric.raw_header.like('%华宝%'),
+                DimMetric.metric_name.like('%华宝%')
+            )
+        ).all()
+        if huabao_candidates:
+            huabao_metric = huabao_candidates[0]
     
     muyuan_metric = db.query(DimMetric).filter(
         DimMetric.sheet_name == "华宝和牧原白条",
         func.json_unquote(func.json_extract(DimMetric.parse_json, '$.metric_key')) == 'WHITE_STRIP_PRICE_MUYUAN'
     ).first()
+    if not muyuan_metric:
+        muyuan_candidates = db.query(DimMetric).filter(
+            DimMetric.sheet_name == "华宝和牧原白条",
+            or_(
+                DimMetric.raw_header.like('%牧原%'),
+                DimMetric.metric_name.like('%牧原%')
+            )
+        ).all()
+        if muyuan_candidates:
+            muyuan_metric = muyuan_candidates[0]
     
     if huabao_metric:
         company_metrics["华宝白条"] = huabao_metric
@@ -198,8 +226,8 @@ async def get_group_enterprise_price(
     # 获取最新日期
     latest_date = all_data[0].date if all_data else None
     
-    # 获取企业列表
-    companies = list(company_metrics.keys())
+    # 企业列表按固定显示顺序（保证华宝白条、牧原白条等列不缺失且顺序一致）
+    companies = [c for c in COMPANY_DISPLAY_ORDER if c in company_metrics]
     
     return GroupPriceTableResponse(
         data=all_data,

@@ -18,6 +18,11 @@ export interface ObservationQueryParams {
   offset?: number
 }
 
+/** 可选请求配置（如超时） */
+export interface ObservationRequestConfig {
+  timeout?: number
+}
+
 export interface ObservationResponse {
   id: number
   metric_name: string
@@ -59,9 +64,14 @@ export interface RawTableResponse {
 
 /**
  * 查询observation数据
+ * @param params 查询参数
+ * @param config 可选配置，如 timeout（毫秒）
  */
-export function queryObservations(params: ObservationQueryParams): Promise<ObservationResponse[]> {
-  return request.get('/v1/observation/query', { params })
+export function queryObservations(
+  params: ObservationQueryParams,
+  config?: ObservationRequestConfig
+): Promise<ObservationResponse[]> {
+  return request.get('/v1/observation/query', { params, ...config })
 }
 
 /**

@@ -415,7 +415,14 @@ class GanglianPriceExtractor:
         return {"inserted": total_inserted, "provinces": province_results, "log": log_entry}
     
     def _extract_slaughter_data(self, batch_id: int) -> Dict:
-        """提取日度屠宰量数据（从涌益日度文件）"""
+        """提取日度屠宰量数据（从涌益日度【价格+宰量】sheet）。
+        
+        注意：本脚本从单文件读取，且写入的 metric_key 为 YY_D_SLAUGHTER_TOTAL（无 _1/_2）。
+        日度屠宰量（农历）图表 API 优先使用「日屠宰量合计1」（YY_D_SLAUGHTER_TOTAL_1），
+        该列由统一导入 profile 从【价格+宰量】解析。若需 2020-2025 全年数据，
+        请用包含「日屠宰量合计1」的涌益日度 Excel 走统一导入（YONGYI_DAILY），
+        不要仅依赖本脚本。
+        """
         print("提取日度屠宰量数据...")
         
         # 涌益日度文件路径 - 从项目根目录查找
@@ -430,27 +437,36 @@ class GanglianPriceExtractor:
         # 读取数据
         df = pd.read_excel(excel_file, sheet_name=sheet_name)
         
-        # 找到"日期"列和"日屠宰量合计1"或"日度屠宰量合计2"列
+        # 优先使用「日屠宰量合计1」列（与统一导入一致，便于 2020-2025 数据）
         date_col = None
         slaughter_col = None
-        
+        slaughter_col_1 = None  # 日屠宰量合计1
         for col in df.columns:
             if "日期" in str(col):
                 date_col = col
+            if str(col).strip() == "日屠宰量合计1":
+                slaughter_col_1 = col
             if "屠宰量" in str(col) or "宰量" in str(col):
-                slaughter_col = col
+                if slaughter_col is None:
+                    slaughter_col = col
+        if slaughter_col_1 is not None:
+            slaughter_col = slaughter_col_1
         
         if date_col is None or slaughter_col is None:
             return {"error": "未找到日期列或屠宰量列", "inserted": 0}
         
-        # 获取或创建指标
+        # 与统一导入一致：使用「日屠宰量合计1」对应 YY_D_SLAUGHTER_TOTAL_1（农历图表 API 优先读此）
+        use_total_1 = str(slaughter_col).strip() == "日屠宰量合计1"
+        slaughter_metric_key = "YY_D_SLAUGHTER_TOTAL_1" if use_total_1 else "YY_D_SLAUGHTER_TOTAL_2"
+        slaughter_metric_name = "日屠宰量合计1" if use_total_1 else "日度屠宰量合计2"
+        
         metric = self._get_or_create_metric(
-            metric_key="YY_D_SLAUGHTER_TOTAL",
-            metric_name="日度屠宰量",
+            metric_key=slaughter_metric_key,
+            metric_name=slaughter_metric_name,
             source_code="YONGYI",
             sheet_name=sheet_name,
             unit="头",
-            raw_header=slaughter_col
+            raw_header=str(slaughter_col)
         )
         
         inserted_count = 0
@@ -466,11 +482,11 @@ class GanglianPriceExtractor:
                 if value is None:
                     continue
                 
-                # 构建dedup_key
+                # 构建dedup_key（与统一导入一致）
                 dedup_key = self._generate_dedup_key(
                     source_code="YONGYI",
                     sheet_name=sheet_name,
-                    metric_key="YY_D_SLAUGHTER_TOTAL",
+                    metric_key=slaughter_metric_key,
                     geo_code="NATION",
                     obs_date=trade_date,
                     tags={"scope": "nation"}
@@ -516,8 +532,8 @@ class GanglianPriceExtractor:
         
         log_entry = {
             "sheet": sheet_name,
-            "metric": "日度屠宰量",
-            "metric_key": "YY_D_SLAUGHTER_TOTAL",
+            "metric": slaughter_metric_name,
+            "metric_key": slaughter_metric_key,
             "inserted": inserted_count,
             "source_file": str(yongyi_file)
         }
@@ -1260,7 +1276,7 @@ class GanglianPriceExtractor:
                     freq = "W"
                 elif "月" in raw_header or "月度" in sheet_name or "（月）" in raw_header:
                     freq = "M"
-            
+            parse_json = {"metric_key": metric_key} if metric_key else {}
             metric = DimMetric(
                 metric_group="price" if "价格" in metric_name else "spread" if "价差" in metric_name else "slaughter",
                 metric_name=metric_name,
@@ -1269,7 +1285,7 @@ class GanglianPriceExtractor:
                 raw_header=raw_header,
                 sheet_name=sheet_name,
                 source_updated_at=None,
-                parse_json={},
+                parse_json=parse_json,
                 value_type="price" if "价格" in metric_name else "spread" if "价差" in metric_name else "volume",
                 preferred_agg="mean",
                 suggested_axis="left",
@@ -1278,6 +1294,11 @@ class GanglianPriceExtractor:
             )
             self.db.add(metric)
             self.db.flush()
+        else:
+            # 已有指标：补全 parse_json.metric_key，便于 observation API 按 metric_key 查询
+            if metric_key and (not metric.parse_json or not metric.parse_json.get("metric_key")):
+                metric.parse_json = {**(metric.parse_json or {}), "metric_key": metric_key}
+                self.db.flush()
         
         return metric
     

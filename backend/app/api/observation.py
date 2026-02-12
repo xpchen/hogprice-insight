@@ -81,28 +81,65 @@ async def query_observations(
             "DCE": "DCE"
         }
         prefix = source_prefix_map.get(source_code, source_code[:2])
-        
-        # 通过parse_json中的metric_key前缀筛选
-        query = query.filter(
-            func.json_unquote(
-                func.json_extract(DimMetric.parse_json, '$.metric_key')
-            ).like(f"{prefix}_%")
-        )
+        # 通过 parse_json.metric_key 前缀筛选；涌益时兼容「价格+宰量」sheet（可能无 parse_json）
+        if prefix == "YY":
+            query = query.filter(
+                or_(
+                    func.json_unquote(
+                        func.json_extract(DimMetric.parse_json, "$.metric_key")
+                    ).like("YY_%"),
+                    DimMetric.sheet_name == "价格+宰量",
+                )
+            )
+        else:
+            query = query.filter(
+                func.json_unquote(
+                    func.json_extract(DimMetric.parse_json, '$.metric_key')
+                ).like(f"{prefix}_%")
+            )
     
     # 指标键筛选
     if metric_key:
         # 通过raw_header、metric_name或parse_json中的metric_key匹配
-        query = query.filter(
-            or_(
-                DimMetric.raw_header == metric_key,
-                DimMetric.metric_name.like(f"%{metric_key}%"),
-                DimMetric.raw_header.like(f"%{metric_key}%"),
-                # 检查parse_json中是否包含metric_key
-                func.json_unquote(
-                    func.json_extract(DimMetric.parse_json, '$.metric_key')
-                ) == metric_key
+        # 兼容「价格+宰量」sheet 下由 extract 脚本创建的指标（parse_json 为空）：按 sheet_name + 列名匹配
+        conditions = [
+            DimMetric.raw_header == metric_key,
+            DimMetric.metric_name.like(f"%{metric_key}%"),
+            DimMetric.raw_header.like(f"%{metric_key}%"),
+            func.json_unquote(func.json_extract(DimMetric.parse_json, "$.metric_key")) == metric_key,
+        ]
+        if metric_key == "YY_D_SLAUGHTER_TOTAL_1":
+            conditions.append(
+                and_(
+                    DimMetric.sheet_name == "价格+宰量",
+                    or_(
+                        DimMetric.raw_header.like("%日屠宰量合计1%"),
+                        DimMetric.metric_name.like("%日屠宰量合计1%"),
+                    ),
+                )
             )
-        )
+        elif metric_key == "YY_D_SLAUGHTER_TOTAL_2":
+            conditions.append(
+                and_(
+                    DimMetric.sheet_name == "价格+宰量",
+                    or_(
+                        DimMetric.raw_header.like("%日度屠宰量合计2%"),
+                        DimMetric.metric_name.like("%日度屠宰量合计2%"),
+                    ),
+                )
+            )
+        elif metric_key == "YY_D_PRICE_NATION_AVG":
+            conditions.append(
+                and_(
+                    DimMetric.sheet_name == "价格+宰量",
+                    or_(
+                        DimMetric.raw_header.like("%全国均价%"),
+                        DimMetric.raw_header.like("%全国%"),
+                        DimMetric.metric_name.like("%全国均价%"),
+                    ),
+                )
+            )
+        query = query.filter(or_(*conditions))
     
     # 时间范围筛选
     if start_date:
@@ -140,12 +177,32 @@ async def query_observations(
         )
     
     # Indicator筛选（通过tags_json中的indicator字段）
+    # 出栏均重：库中可能为 indicator='均重'（原始）或 indicator='全国2'（修复后），兼容两种
     if indicator:
-        query = query.filter(
-            func.json_unquote(
-                func.json_extract(FactObservation.tags_json, '$.indicator')
-            ) == indicator
-        )
+        if (
+            metric_key == "YY_W_OUT_WEIGHT"
+            and geo_code == "NATION"
+            and indicator == "均重"
+        ):
+            query = query.filter(
+                or_(
+                    func.json_unquote(
+                        func.json_extract(FactObservation.tags_json, "$.indicator")
+                    )
+                    == "均重",
+                    func.json_unquote(
+                        func.json_extract(FactObservation.tags_json, "$.indicator")
+                    )
+                    == "全国2",
+                )
+            )
+        else:
+            query = query.filter(
+                func.json_unquote(
+                    func.json_extract(FactObservation.tags_json, "$.indicator")
+                )
+                == indicator
+            )
     
     # Nation_col筛选（通过tags_json中的nation_col字段）
     if nation_col:
@@ -155,7 +212,22 @@ async def query_observations(
             ) == nation_col
         )
     
-    # 排序和分页
+    # 排序和分页；仅加载返回所需列，减轻大结果集开销
+    from sqlalchemy.orm import load_only
+    query = query.options(
+        load_only(
+            FactObservation.id,
+            FactObservation.metric_id,
+            FactObservation.obs_date,
+            FactObservation.period_type,
+            FactObservation.period_start,
+            FactObservation.period_end,
+            FactObservation.value,
+            FactObservation.raw_value,
+            FactObservation.geo_id,
+            FactObservation.tags_json,
+        )
+    )
     query = query.order_by(FactObservation.obs_date.desc())
     query = query.offset(offset).limit(limit)
     

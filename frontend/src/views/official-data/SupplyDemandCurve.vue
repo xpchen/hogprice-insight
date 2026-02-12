@@ -1,6 +1,6 @@
 <template>
   <div class="supply-demand-curve-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>E3. 供需曲线 - 长周期猪价推演</span>
@@ -145,7 +145,7 @@ const updateChart1 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '长周期生猪供需曲线',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -153,7 +153,12 @@ const updateChart1 = () => {
     },
     legend: {
       data: ['定点屠宰系数', '猪价系数'],
-      bottom: 10
+      bottom: 10,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -168,7 +173,8 @@ const updateChart1 = () => {
     },
     yAxis: {
       type: 'value',
-      name: '系数'
+      name: '系数',
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
       {
@@ -219,7 +225,7 @@ const updateChart2 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '能繁母猪存栏&猪价（滞后10个月）',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -227,7 +233,12 @@ const updateChart2 = () => {
     },
     legend: {
       data: ['能繁母猪存栏指数', '猪价'],
-      bottom: 10
+      bottom: 10,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -244,12 +255,14 @@ const updateChart2 = () => {
       {
         type: 'value',
         name: '存栏指数',
-        position: 'left'
+        position: 'left',
+        axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       },
       {
         type: 'value',
-        name: '猪价（元/公斤）',
-        position: 'right'
+        name: '猪价',
+        position: 'right',
+        axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       }
     ],
     dataZoom: [
@@ -300,7 +313,7 @@ const updateChart3 = () => {
   const option: echarts.EChartsOption = {
     title: {
       text: '新生仔猪&猪价（滞后10个月）',
-      left: 'center'
+      left: 'left'
     },
     tooltip: {
       trigger: 'axis',
@@ -308,7 +321,12 @@ const updateChart3 = () => {
     },
     legend: {
       data: ['新生仔猪指数', '猪价'],
-      bottom: 10
+      bottom: 10,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 15,
+      left: 'left'
     },
     grid: {
       left: '3%',
@@ -325,12 +343,14 @@ const updateChart3 = () => {
       {
         type: 'value',
         name: '存栏指数',
-        position: 'left'
+        position: 'left',
+        axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       },
       {
         type: 'value',
-        name: '猪价（元/公斤）',
-        position: 'right'
+        name: '猪价',
+        position: 'right',
+        axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       }
     ],
     dataZoom: [
@@ -394,11 +414,18 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .supply-demand-curve-page {
+  padding: 4px;
+  
+  :deep(.el-card__body) {
+    padding: 4px 6px;
+  }
+  
   .chart-section {
-    margin-bottom: 40px;
+    margin-bottom: 12px;
     
     h3 {
-      margin-bottom: 15px;
+      margin-bottom: 6px;
+      text-align: left;
       font-size: 16px;
       font-weight: 600;
     }

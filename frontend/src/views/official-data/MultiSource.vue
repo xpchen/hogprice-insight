@@ -47,6 +47,7 @@
             <el-option label="最近24个月" :value="24" />
             <el-option label="全部" :value="999" />
           </el-select>
+          <span class="filter-hint" style="margin-left: 12px; color: #909399; font-size: 12px">淘汰母猪屠宰等若为「-」可试选「全部」查看历史月份</span>
         </div>
       </div>
 
@@ -285,7 +286,7 @@ const latestMonth = ref<string | null>(null)
 const timeFilter = ref<'all' | 'specific'>('all')
 const dateRange = ref<[Date, Date] | null>(null)
 const selectedCategories = ref<string[]>(['能繁母猪', '新生仔猪', '中大猪存栏'])
-const selectedMonths = ref(10)
+const selectedMonths = ref(24)
 
 // 计算显示的表格
 const showTable1 = computed(() => selectedCategories.value.includes('能繁母猪'))

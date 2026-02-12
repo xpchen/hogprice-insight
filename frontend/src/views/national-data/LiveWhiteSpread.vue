@@ -1,6 +1,6 @@
 <template>
   <div class="live-white-spread-page">
-    <el-card>
+    <el-card class="chart-page-card">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>A6. 毛白价差（全国）</span>
@@ -269,44 +269,45 @@ onMounted(() => {
 
 <style scoped>
 .live-white-spread-page {
-  padding: 20px;
+  padding: 4px;
+}
+
+.live-white-spread-page :deep(.el-card__body) {
+  padding: 4px 6px;
 }
 
 .charts-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px; /* 缩小间距，横向两个图表共用边框 */
-  border: 1px solid #e4e7ed; /* 共用边框 */
+  gap: 4px;
+  border: 1px solid #e4e7ed;
   border-radius: 4px;
-  padding: 16px;
+  padding: 4px;
   background: #fff;
 }
 
 .chart-wrapper {
-  /* 移除单独的边框和背景，因为已经在charts-row中设置了 */
   padding: 0;
 }
 
 .chart-box {
-  /* 图表框：包含标题、图例、图表 */
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .info-box {
-  /* 说明框：无背景色，位于图表框下方 */
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
+  padding-top: 6px;
   background-color: transparent;
 }
 
 .chart-title {
   font-size: 16px;
   font-weight: 500;
-  margin: 0 0 16px 0;
+  margin: 0 0 6px 0;
   color: #303133;
-  text-align: center;
+  text-align: left;
 }
 
 .loading-placeholder {

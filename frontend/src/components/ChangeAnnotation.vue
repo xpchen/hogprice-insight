@@ -5,13 +5,13 @@
       <span v-if="currentChange != null && typeof currentChange === 'number'" class="annotation-item">
         <span class="label">本期涨跌：</span>
         <span :class="['value', currentChange >= 0 ? 'positive' : 'negative']">
-          {{ currentChange >= 0 ? '+' : '' }}{{ currentChange.toFixed(2) }}{{ unit }}
+          {{ currentChange >= 0 ? '+' : '' }}{{ currentChange.toFixed(2) }}{{ displayUnit }}
         </span>
       </span>
       <span v-if="yoyChange != null && typeof yoyChange === 'number'" class="annotation-item">
         <span class="label">较去年同期涨跌：</span>
         <span :class="['value', yoyChange >= 0 ? 'positive' : 'negative']">
-          {{ yoyChange >= 0 ? '+' : '' }}{{ yoyChange.toFixed(2) }}{{ unit }}
+          {{ yoyChange >= 0 ? '+' : '' }}{{ yoyChange.toFixed(2) }}{{ displayUnit }}
         </span>
       </span>
     </div>
@@ -20,19 +20,19 @@
       <span v-if="day5Change != null && typeof day5Change === 'number'" class="annotation-item">
         <span class="label">5日涨跌：</span>
         <span :class="['value', day5Change >= 0 ? 'positive' : 'negative']">
-          {{ day5Change >= 0 ? '+' : '' }}{{ day5Change.toFixed(2) }}{{ unit }}
+          {{ day5Change >= 0 ? '+' : '' }}{{ day5Change.toFixed(2) }}{{ displayUnit }}
         </span>
       </span>
       <span v-if="day10Change != null && typeof day10Change === 'number'" class="annotation-item">
         <span class="label">10日涨跌：</span>
         <span :class="['value', day10Change >= 0 ? 'positive' : 'negative']">
-          {{ day10Change >= 0 ? '+' : '' }}{{ day10Change.toFixed(2) }}{{ unit }}
+          {{ day10Change >= 0 ? '+' : '' }}{{ day10Change.toFixed(2) }}{{ displayUnit }}
         </span>
       </span>
       <span v-if="day30Change != null && typeof day30Change === 'number'" class="annotation-item">
         <span class="label">30日涨跌：</span>
         <span :class="['value', day30Change >= 0 ? 'positive' : 'negative']">
-          {{ day30Change >= 0 ? '+' : '' }}{{ day30Change.toFixed(2) }}{{ unit }}
+          {{ day30Change >= 0 ? '+' : '' }}{{ day30Change.toFixed(2) }}{{ displayUnit }}
         </span>
       </span>
     </div>
@@ -40,14 +40,23 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+
+const props = defineProps<{
   currentChange?: number | null // 本期涨跌
   yoyChange?: number | null // 较去年同期涨跌
   day5Change?: number | null // 5日涨跌
   day10Change?: number | null // 10日涨跌
   day30Change?: number | null // 30日涨跌
-  unit?: string // 单位
+  unit?: string // 单位（如 元/千克、元/公斤、%、头等）
 }>()
+
+// 涨跌显示时去掉 /千克、/公斤，只显示「元」
+const displayUnit = computed(() => {
+  const u = props.unit ?? ''
+  if (u === '元/千克' || u === '元/公斤') return '元'
+  return u
+})
 </script>
 
 <style scoped>
@@ -55,7 +64,7 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 4px; /* 行距缩小 */
-  padding: 8px 0; /* 减少padding */
+  padding: 4px 0;
   /* 移除背景色 */
   background-color: transparent;
   font-size: 14px;

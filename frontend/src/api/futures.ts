@@ -32,6 +32,28 @@ export interface PremiumResponse {
   update_time: string | null
 }
 
+export interface PremiumDataPointV2 {
+  date: string
+  futures_settle: number | null
+  spot_price: number | null
+  premium: number | null
+  premium_ratio?: number | null
+  year?: number | null
+}
+
+export interface PremiumSeriesV2 {
+  contract_month: number
+  contract_name: string
+  region: string
+  data: PremiumDataPointV2[]
+}
+
+export interface PremiumResponseV2 {
+  series: PremiumSeriesV2[]
+  region_premiums: Record<string, number>
+  update_time: string | null
+}
+
 export interface CalendarSpreadDataPoint {
   date: string
   near_contract_settle: number | null
@@ -69,8 +91,8 @@ export interface RegionPremiumResponse {
 export interface VolatilityDataPoint {
   date: string
   close_price: number | null
-  volatility_5d: number | null
-  volatility_10d: number | null
+  volatility: number | null
+  year?: number | null
 }
 
 export interface VolatilitySeries {
@@ -123,13 +145,20 @@ export const futuresApi = {
 
   getVolatility: (params: {
     contract_month?: number
-    min_volatility_5d?: number
-    max_volatility_5d?: number
-    min_volatility_10d?: number
-    max_volatility_10d?: number
+    min_volatility?: number
+    max_volatility?: number
     start_date?: string
     end_date?: string
   }): Promise<VolatilityResponse> => {
     return request.get('/futures/volatility', { params })
+  },
+
+  getPremiumV2: (params: {
+    contract_month?: number
+    region?: string
+    view_type?: string
+    format_type?: string
+  }): Promise<PremiumResponseV2> => {
+    return request.get('/futures/premium/v2', { params })
   }
 }

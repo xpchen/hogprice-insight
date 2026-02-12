@@ -57,11 +57,12 @@ def _parse_date(value: any) -> Optional[date]:
     return None
 
 
-def _get_raw_table_data(db: Session, sheet_name: str) -> Optional[List[List]]:
+def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[List[List]]:
     """获取raw_table数据"""
-    sheet = db.query(RawSheet).join(RawFile).filter(
-        RawSheet.sheet_name == sheet_name
-    ).first()
+    query = db.query(RawSheet).join(RawFile).filter(RawSheet.sheet_name == sheet_name)
+    if filename_pattern:
+        query = query.filter(RawFile.filename.like(f'%{filename_pattern}%'))
+    sheet = query.first()
     
     if not sheet:
         return None
@@ -250,3 +251,74 @@ async def get_yongyi_production_indicators(db: Session = Depends(get_db)):
         indicator_names=list(column_mapping.keys()),
         latest_date=latest_date
     )
+
+
+def _format_a1_cell(val) -> str:
+    """A1 表格单元格格式化：日期 -> yyyy-MM-dd，数字 -> 保留 1 位小数，空 -> 空字符串"""
+    if val is None or val == "":
+        return ""
+    if isinstance(val, (int, float)):
+        if not isinstance(val, bool):
+            return f"{float(val):.1f}"
+        return str(val)
+    if hasattr(val, "isoformat"):
+        return val.strftime("%Y-%m-%d") if hasattr(val, "strftime") else str(val)[:10]
+    s = str(val).strip()
+    if not s:
+        return ""
+    # 日期字符串如 2017-01-01 或 2017-01-01T00:00:00
+    if s[:4].isdigit() and "-" in s:
+        return s.split("T")[0][:10]
+    return s
+
+
+def _is_a1_row_valid(row: list, max_col: int) -> bool:
+    """过滤无效行：整行空或月度列（索引 1）为空且无其他有效数据则视为无效"""
+    if not row:
+        return False
+    padded = (row + [""] * max_col)[:max_col]
+    non_empty = sum(1 for c in padded if c is not None and str(c).strip() != "")
+    if non_empty == 0:
+        return False
+    # 月度在 B 列（索引 1），若存在则更可能是有效数据行
+    return True
+
+
+@router.get("/a1-supply-forecast-table")
+async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
+    """
+    A1供给预测表格（sheet_name: A1供给预测）
+    按 Excel 原样：全表两行表头 + 数据行；月度 yyyy-MM-dd，数字 1 位小数，清理无效行。
+    """
+    table_data = _get_raw_table_data(db, "A1供给预测", "2、【生猪产业数据】")
+    if not table_data or len(table_data) < 2:
+        return {
+            "header_row_0": [],
+            "header_row_1": [],
+            "rows": [],
+            "column_count": 0,
+        }
+    max_col = max(len(table_data[0]), len(table_data[1]), *(len(r) for r in table_data[2:]), 1)
+
+    def pad_row(row, length):
+        r = list(row) if row else []
+        return [r[i] if i < len(r) else "" for i in range(length)]
+
+    row0 = pad_row(table_data[0], max_col)
+    row1 = pad_row(table_data[1], max_col)
+    header_row_0 = [_format_a1_cell(v) or "" for v in row0]
+    header_row_1 = [_format_a1_cell(v) or "" for v in row1]
+
+    rows = []
+    for row_idx in range(2, len(table_data)):
+        row = pad_row(table_data[row_idx], max_col)
+        if not _is_a1_row_valid(row, max_col):
+            continue
+        rows.append([_format_a1_cell(v) for v in row])
+
+    return {
+        "header_row_0": header_row_0,
+        "header_row_1": header_row_1,
+        "rows": rows,
+        "column_count": max_col,
+    }

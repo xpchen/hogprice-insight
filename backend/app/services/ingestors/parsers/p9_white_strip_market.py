@@ -46,6 +46,7 @@ class P9WhiteStripMarketParser(BaseParser):
         # 获取配置
         header_config = sheet_config.get("header", {})
         header_row = header_config.get("header_row", 0)
+        sub_header_row = header_config.get("sub_header_row")  # 可选：第二行表头（如 华宝和牧原白条 sheet 下 华东、河南山东 等）
         metrics_config = sheet_config.get("metrics_from_columns", [])
         sheet_name = sheet_config.get("sheet_name", "")
         
@@ -54,6 +55,15 @@ class P9WhiteStripMarketParser(BaseParser):
             return observations
         
         headers = df.iloc[header_row].tolist()
+        # 每列使用的表头文本：优先第二行表头（非空时），否则用第一行，用于多表头 Excel（如 牧原白条 下 华东、河南山东 等）
+        header_per_col = []
+        sub_row = df.iloc[sub_header_row] if (sub_header_row is not None and sub_header_row < len(df)) else None
+        for col_idx in range(len(headers)):
+            prim = headers[col_idx] if col_idx < len(headers) else None
+            sub = sub_row.iloc[col_idx] if sub_row is not None and col_idx < len(sub_row) else None
+            prim_str = str(prim).strip() if prim is not None and pd.notna(prim) and str(prim).strip() else ""
+            sub_str = str(sub).strip() if sub is not None and pd.notna(sub) and str(sub).strip() else ""
+            header_per_col.append(sub_str if sub_str else prim_str)
         
         # 查找日期列
         date_col_idx = None
@@ -65,17 +75,32 @@ class P9WhiteStripMarketParser(BaseParser):
         if date_col_idx is None:
             return observations
         
-        # 构建列名到指标的映射
+        # 构建列名到指标的映射（每列只映射一个指标；多表头时用 header_per_col 匹配）
         column_metric_map = {}
         for metric_config in metrics_config:
             pattern = metric_config.get("column_pattern", "")
             if not pattern:
                 continue
             
-            # 查找匹配的列
-            for col_idx, col_name in enumerate(headers):
-                if col_name and isinstance(col_name, str):
-                    if pattern in str(col_name):
+            # 查找匹配的列：先在第一行表头找，再在合并后的 header_per_col 找（避免重复占用同一列）
+            for col_idx, col_name in enumerate(header_per_col):
+                if col_idx in column_metric_map:
+                    continue
+                if col_name and pattern in col_name:
+                    column_metric_map[col_idx] = {
+                        "metric_key": metric_config.get("metric_key"),
+                        "metric_name": metric_config.get("metric_name"),
+                        "unit": metric_config.get("unit"),
+                        "tags": metric_config.get("tags", {}),
+                        "metric_group": metric_config.get("metric_group", "white_strip")
+                    }
+                    break
+            else:
+                # 若 header_per_col 未匹配到，再试仅第一行表头（兼容单行表头）
+                for col_idx, col_name in enumerate(headers):
+                    if col_idx in column_metric_map:
+                        continue
+                    if col_name and isinstance(col_name, str) and pattern in str(col_name):
                         column_metric_map[col_idx] = {
                             "metric_key": metric_config.get("metric_key"),
                             "metric_name": metric_config.get("metric_name"),
