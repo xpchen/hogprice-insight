@@ -20,42 +20,50 @@
 
     <el-card class="table-card">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="table-header-row">
           <span>企业仓单统计</span>
-          <el-select
-            v-model="selectedEnterprises"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="筛选企业"
-            size="small"
-            style="width: 280px"
-            @change="loadTableData"
-          >
-            <el-option
-              v-for="e in ENTERPRISE_NAMES"
-              :key="e"
-              :label="e"
-              :value="e"
+          <div class="filters-row">
+            <el-select
+              v-model="selectedEnterprise"
+              placeholder="选择企业"
+              size="small"
+              style="width: 120px"
+              clearable
+            >
+              <el-option
+                v-for="e in ENTERPRISE_NAMES"
+                :key="e"
+                :label="e"
+                :value="e"
+              />
+            </el-select>
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              size="small"
+              style="width: 260px"
+              value-format="YYYY-MM-DD"
             />
-          </el-select>
+            <el-button type="primary" size="small" :loading="tableLoading" @click="queryRaw">查询</el-button>
+          </div>
         </div>
       </template>
-      <el-table :data="tableData.data" stripe border size="small">
-        <el-table-column prop="enterprise" label="企业" width="120" />
-        <el-table-column prop="total" label="企业总量" width="120" align="right">
+      <div v-if="!selectedEnterprise" class="table-tip">请选择企业并选择日期范围后点击「查询」</div>
+      <el-table v-else :data="rawData.rows" stripe border size="small" max-height="480">
+        <el-table-column prop="date" label="日期" width="120" />
+        <el-table-column
+          v-for="col in rawData.columns.slice(1)"
+          :key="col"
+          :prop="'values.' + col"
+          :label="col"
+          width="100"
+          align="right"
+        >
           <template #default="{ row }">
-            {{ row.total != null ? row.total.toLocaleString() : '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="warehouses" label="交割库及数量">
-          <template #default="{ row }">
-            <template v-if="row.warehouses && row.warehouses.length">
-              <span v-for="(w, i) in row.warehouses" :key="i">
-                {{ w.name }}{{ w.quantity != null ? `: ${w.quantity}` : '' }}{{ i < row.warehouses.length - 1 ? '；' : '' }}
-              </span>
-            </template>
-            <span v-else>-</span>
+            {{ row.values[col] != null ? Number(row.values[col]).toLocaleString() : '-' }}
           </template>
         </el-table-column>
       </el-table>
@@ -66,9 +74,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
-import { futuresApi, type WarehouseReceiptChartResponse, type WarehouseReceiptTableResponse } from '@/api/futures'
+import { futuresApi, type WarehouseReceiptChartResponse, type WarehouseReceiptRawResponse } from '@/api/futures'
 
-const ENTERPRISE_NAMES = ['德康', '牧原', '中粮', '神农', '富之源', '扬翔']
+const ENTERPRISE_NAMES = ['德康', '中粮', '神农', '富之源', '扬翔', '牧原']
 
 const chartLoading = ref(false)
 const tableLoading = ref(false)
@@ -78,8 +86,9 @@ const chartData = ref<WarehouseReceiptChartResponse>({
   date_range: { start: null, end: null },
   top2_enterprises: []
 })
-const tableData = ref<WarehouseReceiptTableResponse>({ data: [], enterprises: ENTERPRISE_NAMES })
-const selectedEnterprises = ref<string[]>(ENTERPRISE_NAMES)
+const selectedEnterprise = ref<string>('德康')
+const dateRange = ref<[string, string] | null>(null)
+const rawData = ref<WarehouseReceiptRawResponse>({ enterprise: '', columns: [], rows: [] })
 let chartInstance: echarts.ECharts | null = null
 
 const loadChartData = async () => {
@@ -96,15 +105,19 @@ const loadChartData = async () => {
   }
 }
 
-const loadTableData = async () => {
+const queryRaw = async () => {
+  if (!selectedEnterprise.value) return
   tableLoading.value = true
   try {
-    const result = await futuresApi.getWarehouseReceiptTable({
-      enterprises: selectedEnterprises.value.length ? selectedEnterprises.value.join(',') : undefined
+    const [start_date, end_date] = dateRange.value || [undefined, undefined]
+    const result = await futuresApi.getWarehouseReceiptRaw({
+      enterprise: selectedEnterprise.value,
+      start_date: start_date || undefined,
+      end_date: end_date || undefined
     })
-    tableData.value = result
+    rawData.value = result
   } catch (e) {
-    console.error('加载企业仓单表格失败:', e)
+    console.error('加载企业仓单原始数据失败:', e)
   } finally {
     tableLoading.value = false
   }
@@ -194,7 +207,7 @@ const handleResize = () => chartInstance?.resize()
 
 onMounted(() => {
   loadChartData()
-  loadTableData()
+  if (selectedEnterprise.value) queryRaw()
   window.addEventListener('resize', handleResize)
 })
 
@@ -216,6 +229,28 @@ onUnmounted(() => {
   :deep(.el-card__body) {
     padding: 8px 12px;
   }
+}
+
+.table-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filters-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table-tip {
+  color: #909399;
+  padding: 24px;
+  text-align: center;
+  font-size: 14px;
 }
 
 .chart {

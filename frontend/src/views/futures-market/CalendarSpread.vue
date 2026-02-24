@@ -100,9 +100,9 @@ const errorMessage = ref<string>('')
 const chartInstances = new Map<string, echarts.ECharts>()
 const chartRefs = new Map<string, HTMLDivElement>()
 
-// 03-05 -> 3-5
+// 保留两位月份显示，如 03-05、11-01（不要 11-1）
 const getChartTitle = (spreadName: string) => {
-  return spreadName.replace(/^0(\d)-0(\d)价差$/, '$1-$2').replace(/^0(\d)-(\d+)价差$/, '$1-$2').replace(/^(\d+)-0(\d)价差$/, '$1-$2').replace(/价差$/, '') || spreadName.replace('价差', '')
+  return spreadName.replace(/价差$/, '')
 }
 
 const setChartRef = (key: string, el: HTMLDivElement | null) => {
@@ -178,9 +178,10 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
   const years = Array.from(yearMap.keys()).sort()
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
 
-  const seriesOpt: any[] = years.map((year, i) => ({
+  const spreadSeriesList: any[] = years.map((year, i) => ({
     name: `${year}年`,
     type: 'line',
+    yAxisIndex: 0,
     data: yearMap.get(year)!.map(d => [d.date, d.spread]),
     lineStyle: { color: colors[i % colors.length] },
     symbol: 'circle',
@@ -188,10 +189,27 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
     smooth: true,
     connectNulls: true
   }))
+  // 用结算价数据驱动右侧 Y 轴刻度，系列不显示、不参与图例和 tooltip
+  const settleData = series.data.map(d => [d.date, d.near_contract_settle ?? d.far_contract_settle ?? null])
+  const hasSettle = settleData.some(([, v]) => v != null && Number.isFinite(v))
+  const seriesOpt: any[] = [
+    ...spreadSeriesList,
+    ...(hasSettle ? [{
+      name: '__结算价轴__',
+      type: 'line' as const,
+      yAxisIndex: 1,
+      data: settleData,
+      lineStyle: { opacity: 0 },
+      symbol: 'none',
+      symbolSize: 0,
+      connectNulls: true,
+      legendHoverLink: false
+    }] : [])
+  ]
 
   chart.setOption({
     title: { text: `${getChartTitle(series.spread_name)}合约价差`, left: 'left', top: 8 },
-    legend: { data: seriesOpt.map(s => s.name), top: 36, left: 'left', type: 'plain', icon: 'circle', itemWidth: 10, itemHeight: 10, itemGap: 18 },
+    legend: { data: spreadSeriesList.map(s => s.name), top: 36, left: 'left', type: 'plain', icon: 'circle', itemWidth: 10, itemHeight: 10, itemGap: 18 },
     grid: { left: '3%', right: '4%', bottom: '15%', top: '22%', containLabel: true },
     tooltip: {
       trigger: 'axis',
@@ -200,13 +218,18 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
         if (!Array.isArray(p)) return ''
         let r = `<div><strong>${p[0].axisValue}</strong></div>`
         p.forEach((x: any) => {
-          if (x.value != null) r += `<div>${x.seriesName}: <strong>${Number(x.value).toFixed(2)}</strong> 元/公斤</div>`
+          if (x.seriesName === '__结算价轴__') return
+          const v = x.value
+          if (v != null && v !== '' && Number.isFinite(Number(v))) r += `<div>${x.seriesName}: <strong>${Number(v).toFixed(2)}</strong> 元/公斤</div>`
         })
         return r
       }
     },
     xAxis: { type: 'time', boundaryGap: false },
-    yAxis: { type: 'value', name: '价差(元/公斤)', axisLabel: { formatter: axisLabelDecimalFormatter } },
+    yAxis: [
+      { type: 'value', name: '价差(元/公斤)', position: 'left', axisLabel: { formatter: axisLabelDecimalFormatter } },
+      { type: 'value', name: '结算价(元/公斤)', position: 'right', axisLabel: { formatter: axisLabelDecimalFormatter } }
+    ],
     series: seriesOpt,
     dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }]
   })
@@ -245,20 +268,50 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
   })
 
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
-  const seriesOpt: any[] = Array.from(seasonalMap.keys()).sort().map((sy, i) => ({
+  const seasonalYears = Array.from(seasonalMap.keys()).sort()
+  const spreadSeriesList: any[] = seasonalYears.map((sy, i) => ({
     name: sy,
     type: 'line',
+    yAxisIndex: 0,
     data: categories.map(c => seasonalMap.get(sy)!.get(c) ?? null),
     lineStyle: { color: colors[i % colors.length] },
     symbol: 'circle',
     symbolSize: 4,
     smooth: true,
-    connectNulls: true  // 跨空值连线，避免断连
+    connectNulls: true
   }))
+  // 结算价按 mmdd 汇总以驱动右侧 Y 轴（近月/远月任取有值），系列不显示
+  const settleByCat = new Map<string, number[]>()
+  categories.forEach(c => { settleByCat.set(c, []) })
+  series.data.forEach(d => {
+    const date = new Date(d.date)
+    const mmdd = `${(date.getMonth() + 1).toString().padStart(2, '0')}${date.getDate().toString().padStart(2, '0')}`
+    const v = d.near_contract_settle ?? d.far_contract_settle
+    if (v != null && Number.isFinite(v) && settleByCat.has(mmdd)) settleByCat.get(mmdd)!.push(v)
+  })
+  const settleAvg = categories.map(c => {
+    const arr = settleByCat.get(c)!
+    return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null
+  })
+  const hasSettle = settleAvg.some(v => v != null)
+  const seriesOpt: any[] = [
+    ...spreadSeriesList,
+    ...(hasSettle ? [{
+      name: '__结算价轴__',
+      type: 'line' as const,
+      yAxisIndex: 1,
+      data: settleAvg,
+      lineStyle: { opacity: 0 },
+      symbol: 'none',
+      symbolSize: 0,
+      connectNulls: true,
+      legendHoverLink: false
+    }] : [])
+  ]
 
   chart.setOption({
     title: { text: `${getChartTitle(series.spread_name)}合约价差`, left: 'left', top: 8 },
-    legend: { data: seriesOpt.map(s => s.name), top: 36, left: 'left', type: 'plain', icon: 'circle', itemWidth: 10, itemHeight: 10, itemGap: 18 },
+    legend: { data: spreadSeriesList.map(s => s.name), top: 36, left: 'left', type: 'plain', icon: 'circle', itemWidth: 10, itemHeight: 10, itemGap: 18 },
     grid: { left: '3%', right: '4%', bottom: '18%', top: '22%', containLabel: true },
     tooltip: {
       trigger: 'axis',
@@ -267,7 +320,9 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
         if (!Array.isArray(p)) return ''
         let r = `<div><strong>${p[0].axisValue}</strong></div>`
         p.forEach((x: any) => {
-          if (x.value != null) r += `<div>${x.seriesName}: <strong>${Number(x.value).toFixed(2)}</strong> 元/公斤</div>`
+          if (x.seriesName === '__结算价轴__') return
+          const v = x.value
+          if (v != null && v !== '' && Number.isFinite(Number(v))) r += `<div>${x.seriesName}: <strong>${Number(v).toFixed(2)}</strong> 元/公斤</div>`
         })
         return r
       }
@@ -278,7 +333,10 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
       boundaryGap: false,
       axisLabel: { rotate: 45, formatter: (v: string) => v.length >= 4 ? `${v.slice(0, 2)}/${v.slice(2)}` : v }
     },
-    yAxis: { type: 'value', name: '价差(元/公斤)', axisLabel: { formatter: axisLabelDecimalFormatter } },
+    yAxis: [
+      { type: 'value', name: '价差(元/公斤)', position: 'left', axisLabel: { formatter: axisLabelDecimalFormatter } },
+      { type: 'value', name: '结算价(元/公斤)', position: 'right', axisLabel: { formatter: axisLabelDecimalFormatter } }
+    ],
     series: seriesOpt,
     dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }]
   })

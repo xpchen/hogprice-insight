@@ -235,85 +235,90 @@ const renderCharts = () => {
   }
 }
 
+// X月合约季节性区间：(X+1)月1日至(X-1)月最后日。03合约为4月1日～次年2月29日，2203即21年4月1日～22年2月29日；图例显示合约年+1
+function getContractYear(dateStr: string, contractMonth: number): number {
+  const d = new Date(dateStr)
+  const month = d.getMonth() + 1
+  const year = d.getFullYear()
+  const startMonth = contractMonth === 1 ? 2 : (contractMonth + 1) > 12 ? 1 : contractMonth + 1
+  const endMonth = contractMonth - 1 <= 0 ? 12 : contractMonth - 1
+  if (startMonth > endMonth) {
+    if (month >= startMonth && month <= 12) return year + 1
+    if (month >= 1 && month <= endMonth) return year
+    return year + 1
+  }
+  if (month >= startMonth && month <= endMonth) return contractMonth === 1 ? year + 1 : year
+  return year
+}
+function getDisplayYear(contractYear: number): number {
+  return contractYear + 1
+}
+
 // 渲染全部日期图
 const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['series'][0]) => {
   const key = `all-${series.contract_month}`
-  
-  // 销毁旧实例
-  if (chartInstances.has(key)) {
-    chartInstances.get(key)?.dispose()
-  }
-  
+  if (chartInstances.has(key)) chartInstances.get(key)?.dispose()
   const chartInstance = echarts.init(el)
   chartInstances.set(key, chartInstance)
-  
-  // 按年份分组数据
+
+  const contractMonth = series.contract_month
   const yearMap = new Map<number, Array<typeof series.data[0]>>()
   series.data.forEach(point => {
-    const year = point.year || new Date(point.date).getFullYear()
-    if (!yearMap.has(year)) {
-      yearMap.set(year, [])
-    }
-    yearMap.get(year)!.push(point)
+    const contractYear = getContractYear(point.date, contractMonth)
+    if (!yearMap.has(contractYear)) yearMap.set(contractYear, [])
+    yearMap.get(contractYear)!.push(point)
   })
-  
   const years = Array.from(yearMap.keys()).sort()
   const colors = [
     '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
     '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3'
   ]
-  
+
   const seriesData: any[] = []
-  
-  // 现货价格（所有年份共用一条线）
+  const spotColor = '#409EFF'
   seriesData.push({
     name: '现货价格',
     type: 'line',
     data: series.data.map(d => [d.date, d.spot_price]),
     yAxisIndex: 0,
-    lineStyle: { color: '#999', type: 'dashed' },
+    lineStyle: { color: spotColor, type: 'dashed' },
+    itemStyle: { color: spotColor },
     symbol: 'none',
     connectNulls: true
   })
-  
-  // 每个年份的合约价格和升贴水
-  years.forEach((year, idx) => {
-    const yearData = yearMap.get(year)!
+
+  years.forEach((contractYear, idx) => {
+    const yearData = yearMap.get(contractYear)!
+    const displayYear = getDisplayYear(contractYear)
     const color = colors[idx % colors.length]
-    
-    // 合约价格（期货结算价）
     seriesData.push({
-      name: `${year}年合约价格`,
+      name: `${displayYear}年合约价格`,
       type: 'line',
       data: yearData.map(d => [d.date, d.futures_settle]),
       yAxisIndex: 0,
       lineStyle: { color },
+      itemStyle: { color },
       symbol: 'circle',
       symbolSize: 4,
       smooth: true,
       connectNulls: true
     })
-    
-    // 升贴水
     seriesData.push({
-      name: `${year}年升贴水`,
+      name: `${displayYear}年升贴水`,
       type: 'line',
       data: yearData.map(d => [d.date, d.premium]),
-      yAxisIndex: 0,
+      yAxisIndex: 1,
       lineStyle: { color, type: 'dashed' },
+      itemStyle: { color },
       symbol: 'circle',
       symbolSize: 4,
       smooth: true,
       connectNulls: true
     })
   })
-  
+
   const option: echarts.EChartsOption = {
-    title: {
-      text: `${series.contract_name}的升贴水`,
-      left: 'left',
-      top: 8
-    },
+    title: { text: `${series.contract_name}的升贴水`, left: 'left', top: 8 },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
@@ -323,7 +328,7 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
         params.forEach((param: any) => {
           if (param.value !== null && param.value !== undefined) {
             const value = typeof param.value === 'number' ? param.value.toFixed(2) : param.value
-            const unit = '元/公斤'
+            const unit = param.seriesName?.includes('升贴水') ? '元/公斤' : '元/公斤'
             result += `<div style="margin: 2px 0;">
               <span style="display: inline-block; width: 10px; height: 10px; background-color: ${param.color}; margin-right: 5px;"></span>
               ${param.seriesName}: <strong>${value}${unit}</strong>
@@ -343,24 +348,11 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       itemHeight: 10,
       itemGap: 18
     },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '15%',
-      top: '22%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'time',
-      boundaryGap: false
-    },
+    grid: { left: '3%', right: '4%', bottom: '15%', top: '22%', containLabel: true },
+    xAxis: { type: 'time', boundaryGap: false },
     yAxis: [
-      {
-        type: 'value',
-        name: '价格',
-        position: 'left',
-        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
-      },
+      { type: 'value', name: '价格', position: 'left', axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } },
+      { type: 'value', name: '升贴水', position: 'right', axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } }
     ],
     series: seriesData,
     dataZoom: [
@@ -368,7 +360,6 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }
     ]
   }
-  
   chartInstance.setOption(option, true)
   window.addEventListener('resize', () => chartInstance.resize())
 }
@@ -376,45 +367,33 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
 // 渲染季节性图（升贴水比率）
 const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['series'][0]) => {
   const key = `seasonal-${series.contract_month}`
-  
-  // 销毁旧实例
-  if (chartInstances.has(key)) {
-    chartInstances.get(key)?.dispose()
-  }
-  
+  if (chartInstances.has(key)) chartInstances.get(key)?.dispose()
   const chartInstance = echarts.init(el)
   chartInstances.set(key, chartInstance)
-  
-  // 按年份分组数据
+
+  const contractMonth = series.contract_month
   const yearMap = new Map<number, Array<typeof series.data[0]>>()
   series.data.forEach(point => {
-    const year = point.year || new Date(point.date).getFullYear()
-    if (!yearMap.has(year)) {
-      yearMap.set(year, [])
-    }
-    yearMap.get(year)!.push(point)
+    const contractYear = getContractYear(point.date, contractMonth)
+    if (!yearMap.has(contractYear)) yearMap.set(contractYear, [])
+    yearMap.get(contractYear)!.push(point)
   })
-  
   const years = Array.from(yearMap.keys()).sort()
   const colors = [
     '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
     '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3'
   ]
-  
-  // 获取所有日期（MM-DD格式），季节性图日期从4月1日到2月28日
+
   const dateSet = new Set<string>()
   series.data.forEach(d => {
     const date = new Date(d.date)
     const month = date.getMonth() + 1
     const day = date.getDate()
-    // 只包含4月1日到2月28日的数据
     if ((month === 4 && day >= 1) || (month > 4 && month <= 12) || (month >= 1 && month <= 2 && day <= 28)) {
-      const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-      dateSet.add(monthDay)
+      dateSet.add(`${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`)
     }
   })
   const categories = Array.from(dateSet).sort((a, b) => {
-    // 排序：4月1日-12月31日，然后1月1日-2月28日
     const [aMonth, aDay] = a.split('-').map(Number)
     const [bMonth, bDay] = b.split('-').map(Number)
     const aOrder = aMonth >= 4 ? aMonth : aMonth + 12
@@ -422,28 +401,24 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     if (aOrder !== bOrder) return aOrder - bOrder
     return aDay - bDay
   })
-  
+
   const seriesData: any[] = []
-  
-  years.forEach((year, idx) => {
-    const yearData = yearMap.get(year)!
+  years.forEach((contractYear, idx) => {
+    const yearData = yearMap.get(contractYear)!
+    const displayYear = getDisplayYear(contractYear)
     const color = colors[idx % colors.length]
     const dataMap = new Map<string, number | null>()
-    
     yearData.forEach(d => {
       const date = new Date(d.date)
-      const month = date.getMonth() + 1
-      const day = date.getDate()
-      const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-      // 显示升贴水比率
-      dataMap.set(monthDay, d.premium_ratio)
+      const monthDay = `${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`
+      dataMap.set(monthDay, d.premium_ratio ?? null)
     })
-    
     seriesData.push({
-      name: `${year}年`,
+      name: `${displayYear}年`,
       type: 'line',
-      data: categories.map(cat => dataMap.get(cat) || null),
+      data: categories.map(cat => dataMap.get(cat) ?? null),
       lineStyle: { color },
+      itemStyle: { color },
       symbol: 'circle',
       symbolSize: 4,
       smooth: true,

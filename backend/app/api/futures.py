@@ -847,7 +847,7 @@ def get_spread_date_range(near_month: int, far_month: int, year: Optional[int] =
     """
     获取月间价差的时间范围
     X-Y价差，时间从Y的次月1日到X的前一月的最后一日
-    例如：03-05价差（近月03、远月05），日期从6月1日到次年2月28日
+    例如：03-05价差（近月03、远月05），日期从6月1日到次年2月28日；01-03价差为当年4月1日到12月31日
     
     Args:
         near_month: 近月月份（X），如 3
@@ -859,32 +859,26 @@ def get_spread_date_range(near_month: int, far_month: int, year: Optional[int] =
     """
     if year is None:
         year = datetime.now().year
-    
-    # 开始日期：Y的次月1日（远月的次月1日）
+
+    # 开始：Y的次月1日
     start_month = far_month + 1
     start_year = year
     if start_month > 12:
         start_month = 1
         start_year = year + 1
-    
-    # 结束日期：X的前一月的最后一日（近月的前一月最后一日）
+
+    # 结束：X的前一月最后一日；若结束月 < 开始月表示跨年，结束在次年
     end_month = near_month - 1
-    end_year = year
     if end_month < 1:
         end_month = 12
-        end_year = year - 1
-    
-    # 获取月份的最后一天
+    end_year = year + 1 if end_month < start_month else year
+
     if end_month == 12:
-        next_month = 1
-        next_year = end_year + 1
+        next_month, next_year = 1, end_year + 1
     else:
-        next_month = end_month + 1
-        next_year = end_year
-    
+        next_month, next_year = end_month + 1, end_year
     start_date = date(start_year, start_month, 1)
     end_date = date(next_year, next_month, 1) - timedelta(days=1)
-    
     return start_date, end_date
 
 
@@ -964,13 +958,14 @@ async def get_calendar_spread(
             if not date_obj:
                 continue
             
-            # 检查日期是否在价差的时间范围内
+            # 检查日期是否在价差的时间范围内（X-Y 价差：Y 次月 1 日 ～ X 前一月最后一日，跨年）
             start_date, end_date = get_spread_date_range(near_month, far_month, date_obj.year)
             if date_obj < start_date or date_obj > end_date:
-                # 如果不在当前年份范围内，尝试下一年
                 start_date_next, end_date_next = get_spread_date_range(near_month, far_month, date_obj.year + 1)
                 if date_obj < start_date_next or date_obj > end_date_next:
-                    continue
+                    start_date_prev, end_date_prev = get_spread_date_range(near_month, far_month, date_obj.year - 1)
+                    if date_obj < start_date_prev or date_obj > end_date_prev:
+                        continue
             
             try:
                 if near_val is not None and near_val != "":
@@ -986,32 +981,28 @@ async def get_calendar_spread(
         # 找出两个合约都存在的日期
         common_dates = sorted(set(near_futures_data.keys()) & set(far_futures_data.keys()))
         
-        # 构建数据点
+        # 构建数据点（无数据也返回该价差，保证 6 个图表位格式一致）
         data_points = []
         for trade_date in common_dates:
             near_settle = near_futures_data.get(trade_date)
             far_settle = far_futures_data.get(trade_date)
-            
             spread = None
             if near_settle is not None and far_settle is not None:
                 spread = far_settle - near_settle
-            
             data_points.append(CalendarSpreadDataPoint(
                 date=trade_date.isoformat(),
                 near_contract_settle=near_settle,
                 far_contract_settle=far_settle,
                 spread=spread
             ))
-        
-        if data_points:
-            near_month_str = f"{near_month:02d}"
-            far_month_str = f"{far_month:02d}"
-            all_series.append(CalendarSpreadSeries(
-                spread_name=f"{near_month_str}-{far_month_str}价差",
-                near_month=near_month,
-                far_month=far_month,
-                data=data_points
-            ))
+        near_month_str = f"{near_month:02d}"
+        far_month_str = f"{far_month:02d}"
+        all_series.append(CalendarSpreadSeries(
+            spread_name=f"{near_month_str}-{far_month_str}价差",
+            near_month=near_month,
+            far_month=far_month,
+            data=data_points
+        ))
     
     return CalendarSpreadResponse(series=all_series)
 
@@ -1141,47 +1132,43 @@ class VolatilityResponse(BaseModel):
 
 def calculate_volatility(prices: List[float], current_idx: int, window_days: int = 10) -> Optional[float]:
     """
-    计算波动率
-    
-    根据需求：
-    （1）计算收益率：收益率=ln（当日价格/N日前价格），N=5或10
-    （2）从第(2*N)天开始，计算过去N天收益率的标准差
-    （3）波动率=标准差*（根号252）
-    
-    Args:
-        prices: 价格列表（按时间顺序）
-        current_idx: 当前价格在列表中的索引
-        window_days: 5或10，对应5日/10日波动率
-    
-    Returns:
-        年化波动率（百分比），如果数据不足则返回None
+    计算波动率（以10日为例）：
+    （1）从第11天开始，收益率 = ln(当日价格/10日前价格)
+    （2）从第21天开始，计算过去10天收益率的标准差
+    （3）波动率 = 标准差 * sqrt(252)
     """
     n = window_days
-    # 需要至少 2*n 个数据点（n个收益率 + n个用于标准差）
-    if current_idx < 2 * n - 1:
+    # 第21天才有第一个波动率（需 2n 个价格：0..2n-1，即索引 2n-1 为第 2n 天）
+    if current_idx < 2 * n:
         return None
-    
-    # 收益率 = ln(当日价格 / N日前价格)，从第n天开始
+    # 收益率：从第 n 天到当前，共 current_idx - n + 1 个
     returns = []
     for i in range(n, current_idx + 1):
-        if i >= len(prices) or prices[i] is None or prices[i-n] is None:
+        if i >= len(prices) or prices[i] is None or prices[i - n] is None:
             continue
-        if prices[i-n] > 0 and prices[i] > 0:
-            log_return = math.log(prices[i] / prices[i-n])
-            returns.append(log_return)
-    
+        if prices[i - n] > 0 and prices[i] > 0:
+            returns.append(math.log(prices[i] / prices[i - n]))
     if len(returns) < n:
         return None
-    
     recent_returns = returns[-n:]
     if len(recent_returns) < 2:
         return None
-    
     mean_return = sum(recent_returns) / len(recent_returns)
     variance = sum((r - mean_return) ** 2 for r in recent_returns) / (len(recent_returns) - 1)
     std_dev = math.sqrt(variance)
-    annualized_vol = std_dev * math.sqrt(252) * 100  # 年化，百分比
-    return annualized_vol
+    return std_dev * math.sqrt(252) * 100
+
+
+# 波动率与月间价差、升贴水 V2 同源：4.1、生猪期货升贴水数据（盘面结算价）.xlsx → sheet「期货结算价(1月交割连续)_生猪」
+VOLATILITY_EXCEL_SHEET = "期货结算价(1月交割连续)_生猪"
+VOLATILITY_EXCEL_FILENAME = "4.1、生猪期货升贴水数据"
+VOLATILITY_CONTRACT_COL_MAP = {1: 1, 3: 2, 5: 3, 7: 4, 9: 5, 11: 6}  # B=01, C=03, D=05, E=07, F=09, G=11
+
+
+def _date_to_contract_year(d: date, contract_month: int) -> int:
+    """日期 d 在合约月份 contract_month 的季节区间内对应的合约年。"""
+    start_month = (contract_month + 1) if contract_month < 12 else 1
+    return d.year + 1 if d.month >= start_month else d.year
 
 
 @router.get("/volatility", response_model=VolatilityResponse)
@@ -1196,95 +1183,105 @@ async def get_volatility(
     db: Session = Depends(get_db)
 ):
     """
-    获取波动率数据
-    
-    计算波动率（5日或10日）：
-    （1）收益率=ln（当日价格/N日前价格），N=5或10
-    （2）从第2N天开始，计算过去N天收益率的标准差
-    （3）波动率=标准差*√252
+    获取波动率数据。数据来源与升贴水、月间价差一致：4.1、生猪期货升贴水数据（盘面结算价）.xlsx。
+    （1）收益率：从第11天起，收益率=ln(当日价格/10日前价格)
+    （2）从第21天起，计算过去10天收益率的标准差
+    （3）波动率=标准差*sqrt(252)
+    按合约月份（03/05/07等）分年计算，返回季节性多曲线图所需数据。
     """
+    excel_data = _get_raw_table_data(db, VOLATILITY_EXCEL_SHEET, VOLATILITY_EXCEL_FILENAME)
+    if not excel_data or len(excel_data) < 4:
+        raise HTTPException(status_code=404, detail="未找到波动率数据，请先导入 4.1、生猪期货升贴水数据（盘面结算价）.xlsx")
+
     contract_months = [contract_month] if contract_month else [1, 3, 5, 7, 9, 11]
-    
     all_series = []
-    
+    min_required = 2 * window_days + 1
+
     for month in contract_months:
-        month_str = f"{month:02d}"
-        
-        # 查询该月份的所有合约数据
-        query = db.query(FactFuturesDaily).filter(
-            FactFuturesDaily.contract_code.like(f"%{month_str}")
-        )
-        
-        if start_date:
-            query = query.filter(FactFuturesDaily.trade_date >= start_date)
-        if end_date:
-            query = query.filter(FactFuturesDaily.trade_date <= end_date)
-        
-        futures_data = query.order_by(FactFuturesDaily.trade_date).all()
-        
-        if not futures_data:
+        if month not in VOLATILITY_CONTRACT_COL_MAP:
             continue
-        
-        # 按日期分组，合并不同年份的同月份合约
-        date_dict: Dict[date, List[FactFuturesDaily]] = {}
-        for f in futures_data:
-            if f.trade_date not in date_dict:
-                date_dict[f.trade_date] = []
-            date_dict[f.trade_date].append(f)
-        
-        # 按日期排序，构建价格序列
-        sorted_dates = sorted(date_dict.keys())
-        prices = []
-        dates = []
-        
-        contract_records = []  # 保存每日的合约记录，用于 settle、OI
-        for trade_date in sorted_dates:
-            contracts = date_dict[trade_date]
-            best_contract = max(contracts, key=lambda x: x.open_interest or 0)
-            close_price = float(best_contract.close) if best_contract.close else None
-            settle_price = float(best_contract.settle) if best_contract.settle else close_price
-            prices.append(close_price)
-            dates.append(trade_date)
-            contract_records.append((best_contract, settle_price))
-        
-        # 计算每个日期的波动率
-        # 根据需求：从第11天开始计算收益率，从第21天开始计算标准差
-        data_points = []
-        for i in range(len(prices)):
-            if prices[i] is None:
+        col_idx = VOLATILITY_CONTRACT_COL_MAP[month]
+        month_str = f"{month:02d}"
+        # 从 Excel 读取该合约列：(日期, 价格)，并赋予合约年
+        date_price_year: List[tuple] = []
+        for row_idx in range(3, len(excel_data)):
+            row = excel_data[row_idx]
+            if len(row) <= col_idx:
                 continue
-            trade_date = dates[i]
-            # 季节性图：仅保留合约季节性范围内的日期（如03合约：4月1日-2月28日）
-            if not is_in_seasonal_range(trade_date, month):
+            date_val = row[0] if len(row) > 0 else None
+            price_val = row[col_idx] if len(row) > col_idx else None
+            if not date_val:
                 continue
-            
-            volatility = calculate_volatility(prices, i, window_days)
-            if min_volatility is not None and volatility is not None and volatility < min_volatility:
+            date_obj = _parse_excel_date(date_val)
+            if not date_obj:
                 continue
-            if max_volatility is not None and volatility is not None and volatility > max_volatility:
+            if start_date and date_obj < start_date:
                 continue
-            
-            best_contract, settle_price = contract_records[i]
-            oi = int(best_contract.open_interest) if best_contract.open_interest else None
-            
-            data_points.append(VolatilityDataPoint(
-                date=trade_date.isoformat(),
-                close_price=prices[i],
-                settle_price=round(settle_price, 2) if settle_price else None,
-                open_interest=oi,
-                volatility=round(volatility, 2) if volatility else None,
-                year=trade_date.year
-            ))
-        
-        if data_points:
-            # 获取合约代码（使用最新的合约）
-            latest_contract = max(date_dict[sorted_dates[-1]], key=lambda x: x.open_interest or 0)
+            if end_date and date_obj > end_date:
+                continue
+            if not is_in_seasonal_range(date_obj, month):
+                continue
+            try:
+                if price_val is None or price_val == "":
+                    continue
+                price = float(price_val)
+                if price <= 0:
+                    continue
+            except (ValueError, TypeError):
+                continue
+            cy = _date_to_contract_year(date_obj, month)
+            date_price_year.append((date_obj, price, cy))
+
+        if not date_price_year:
+            continue
+        date_price_year.sort(key=lambda x: x[0])
+
+        # 按合约年分组，每组内按日期排序后计算波动率
+        by_year: Dict[int, List[tuple]] = {}
+        for d, p, cy in date_price_year:
+            if cy not in by_year:
+                by_year[cy] = []
+            by_year[cy].append((d, p))
+        for cy in by_year:
+            by_year[cy].sort(key=lambda x: x[0])
+
+        month_data_points: List[VolatilityDataPoint] = []
+        for cy in sorted(by_year.keys()):
+            points = by_year[cy]
+            if len(points) < min_required:
+                continue
+            dates = [p[0] for p in points]
+            prices = [p[1] for p in points]
+            for i in range(len(prices)):
+                if prices[i] is None or prices[i] <= 0:
+                    continue
+                trade_date = dates[i]
+                vol = calculate_volatility(prices, i, window_days)
+                if vol is None:
+                    continue
+                if min_volatility is not None and vol < min_volatility:
+                    continue
+                if max_volatility is not None and vol > max_volatility:
+                    continue
+                # Excel 列为元/吨，统一转为元/公斤（与升贴水一致）
+                price_kg = round(prices[i] / 1000.0, 2)
+                month_data_points.append(VolatilityDataPoint(
+                    date=trade_date.isoformat(),
+                    close_price=price_kg,
+                    settle_price=price_kg,
+                    open_interest=None,
+                    volatility=round(vol, 2),
+                    year=cy,
+                ))
+
+        if month_data_points:
+            month_data_points.sort(key=lambda x: x.date)
             all_series.append(VolatilitySeries(
-                contract_code=latest_contract.contract_code,
+                contract_code=f"lh{month_str}",
                 contract_month=month,
-                data=data_points
+                data=month_data_points,
             ))
-    
+
     return VolatilityResponse(series=all_series)
 
 
@@ -1323,6 +1320,29 @@ class WarehouseReceiptTableRow(BaseModel):
 class WarehouseReceiptTableResponse(BaseModel):
     data: List[WarehouseReceiptTableRow]
     enterprises: List[str]
+
+
+# 企业名 -> 表头关键词与展示列名：(关键词, 展示名)，按顺序；首项一般为总量
+# 例：DCE：猪：注册仓单：德康农牧库（日）-> 德康，常熟德康（德康农牧）库 -> 常熟
+WAREHOUSE_ENTERPRISE_HEADERS = {
+    "德康": [("德康农牧库", "德康"), ("常熟德康", "常熟"), ("江安德康", "江安"), ("泸州德康", "泸州"), ("泗阳德康", "泗阳"), ("渠县德康", "渠县")],
+    "牧原": [("牧原", "牧原")],
+    "中粮": [("中粮", "中粮")],
+    "神农": [("神农", "神农")],
+    "富之源": [("富之源", "富之源")],
+    "扬翔": [("扬翔", "扬翔")],
+}
+
+
+class WarehouseReceiptRawRow(BaseModel):
+    date: str
+    values: Dict[str, Optional[float]] = {}  # 列展示名 -> 数值
+
+
+class WarehouseReceiptRawResponse(BaseModel):
+    enterprise: str
+    columns: List[str]  # ['日期', '德康', '常熟', ...]
+    rows: List[WarehouseReceiptRawRow]
 
 
 def _parse_warehouse_receipt_value(v: Any) -> Optional[float]:
@@ -1443,3 +1463,129 @@ async def get_warehouse_receipt_table(
         val = latest_ent.get(name)
         rows.append(WarehouseReceiptTableRow(enterprise=name, total=val, warehouses=[]))
     return WarehouseReceiptTableResponse(data=rows, enterprises=ENTERPRISE_NAMES)
+
+
+def _short_label_from_header(header_str: str, enterprise: str) -> str:
+    """
+    从表头文案提取简短列名。如 常熟德康（德康农牧）库 -> 常熟；中粮华东库 -> 华东。
+    """
+    s = str(header_str).strip()
+    for prefix in ("DCE：猪：注册仓单：", "注册仓单：", "DCE："):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    for suffix in ("（日）", "(日)", "（月）", "(月)"):
+        if suffix in s:
+            s = s.split(suffix)[0].strip()
+    if "（" in s:
+        s = s.split("（")[0].strip()
+    if "(" in s:
+        s = s.split("(")[0].strip()
+    s = s.rstrip("库").strip()
+    if enterprise in s:
+        before = s.split(enterprise)[0].strip()
+        after = s.split(enterprise)[-1].strip() if enterprise in s else ""
+        if before and len(before) <= 4:
+            return before
+        if after and len(after) <= 4:
+            return after
+        if before:
+            return before[:4]
+        if after:
+            return after[:4]
+    return s[:6] if len(s) > 6 else (s or enterprise)
+
+
+def _find_warehouse_columns_for_enterprise(header_row: List[Any], enterprise: str) -> List[tuple]:
+    """
+    根据表头行解析该企业对应的列：(列索引, 展示名)。
+    先按 WAREHOUSE_ENTERPRISE_HEADERS 顺序匹配；再扫描所有含企业名的列补充分库（与德康道理一致）。
+    """
+    pairs = WAREHOUSE_ENTERPRISE_HEADERS.get(enterprise) or [(enterprise, enterprise)]
+    result: List[tuple] = []
+    matched_cols: set = set()
+    for keyword, short_name in pairs:
+        for col_idx in range(len(header_row)):
+            cell = header_row[col_idx] if col_idx < len(header_row) else None
+            if cell is None or col_idx in matched_cols:
+                continue
+            if keyword in str(cell).strip():
+                result.append((col_idx, short_name))
+                matched_cols.add(col_idx)
+                break
+    used_names = {n for _, n in result}
+    for col_idx in range(len(header_row)):
+        if col_idx in matched_cols:
+            continue
+        cell = header_row[col_idx] if col_idx < len(header_row) else None
+        if cell is None:
+            continue
+        h = str(cell).strip()
+        if enterprise in h:
+            short = _short_label_from_header(h, enterprise)
+            if short:
+                base = short
+                n = 1
+                while short in used_names:
+                    n += 1
+                    short = f"{base}{n}"
+                used_names.add(short)
+                result.append((col_idx, short))
+                matched_cols.add(col_idx)
+    return result
+
+
+@router.get("/warehouse-receipt/raw", response_model=WarehouseReceiptRawResponse)
+async def get_warehouse_receipt_raw(
+    enterprise: str = Query(..., description="企业名称，单选：德康/牧原/中粮/神农/富之源/扬翔"),
+    start_date: Optional[date] = Query(None, description="开始日期"),
+    end_date: Optional[date] = Query(None, description="结束日期"),
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    企业仓单原始数据：单选企业 + 日期范围，返回该企业总量及分库列（日期、德康、常熟、江安…）。
+    表头需含关键词（如 德康农牧库、常熟德康）；若无则退回固定列企业总量。
+    """
+    if enterprise not in ENTERPRISE_NAMES:
+        raise HTTPException(status_code=400, detail=f"企业须为: {', '.join(ENTERPRISE_NAMES)}")
+    table_data = _get_raw_table_data(db, "仓单数据", "钢联")
+    if not table_data or len(table_data) < 2:
+        return WarehouseReceiptRawResponse(enterprise=enterprise, columns=["日期", enterprise], rows=[])
+
+    # 表头可能在首行或第二行（如 DCE：猪：注册仓单：德康农牧库（日）等）
+    header_row = table_data[0] if table_data else []
+    col_tuples = _find_warehouse_columns_for_enterprise(header_row, enterprise)
+    data_start = 1
+    if not col_tuples and len(table_data) > 2:
+        header_row = table_data[1]
+        col_tuples = _find_warehouse_columns_for_enterprise(header_row, enterprise)
+        if col_tuples:
+            data_start = 2
+    if not col_tuples:
+        fixed_col = WAREHOUSE_RECEIPT_COLS.get(enterprise)
+        if fixed_col is not None:
+            col_tuples = [(fixed_col, enterprise)]
+        else:
+            return WarehouseReceiptRawResponse(enterprise=enterprise, columns=["日期", enterprise], rows=[])
+
+    columns = ["日期"] + [short for _, short in col_tuples]
+    rows_out: List[WarehouseReceiptRawRow] = []
+    for row in table_data[data_start:]:
+        if not row or len(row) <= 0:
+            continue
+        dt = _parse_excel_date(row[0])
+        if not dt:
+            continue
+        if start_date and dt < start_date:
+            continue
+        if end_date and dt > end_date:
+            continue
+        values = {}
+        for col_idx, short_name in col_tuples:
+            if col_idx < len(row):
+                values[short_name] = _parse_warehouse_receipt_value(row[col_idx])
+            else:
+                values[short_name] = None
+        rows_out.append(WarehouseReceiptRawRow(date=dt.isoformat(), values=values))
+    rows_out.sort(key=lambda x: x.date, reverse=True)  # 日期倒序，最新在前
+    return WarehouseReceiptRawResponse(enterprise=enterprise, columns=columns, rows=rows_out)

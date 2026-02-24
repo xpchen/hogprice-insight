@@ -193,7 +193,6 @@ async def execute_import(
                 if result.get("success") and result.get("batch_id"):
                     batch.id = result["batch_id"]
             elif template_type == "GANGLIAN_DAILY":
-                # 使用统一导入工作流
                 from app.services.ingestors.unified_ingestor import unified_import
                 result = unified_import(
                     db=db,
@@ -202,6 +201,62 @@ async def execute_import(
                     uploader_id=current_user.id,
                     dataset_type="GANGLIAN_DAILY",
                     source_code="GANGLIAN"
+                )
+                if result.get("success") and result.get("batch_id"):
+                    batch.id = result["batch_id"]
+            elif template_type == "INDUSTRY_DATA":
+                # 生猪产业数据（协会、NYB、统计局、供需曲线等）：仅导入 raw 层
+                from app.services.ingestors.raw_only_ingestor import import_raw_only
+                result = import_raw_only(
+                    db=db,
+                    file_content=file_content,
+                    filename=file.filename,
+                    batch_id=batch.id,
+                    source_code="INDUSTRY_DATA"
+                )
+            elif template_type == "PREMIUM_DATA":
+                # 生猪期货升贴水（盘面结算价）：仅导入 raw 层
+                from app.services.ingestors.raw_only_ingestor import import_raw_only
+                result = import_raw_only(
+                    db=db,
+                    file_content=file_content,
+                    filename=file.filename,
+                    batch_id=batch.id,
+                    source_code="PREMIUM_DATA"
+                )
+            elif template_type == "ENTERPRISE_MONTHLY":
+                # 集团企业月度数据：仅导入 raw 层
+                from app.services.ingestors.raw_only_ingestor import import_raw_only
+                result = import_raw_only(
+                    db=db,
+                    file_content=file_content,
+                    filename=file.filename,
+                    batch_id=batch.id,
+                    source_code="ENTERPRISE_MONTHLY"
+                )
+            elif template_type == "ENTERPRISE_DAILY":
+                # 集团企业出栏跟踪【分省区】：解析到 fact_observation
+                from app.services.ingestors.unified_ingestor import unified_import
+                result = unified_import(
+                    db=db,
+                    file_content=file_content,
+                    filename=file.filename,
+                    uploader_id=current_user.id,
+                    dataset_type="ENTERPRISE_DAILY",
+                    source_code="ENTERPRISE"
+                )
+                if result.get("success") and result.get("batch_id"):
+                    batch.id = result["batch_id"]
+            elif template_type == "WHITE_STRIP_MARKET":
+                # 白条市场跟踪：解析到 fact_observation
+                from app.services.ingestors.unified_ingestor import unified_import
+                result = unified_import(
+                    db=db,
+                    file_content=file_content,
+                    filename=file.filename,
+                    uploader_id=current_user.id,
+                    dataset_type="WHITE_STRIP_MARKET",
+                    source_code="WHITE_STRIP_MARKET"
                 )
                 if result.get("success") and result.get("batch_id"):
                     batch.id = result["batch_id"]

@@ -131,6 +131,17 @@ export interface WarehouseReceiptTableResponse {
   enterprises: string[]
 }
 
+export interface WarehouseReceiptRawRow {
+  date: string
+  values: Record<string, number | null>
+}
+
+export interface WarehouseReceiptRawResponse {
+  enterprise: string
+  columns: string[]
+  rows: WarehouseReceiptRawRow[]
+}
+
 export const futuresApi = {
   getFuturesDaily: (params: {
     contract: string
@@ -199,5 +210,13 @@ export const futuresApi = {
     enterprises?: string
   }): Promise<WarehouseReceiptTableResponse> => {
     return request.get('/futures/warehouse-receipt/table', { params })
+  },
+
+  getWarehouseReceiptRaw: (params: {
+    enterprise: string
+    start_date?: string
+    end_date?: string
+  }): Promise<WarehouseReceiptRawResponse> => {
+    return request.get('/futures/warehouse-receipt/raw', { params })
   }
 }

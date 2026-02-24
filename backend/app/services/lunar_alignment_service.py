@@ -214,16 +214,14 @@ def get_leap_month_info(lunar_year: int) -> Optional[Dict]:
                     pass
                 
                 if is_leap:
-                    # 找到闰月
-                    leap_start = lunar_test.getSolar().toYmd()
-                    # 获取闰月最后一天
+                    # 找到闰月，返回公历 date 范围
+                    solar = lunar_test.getSolar()
+                    leap_start = date(solar.getYear(), solar.getMonth(), solar.getDay())
                     try:
                         leap_days = lunar_test.getDayCount()
                         leap_end_date = leap_start + timedelta(days=leap_days - 1)
-                    except:
-                        # 如果无法获取天数，使用估算值（30天）
+                    except Exception:
                         leap_end_date = leap_start + timedelta(days=29)
-                    
                     return {
                         "leap_month": month,
                         "leap_month_start": leap_start,

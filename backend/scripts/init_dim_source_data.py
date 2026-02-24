@@ -53,6 +53,20 @@ def init_dim_source_data():
                 "update_freq": "irregular",
                 "source_type": "legacy",
                 "license_note": "历史迁移数据"
+            },
+            {
+                "source_code": "ENTERPRISE",
+                "source_name": "集团企业出栏跟踪",
+                "update_freq": "daily,monthly",
+                "source_type": "vendor",
+                "license_note": "集团企业出栏数据"
+            },
+            {
+                "source_code": "WHITE_STRIP_MARKET",
+                "source_name": "白条市场跟踪",
+                "update_freq": "daily",
+                "source_type": "vendor",
+                "license_note": "白条到货量及价格"
             }
         ]
         

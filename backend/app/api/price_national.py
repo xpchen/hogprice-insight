@@ -14,7 +14,7 @@ from app.core.security import get_current_user
 from app.models.sys_user import SysUser
 from app.models.fact_observation import FactObservation
 from app.models.dim_metric import DimMetric
-from app.services.lunar_alignment_service import solar_to_lunar, get_lunar_year_date_range_la_ba
+from app.services.lunar_alignment_service import solar_to_lunar, get_lunar_year_date_range_la_ba, get_leap_month_info
 
 # 复用 price_display 的响应模型，避免重复定义
 from app.api.price_display import (
@@ -346,6 +346,23 @@ async def get_slaughter_lunar(
             "lunar_day": lunar_day,
         })
 
+    # 闰月兜底：若库未识别闰月，用 get_leap_month_info 按公历区间补标
+    for lunar_year in list(year_data.keys()):
+        leap_info = get_leap_month_info(lunar_year)
+        if not leap_info:
+            continue
+        start_d = leap_info.get("leap_month_start")
+        end_d = leap_info.get("leap_month_end")
+        if not isinstance(start_d, date) or not isinstance(end_d, date):
+            continue
+        lm = leap_info.get("leap_month")
+        for item in year_data[lunar_year]:
+            if start_d <= item["date"] <= end_d:
+                item["is_leap_month"] = True
+                item["lunar_month"] = lm
+                if item.get("lunar_day") is None:
+                    item["lunar_day"] = (item["date"] - start_d).days + 1
+
     max_index = 0
     valid_indices = []
     for year_data_list in year_data.values():
@@ -365,10 +382,13 @@ async def get_slaughter_lunar(
         leap_month_data: Dict[Tuple[int, int], Dict[int, float]] = {}
         for item in year_data[year]:
             if item["is_leap_month"]:
-                key = (item["lunar_year"], item["lunar_month"])
+                # 农历库可能返回负的 lunar_month（如 -2 表示闰二月），统一用正数参与 key 与计算
+                lm_raw = item["lunar_month"]
+                lm = abs(lm_raw) if isinstance(lm_raw, (int, float)) else (lm_raw or 1)
+                key = (item["lunar_year"], lm)
                 if key not in leap_month_data:
                     leap_month_data[key] = {}
-                leap_index = item["lunar_month"] * 30 + item["lunar_day"] if item.get("lunar_day") else None
+                leap_index = lm * 30 + item["lunar_day"] if item.get("lunar_day") is not None else None
                 if leap_index and item["value"] is not None:
                     leap_month_data[key][leap_index] = item["value"]
             else:
@@ -393,9 +413,12 @@ async def get_slaughter_lunar(
             key = (ly, lm)
             if key not in leap_month_series_map:
                 leap_month_series_map[key] = []
+            # 闰月曲线应对齐到「正常月」同月的 X 轴位置（如闰六月对齐到六月）
+            # 使用该正常月初一的 lunar_day_index 作为 base_index
             try:
                 from lunar_python import Lunar
                 from datetime import date as date_class
+                # lm 已在上方用 abs 归一为正数（2=二月, 6=六月）
                 lunar_normal_month_first = Lunar.fromYmd(ly, lm, 1)
                 solar_normal_first = lunar_normal_month_first.getSolar()
                 solar_normal_date = date_class(
@@ -405,8 +428,10 @@ async def get_slaughter_lunar(
                 )
                 normal_first_info = solar_to_lunar(solar_normal_date)
                 base_index = normal_first_info.get("lunar_day_index")
-                if base_index is None:
-                    base_index = (lm - 1) * 30 + 1
+                # 若得到的是闰月（index 为 None）或明显偏小（落在正月），用该月理论起始索引
+                fallback_base = (lm - 1) * 30 + 1
+                if base_index is None or (lm >= 2 and base_index < fallback_base):
+                    base_index = fallback_base
             except Exception:
                 base_index = (lm - 1) * 30 + 1
             for leap_index, value in sorted(leap_values.items()):

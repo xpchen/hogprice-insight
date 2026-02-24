@@ -290,36 +290,107 @@ const renderSlaughterLunarChart = () => {
   
   slaughterLunarChart = echarts.init(slaughterLunarChartRef.value)
   
-  // 收集所有唯一的month_day作为X轴（农历日期索引）
-  const allMonthDays = new Set<string>()
-  slaughterLunarData.value.series.forEach(s => {
-    s.data.forEach(d => {
-      if (d.month_day) allMonthDays.add(d.month_day)
+  // X 轴：仅用后端 x_axis_labels 的索引（1..max_index），保证标签与农历日期一致，闰月曲线按对齐索引叠加
+  const labels = slaughterLunarData.value.x_axis_labels
+  const validRange = (n: number) => n >= 1 && n <= 400
+  let xAxisData: string[]
+  if (labels && Object.keys(labels).length > 0) {
+    const indices = Object.keys(labels)
+      .map((k) => parseInt(k, 10))
+      .filter((n) => !isNaN(n) && validRange(n))
+      .sort((a, b) => a - b)
+    xAxisData = indices.map((i) => String(i))
+  } else {
+    const allMonthDays = new Set<string>()
+    slaughterLunarData.value.series.forEach((s) => {
+      s.data.forEach((d) => {
+        const raw = d.month_day != null ? d.month_day : d.lunar_day_index
+        const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10)
+        if (!isNaN(n) && validRange(n)) allMonthDays.add(String(n))
+      })
     })
-  })
-  const xAxisData = Array.from(allMonthDays).sort((a, b) => {
-    // 按数字排序（month_day是农历日期索引字符串）
-    const numA = parseInt(a) || 0
-    const numB = parseInt(b) || 0
-    return numA - numB
-  })
-  
-  // 为每个年份构建数据，对齐到X轴
-  const series = slaughterLunarData.value.series.map(s => {
-    // 创建month_day到value的映射
-    const valueMap = new Map<string, number | null>()
-    s.data.forEach(d => {
-      if (d.month_day) {
-        valueMap.set(d.month_day, d.value)
+    xAxisData = Array.from(allMonthDays)
+      .map((a) => parseInt(a, 10))
+      .filter((n) => validRange(n))
+      .sort((a, b) => a - b)
+      .map(String)
+  }
+
+  // 从 x_axis_labels 找到某农历月初一对应的 X 轴索引（用于闰月按「日」对齐）
+  const getBaseIndexForLunarMonth = (lunarMonth: number): number | null => {
+    if (!labels || typeof labels !== 'object') return null
+    const target = `${String(lunarMonth).padStart(2, '0')}-01`
+    const lab = labels as Record<string, string>
+    for (const k of Object.keys(lab)) {
+      const n = parseInt(k, 10)
+      if (!isNaN(n) && lab[k] === target) return n
+    }
+    return null
+  }
+
+  // 规范索引键：统一为数字再转字符串，避免 "031" vs "31" 不匹配；负数为无效索引（不参与 X 轴）
+  const normKey = (v: string | number | null | undefined): string | null => {
+    if (v == null) return null
+    const n = typeof v === 'number' ? v : parseInt(String(v).trim(), 10)
+    if (Number.isNaN(n) || n < 1) return null
+    return String(n)
+  }
+
+  // 解析 month_day：可能是索引数字（"31"）或 "MM-DD"（如 "02-01"）
+  const parseMonthDayToIndex = (
+    raw: string | number | null | undefined,
+    lunarMonth: number
+  ): number | null => {
+    if (raw == null) return null
+    const s = String(raw).trim()
+    const n = parseInt(s, 10)
+    if (!Number.isNaN(n)) return n
+    const mmdd = /^(\d{1,2})-(\d{1,2})$/.exec(s)
+    if (mmdd) {
+      const month = parseInt(mmdd[1], 10)
+      const day = parseInt(mmdd[2], 10)
+      if (month === lunarMonth && day >= 1 && day <= 30) {
+        const baseIdx = getBaseIndexForLunarMonth(lunarMonth)
+        if (baseIdx != null) return baseIdx + day - 1
       }
-    })
-    
-    // 按照X轴顺序提取值
-    const values = xAxisData.map(md => valueMap.get(md) ?? null)
-    
-    // 判断是否为闰月系列
+    }
+    return null
+  }
+
+  // 为每个 series 构建数据：month_day / lunar_day_index 统一转字符串作键，对齐到 X 轴
+  const series = slaughterLunarData.value.series.map((s) => {
     const isLeapMonth = s.is_leap_month === true
-    const leapMonth = s.leap_month
+    // 接口可能返回负的闰月月份（如 -2、-6），取绝对值得到 2 月、6 月
+    const leapMonth = Math.abs(Number(s.leap_month) || 0)
+    const valueMap = new Map<string, number | null>()
+    s.data.forEach((d) => {
+      let key: string | null = normKey(d.month_day ?? d.lunar_day_index)
+      if (key == null && isLeapMonth && leapMonth >= 1 && leapMonth <= 12) {
+        const idx = parseMonthDayToIndex(d.month_day ?? d.lunar_day_index, leapMonth)
+        if (idx != null) key = String(idx)
+      }
+      if (key != null) valueMap.set(key, d.value ?? null)
+    })
+    let values = xAxisData.map((md) => valueMap.get(md) ?? valueMap.get(normKey(md) ?? '') ?? null)
+    // 闰月兜底：若当前映射后全为空且后端传的是「月初日 1–29」或 MM-DD，按对应正常月对齐
+    const hasAny = values.some((v) => v != null)
+    if (isLeapMonth && leapMonth >= 1 && leapMonth <= 12 && !hasAny && s.data.length > 0 && labels) {
+      const baseIdx = getBaseIndexForLunarMonth(leapMonth)
+      if (baseIdx != null) {
+        const remap = new Map<string, number | null>()
+        s.data.forEach((d) => {
+          const raw = d.month_day != null ? d.month_day : d.lunar_day_index
+          let day: number | null = typeof raw === 'number' ? raw : parseInt(String(raw), 10)
+          if (Number.isNaN(day as number) || day == null) {
+            const idx = parseMonthDayToIndex(raw, leapMonth)
+            if (idx != null) remap.set(String(idx), d.value ?? null)
+            return
+          }
+          if (day >= 1 && day <= 30) remap.set(String(baseIdx + day - 1), d.value ?? null)
+        })
+        if (remap.size > 0) values = xAxisData.map((md) => remap.get(md) ?? null)
+      }
+    }
     
     const lineColor = getYearColor(s.year)
     
@@ -391,8 +462,8 @@ const renderSlaughterLunarChart = () => {
     grid: {
       left: '3%',
       right: '4%',
-      top: '15%',
-      bottom: '10%',
+      top: '10%',
+      bottom: '5%',
       containLabel: true
     },
     xAxis: {
@@ -418,7 +489,11 @@ const renderSlaughterLunarChart = () => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+      axisLabel: {
+        formatter: (v: number) => axisLabelDecimalFormatter(v),
+        showMinLabel: false,
+        showMaxLabel: false
+      }
     },
     series: series,
     dataZoom: [
@@ -580,6 +655,17 @@ const renderSolarTrendChart = () => {
 
   if (series.length === 0 || xAxisData.length === 0) return
 
+  // 按数据范围设定 Y 轴，避免 0 线以下大片空白（红线之下没有曲线）
+  const slaughterNums = slaughterValues.filter((v): v is number => v != null && typeof v === 'number')
+  const priceNums = priceValues.filter((v): v is number => v != null && typeof v === 'number')
+  const slaughterMin = slaughterNums.length ? Math.min(...slaughterNums) : 0
+  const slaughterMax = slaughterNums.length ? Math.max(...slaughterNums) : 100
+  const priceMin = priceNums.length ? Math.min(...priceNums) : 0
+  const priceMax = priceNums.length ? Math.max(...priceNums) : 20
+  const pad = (a: number, b: number) => (b - a) * 0.05 || 1
+  const slaughterPadding = pad(slaughterMin, slaughterMax)
+  const pricePadding = pad(priceMin, priceMax)
+
   solarTrendChart.setOption({
     tooltip: {
       trigger: 'axis',
@@ -596,20 +682,39 @@ const renderSolarTrendChart = () => {
         return s
       }
     },
-    legend: { data: series.map(s => s.name), top: 8, type: 'plain', left: 'left' },
-    grid: { left: '3%', right: '4%', top: '15%', bottom: '12%', containLabel: true },
+    legend: { data: series.map(s => s.name), top: 6, type: 'plain', left: 'left' },
+    grid: { left: '3%', right: '4%', top: '10%', bottom: '5%', containLabel: true },
     xAxis: {
       type: 'category',
       boundaryGap: false,
       data: xAxisData,
-      axisLabel: { rotate: 45, interval: 'auto', formatter: xAxisLabelFormatter }
+      axisLabel: { rotate: 45, interval: 'auto', formatter: xAxisLabelFormatter },
+      axisLine: { show: true },
+      splitLine: { show: false }
     },
     yAxis: [
-      { type: 'value', position: 'left', name: '', axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) } },
-      { type: 'value', position: 'right', name: '', axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) } }
+      {
+        type: 'value',
+        position: 'left',
+        name: '',
+        min: slaughterMin - slaughterPadding,
+        max: slaughterMax + slaughterPadding,
+        axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
+      },
+      {
+        type: 'value',
+        position: 'right',
+        name: '',
+        min: priceMin - pricePadding,
+        max: priceMax + pricePadding,
+        axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
+      }
     ],
     series,
-    dataZoom: [{ type: 'inside', start: 0, end: 100 }]
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', show: false }
+    ]
   })
   setTimeout(() => solarTrendChart?.resize(), 100)
 }
@@ -678,14 +783,14 @@ onBeforeUnmount(() => {
 }
 
 .chart-box {
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 
 .info-box {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 6px;
+  gap: 2px;
+  padding-top: 2px;
   background-color: transparent;
 }
 
@@ -713,7 +818,7 @@ onBeforeUnmount(() => {
 
 .chart-container {
   width: 100%;
-  height: 400px;
+  height: 520px;
 }
 
 .loading-placeholder {
