@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     
     # CORS配置
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:8080", "http://localhost:5173"]
+
+    # 快速图表预计算：内部请求携带此 header 时以首名用户身份访问（仅本地使用）
+    QUICK_CHART_INTERNAL_SECRET: Optional[str] = None
+    # 预计算请求的 base URL（默认本机）
+    BACKEND_BASE_URL: str = "http://127.0.0.1:8000"
     
     class Config:
         env_file = ".env"

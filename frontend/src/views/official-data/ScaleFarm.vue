@@ -93,6 +93,7 @@ import type {
   ProductionIndicatorsResponse
 } from '@/api/production-indicators'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const loading = ref(false)
 const tableData = ref<A1SupplyForecastTableResponse | null>(null)
@@ -195,7 +196,7 @@ function updateChart1() {
     legend: { data: ['分娩窝数'], bottom: 10, icon: 'circle', itemWidth: 10, itemHeight: 10, left: 'left' },
     grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
     xAxis: { type: 'category', boundaryGap: false, data: chart1Data.value.data.map((d) => d.date) },
-    yAxis: { type: 'value', name: '窝数' },
+    yAxis: { type: 'value', name: '窝数', ...yAxisHideMinMaxLabel },
     dataZoom: [{ type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }, { type: 'inside', start: 0, end: 100 }],
     series: [{ name: '分娩窝数', type: 'line', smooth: true, data: chart1Data.value.data.map((d) => d.value), itemStyle: { color: '#5470c6' } }]
   }
@@ -210,7 +211,7 @@ function updateChart2() {
     legend: { data: ['窝均健仔数（河南）'], bottom: 10, icon: 'circle', itemWidth: 10, itemHeight: 10, left: 'left' },
     grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
     xAxis: { type: 'category', boundaryGap: false, data: chart2Data.value.data.map((d) => d.date) },
-    yAxis: { type: 'value', name: '窝均健仔数' },
+    yAxis: { type: 'value', name: '窝均健仔数', ...yAxisHideMinMaxLabel },
     dataZoom: [{ type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }, { type: 'inside', start: 0, end: 100 }],
     series: [{ name: '窝均健仔数（河南）', type: 'line', smooth: true, data: chart2Data.value.data.map((d) => d.value), itemStyle: { color: '#91cc75' } }]
   }
@@ -231,7 +232,7 @@ function updateChart3() {
     legend: { data: displayIndicators.value, bottom: 10, icon: 'circle', itemWidth: 10, itemHeight: 10, left: 'left' },
     grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
     xAxis: { type: 'category', boundaryGap: false, data: dates },
-    yAxis: { type: 'value', name: '窝均健仔数' },
+    yAxis: { type: 'value', name: '窝均健仔数', ...yAxisHideMinMaxLabel },
     dataZoom: [{ type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }, { type: 'inside', start: 0, end: 100 }],
     series
   }

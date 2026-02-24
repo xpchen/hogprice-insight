@@ -193,7 +193,7 @@ import {
 } from '@/api/price-display'
 import { downloadSQL, generateInsertSQL } from '@/utils/sql-generator'
 import type { MetricConfig, SQLGenerationOptions } from '@/utils/sql-generator'
-import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 // 加载状态
 const loadingPrice = ref(false)
@@ -445,6 +445,14 @@ const renderPriceSeasonalityChart = () => {
     }
   })
   
+  // 按数据范围设置 Y 轴，避免 0-10 空白（与屠宰量&价格一致）
+  const allPriceValues = series.flatMap(s => s.data).filter(v => v !== null && v !== undefined) as number[]
+  const pMin = allPriceValues.length > 0 ? Math.min(...allPriceValues) : 0
+  const pMax = allPriceValues.length > 0 ? Math.max(...allPriceValues) : 30
+  const pPadding = Math.max((pMax - pMin) * 0.08, 0.5)
+  const yMinPrice = pMin - pPadding
+  const yMaxPrice = pMax + pPadding
+
   const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
@@ -494,7 +502,11 @@ const renderPriceSeasonalityChart = () => {
     yAxis: {
       type: 'value',
       name: '价格',
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+      min: yMinPrice,
+      max: yMaxPrice,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) },
+      showMinLabel: false,
+      showMaxLabel: false
     },
     series: series,
     dataZoom: [
@@ -630,6 +642,7 @@ const renderSpreadSeasonalityChart = () => {
     yAxis: {
       type: 'value',
       name: '价差',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
@@ -815,12 +828,14 @@ const renderPriceSpreadChart = () => {
         type: 'value',
         name: '价格',
         position: 'left',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       },
       {
         type: 'value',
         name: '价差',
         position: 'right',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       }
     ],
@@ -1004,7 +1019,9 @@ const renderSlaughterLunarChart = () => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) },
+      showMinLabel: false,
+      showMaxLabel: false
     },
     series: series,
     dataZoom: [

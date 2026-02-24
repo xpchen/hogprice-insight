@@ -32,6 +32,7 @@ from app.models.raw_file import RawFile
 from app.models.raw_sheet import RawSheet
 from app.models.raw_table import RawTable
 from app.models.ingest_profile import IngestProfile, IngestProfileSheet
+from app.models.quick_chart_cache import QuickChartCache
 
 __all__ = [
     "Base",
@@ -69,4 +70,5 @@ __all__ = [
     "RawTable",
     "IngestProfile",
     "IngestProfileSheet",
+    "QuickChartCache",
 ]

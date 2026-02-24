@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const props = withDefaults(
   defineProps<{
@@ -29,7 +30,7 @@ const updateChart = () => {
       data: categories,
       axisLabel: { rotate: 30, fontSize: 11 }
     },
-    yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed', color: '#eee' } } },
+    yAxis: { type: 'value', ...yAxisHideMinMaxLabel, splitLine: { lineStyle: { type: 'dashed', color: '#eee' } } },
     series: [{
       type: 'bar',
       data: values,

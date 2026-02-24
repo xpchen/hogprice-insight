@@ -135,7 +135,7 @@ import * as echarts from 'echarts'
 import { getCr5Daily, getSichuanDaily, getGuangxiDaily, getSouthwestSampleDaily } from '@/api/enterprise-statistics'
 import type { EnterpriseStatisticsResponse } from '@/api/enterprise-statistics'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
-import { axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 // 时间筛选
 const selectedMonths = ref<number>(6)
@@ -345,6 +345,7 @@ const renderChart = (
       scale: false,
       min: minValue - padding,
       max: maxValue + padding,
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series as any

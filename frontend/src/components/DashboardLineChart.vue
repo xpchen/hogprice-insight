@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
-import { axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const props = withDefaults(
   defineProps<{
@@ -36,6 +36,7 @@ const updateChart = () => {
     xAxis: { type: 'category', data: categories, axisLabel: { rotate: 45, fontSize: 10 } },
     yAxis: {
       type: 'value',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) },
       splitLine: { lineStyle: { type: 'dashed', color: '#eee' } }
     },

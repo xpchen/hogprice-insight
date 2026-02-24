@@ -2,6 +2,9 @@
  * 图表样式统一配置：图例圆点、坐标轴小数、年份颜色等
  */
 
+/** Y 轴不显示最大值、最小值刻度标签（所有图表统一） */
+export const yAxisHideMinMaxLabel = { showMinLabel: false, showMaxLabel: false }
+
 /** 图例圆点配置（参照 A2.均重） */
 export const legendCircleConfig = {
   icon: 'circle' as const,

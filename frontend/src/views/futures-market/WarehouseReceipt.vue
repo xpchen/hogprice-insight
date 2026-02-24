@@ -75,6 +75,7 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { futuresApi, type WarehouseReceiptChartResponse, type WarehouseReceiptRawResponse } from '@/api/futures'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const ENTERPRISE_NAMES = ['德康', '中粮', '神农', '富之源', '扬翔', '牧原']
 
@@ -184,13 +185,15 @@ const renderChart = () => {
       {
         type: 'value',
         name: '总量',
-        position: 'left'
+        position: 'left',
+        ...yAxisHideMinMaxLabel
       },
       {
         type: 'value',
         name: '企业',
         position: 'right',
-        splitLine: { show: false }
+        splitLine: { show: false },
+        ...yAxisHideMinMaxLabel
       }
     ],
     series,

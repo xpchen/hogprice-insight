@@ -18,7 +18,7 @@ import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 export interface DualAxisData {
   series1: {
@@ -119,12 +119,12 @@ const updateChart = () => {
     yAxis: [
       {
         type: 'value',
-        // Y轴不显示单位
         name: '',
         position: props.axis1 || 'left',
         min: y1Min - y1Padding,
         max: y1Max + y1Padding,
         scale: false,
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       },
       {
@@ -134,6 +134,7 @@ const updateChart = () => {
         min: y2Min - y2Padding,
         max: y2Max + y2Padding,
         scale: false,
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
       }
     ],

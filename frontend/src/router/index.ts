@@ -240,16 +240,27 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
+  const userStore = useUserStore()
   const token = localStorage.getItem('token')
-  
+
   if (to.meta.requiresAuth && !token) {
     next('/login')
-  } else if (to.path === '/login' && token) {
-    next('/dashboard')
-  } else {
-    next()
+    return
   }
+  if (to.path === '/login' && token) {
+    next('/dashboard')
+    return
+  }
+  // 有 token 但用户信息未加载（如刷新页面）时先拉取用户信息，保证角色与菜单正确
+  if (token && !userStore.user) {
+    try {
+      await userStore.fetchUserInfo()
+    } catch {
+      // token 失效时 clearToken 会清空，直接放行到需鉴权页会再被重定向到登录
+    }
+  }
+  next()
 })
 
 export default router

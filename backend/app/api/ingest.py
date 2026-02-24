@@ -1,5 +1,5 @@
 """新导入系统API"""
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -123,8 +123,20 @@ async def preview_import(
     )
 
 
+def _run_quick_chart_regenerate() -> None:
+    """后台执行：清空快速图表缓存并按配置重新预计算（导入后调用）"""
+    from app.core.database import SessionLocal
+    from app.services.quick_chart_service import regenerate_cache_sync
+    db = SessionLocal()
+    try:
+        regenerate_cache_sync(db)
+    finally:
+        db.close()
+
+
 @router.post("/execute")
 async def execute_import(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     template_type: Optional[str] = Query(None),
     current_user: SysUser = Depends(get_current_user),
@@ -339,6 +351,9 @@ async def execute_import(
             # 如果记录错误时失败，忽略（避免二次错误）
             # 批次状态已经更新，不影响主流程
             pass
+        
+        if batch.status == "success":
+            background_tasks.add_task(_run_quick_chart_regenerate)
         
         return {
             "success": batch.status == "success",

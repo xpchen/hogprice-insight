@@ -33,7 +33,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount, nextTick } from 'vue'
 import * as echarts from 'echarts'
-import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 export interface SeasonalityData {
   x_values: number[] | string[]  // 1..52 或 "01-01".."12-31"
@@ -202,6 +202,7 @@ const updateChart = () => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series.map(s => {

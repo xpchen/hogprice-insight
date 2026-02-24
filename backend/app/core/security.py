@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from jose import JWTError, jwt
 import bcrypt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -58,16 +58,21 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 
 async def get_current_user(
+    request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> SysUser:
-    """获取当前用户"""
+    """获取当前用户。快速图表预计算可携带 X-Quick-Chart-Secret 以系统用户访问。"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+    secret = getattr(settings, "QUICK_CHART_INTERNAL_SECRET", None)
+    if secret and request.headers.get("X-Quick-Chart-Secret") == secret:
+        user = db.query(SysUser).filter(SysUser.is_active == True).order_by(SysUser.id).first()
+        if user:
+            return user
     if token is None:
         raise credentials_exception
     

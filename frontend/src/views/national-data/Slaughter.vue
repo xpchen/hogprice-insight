@@ -124,7 +124,7 @@ import {
 import { getSlaughterData } from '@/api/national-data'
 import { generateInsertSQL, downloadSQL } from '@/utils/sql-generator'
 import type { MetricConfig, SQLGenerationOptions } from '@/utils/sql-generator'
-import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 // 加载状态
 const loadingSlaughterLunar = ref(false)
@@ -489,11 +489,8 @@ const renderSlaughterLunarChart = () => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
-      axisLabel: {
-        formatter: (v: number) => axisLabelDecimalFormatter(v),
-        showMinLabel: false,
-        showMaxLabel: false
-      }
+      ...yAxisHideMinMaxLabel,
+      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     dataZoom: [
@@ -699,6 +696,7 @@ const renderSolarTrendChart = () => {
         name: '',
         min: slaughterMin - slaughterPadding,
         max: slaughterMax + slaughterPadding,
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
       },
       {
@@ -707,6 +705,7 @@ const renderSolarTrendChart = () => {
         name: '',
         min: priceMin - pricePadding,
         max: priceMax + pricePadding,
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
       }
     ],

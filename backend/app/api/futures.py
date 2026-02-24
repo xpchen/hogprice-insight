@@ -250,50 +250,53 @@ def is_in_seasonal_range(date_obj: date, contract_month: int) -> bool:
 
 def get_contract_date_range(contract_month: int, year: Optional[int] = None) -> tuple[date, date]:
     """
-    获取合约的时间范围
-    X月合约，时间从X+1月的1日至X-1月的31日
-    
-    例如：03合约（3月合约）在2026年：
-    - 开始：2025年4月1日（上一年的X+1月）
-    - 结束：2026年2月28日（当年的X-1月）
-    
+    获取X月合约升贴水的时间范围：从 (X+1)月1日 到 (X-1)月最后一日。
+    - 03合约：4月1日～次年2月最后一日（year=近月所在年）
+    - 05合约：6月1日～次年4月最后一日
+    - 01合约：2月1日～当年12月31日（同年）
+
     Args:
-        contract_month: 合约月份，如 3, 5, 7, 9, 11, 1
-        year: 合约年份，如果不指定则使用当前年份
-    
+        contract_month: 合约月份，如 1, 3, 5, 7, 9, 11
+        year: 合约（交割月）所在年份
+
     Returns:
         (start_date, end_date)
     """
     if year is None:
         year = datetime.now().year
-    
-    # 计算开始日期：X+1月的1日（上一年的X+1月）
+
     start_month = contract_month + 1
-    start_year = year - 1  # 从上一年的X+1月开始
     if start_month > 12:
         start_month = 1
-        start_year = year  # 如果X+1月跨年，则从当年的1月开始
-    
-    # 计算结束日期：X-1月的最后一日（当年的X-1月）
     end_month = contract_month - 1
-    end_year = year
     if end_month < 1:
         end_month = 12
-        end_year = year - 1
-    
-    # 获取月份的最后一天
-    if end_month == 12:
-        next_month = 1
-        next_year = end_year + 1
+
+    # 跨年：开始月 > 结束月（如03：4月>2月；11：12月>10月）→ 开始在上一年，结束在当年
+    if start_month > end_month:
+        start_year = year - 1
+        end_year = year
     else:
-        next_month = end_month + 1
-        next_year = end_year
-    
+        # 同年（如01：2月～12月）
+        start_year = year
+        end_year = year
+
+    if end_month == 12:
+        next_month, next_year = 1, end_year + 1
+    else:
+        next_month, next_year = end_month + 1, end_year
     start_date = date(start_year, start_month, 1)
-    # 结束日期是下个月的第一天减1天
     end_date = date(next_year, next_month, 1) - timedelta(days=1)
-    
     return start_date, end_date
+
+
+def is_date_in_contract_range(date_obj: date, contract_month: int) -> bool:
+    """判断日期是否在X合约时间范围内（(X+1)月1日～(X-1)月最后一日），尝试 year / year-1 / year+1。"""
+    for y in (date_obj.year, date_obj.year - 1, date_obj.year + 1):
+        start_d, end_d = get_contract_date_range(contract_month, y)
+        if start_d <= date_obj <= end_d:
+            return True
+    return False
 
 
 class PremiumDataPoint(BaseModel):
@@ -796,6 +799,12 @@ async def get_premium_data_v2(
                     seasonal_data.append(point)
             
             data_points = seasonal_data
+        else:
+            # 全部日期：仅保留在X合约时间轴内的点（(X+1)月1日～(X-1)月最后一日）
+            data_points = [
+                p for p in data_points
+                if is_date_in_contract_range(datetime.strptime(p.date.split('T')[0], '%Y-%m-%d').date(), month)
+            ]
         
         # 按日期排序
         data_points.sort(key=lambda x: x.date)
@@ -846,32 +855,39 @@ class CalendarSpreadResponse(BaseModel):
 def get_spread_date_range(near_month: int, far_month: int, year: Optional[int] = None) -> tuple[date, date]:
     """
     获取月间价差的时间范围
-    X-Y价差，时间从Y的次月1日到X的前一月的最后一日
-    例如：03-05价差（近月03、远月05），日期从6月1日到次年2月28日；01-03价差为当年4月1日到12月31日
-    
+    规则：X-Y价差，时间从 (Y+1)月1日 到 (X-1)月最后一日。
+    - 03-05（近月03、远月05）：6月1日 ～ 次年2月最后一日（year 指近月所在年）
+    - 05-07：8月1日 ～ 次年4月最后一日
+    - 11-01（同年）：2月1日 ～ 10月最后一日
+
     Args:
         near_month: 近月月份（X），如 3
         far_month: 远月月份（Y），如 5
-        year: 合约年份，如果不指定则使用当前年份
-    
+        year: 近月合约所在年份，不指定则用当前年
+
     Returns:
         (start_date, end_date)
     """
     if year is None:
         year = datetime.now().year
 
-    # 开始：Y的次月1日
+    # 开始：(Y+1)月1日
     start_month = far_month + 1
-    start_year = year
     if start_month > 12:
         start_month = 1
-        start_year = year + 1
-
-    # 结束：X的前一月最后一日；若结束月 < 开始月表示跨年，结束在次年
+    # 结束：(X-1)月最后一日
     end_month = near_month - 1
     if end_month < 1:
         end_month = 12
-    end_year = year + 1 if end_month < start_month else year
+
+    # 跨年：开始月 > 结束月（如 03-05：6月 > 2月）→ 开始在上一年，结束在当年
+    if start_month > end_month:
+        start_year = year - 1
+        end_year = year
+    else:
+        # 同年（如 11-01：2月～10月；01-03：4月～12月）
+        start_year = year
+        end_year = year
 
     if end_month == 12:
         next_month, next_year = 1, end_year + 1
@@ -1297,6 +1313,8 @@ WAREHOUSE_RECEIPT_COLS = {
     "中粮": 17,    # R列
 }
 ENTERPRISE_NAMES = ["德康", "牧原", "中粮", "神农", "富之源", "扬翔"]
+# 图表折线显示的企业候选（不含扬翔，用中粮等）
+CHART_ENTERPRISE_NAMES = ["德康", "牧原", "中粮", "神农", "富之源"]
 
 
 class WarehouseReceiptChartPoint(BaseModel):
@@ -1411,9 +1429,9 @@ async def get_warehouse_receipt_chart(
     if not points:
         return WarehouseReceiptChartResponse(data=[], date_range={"start": None, "end": None}, top2_enterprises=[])
     date_range = {"start": points[0].date, "end": points[-1].date}
-    # 选择数值最大的2个企业作为折线图显示
+    # 选择数值最大的2个企业作为折线图显示（不使用扬翔，使用中粮等）
     last_point = points[-1]
-    ent_sums = [(name, last_point.enterprises.get(name) or 0) for name in ENTERPRISE_NAMES]
+    ent_sums = [(name, last_point.enterprises.get(name) or 0) for name in CHART_ENTERPRISE_NAMES]
     ent_sums.sort(key=lambda x: x[1], reverse=True)
     top2 = [e[0] for e in ent_sums[:2] if e[1] > 0]
     return WarehouseReceiptChartResponse(data=points, date_range=date_range, top2_enterprises=top2)
@@ -1550,7 +1568,7 @@ async def get_warehouse_receipt_raw(
         raise HTTPException(status_code=400, detail=f"企业须为: {', '.join(ENTERPRISE_NAMES)}")
     table_data = _get_raw_table_data(db, "仓单数据", "钢联")
     if not table_data or len(table_data) < 2:
-        return WarehouseReceiptRawResponse(enterprise=enterprise, columns=["日期", enterprise], rows=[])
+        return WarehouseReceiptRawResponse(enterprise=enterprise, columns=["日期", "总仓单量", enterprise], rows=[])
 
     # 表头可能在首行或第二行（如 DCE：猪：注册仓单：德康农牧库（日）等）
     header_row = table_data[0] if table_data else []
@@ -1566,9 +1584,12 @@ async def get_warehouse_receipt_raw(
         if fixed_col is not None:
             col_tuples = [(fixed_col, enterprise)]
         else:
-            return WarehouseReceiptRawResponse(enterprise=enterprise, columns=["日期", enterprise], rows=[])
+            return WarehouseReceiptRawResponse(enterprise=enterprise, columns=["日期", "总仓单量", enterprise], rows=[])
 
-    columns = ["日期"] + [short for _, short in col_tuples]
+    # 公共列：DCE：猪：注册仓单（日）总仓单量，放在日期后、企业分库列前
+    total_col_name = "总仓单量"
+    columns = ["日期", total_col_name] + [short for _, short in col_tuples]
+    total_col_idx = WAREHOUSE_RECEIPT_COLS["total"]
     rows_out: List[WarehouseReceiptRawRow] = []
     for row in table_data[data_start:]:
         if not row or len(row) <= 0:
@@ -1581,6 +1602,7 @@ async def get_warehouse_receipt_raw(
         if end_date and dt > end_date:
             continue
         values = {}
+        values[total_col_name] = _parse_warehouse_receipt_value(row[total_col_idx]) if len(row) > total_col_idx else None
         for col_idx, short_name in col_tuples:
             if col_idx < len(row):
                 values[short_name] = _parse_warehouse_receipt_value(row[col_idx])

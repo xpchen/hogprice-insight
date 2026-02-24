@@ -69,6 +69,7 @@ import type {
   ProductionIndicatorsResponse
 } from '@/api/production-indicators'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const chart1Ref = ref<HTMLDivElement>()
 const chart2Ref = ref<HTMLDivElement>()
@@ -203,6 +204,7 @@ const updateChart1 = () => {
     yAxis: {
       type: 'value',
       name: '窝数',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
@@ -278,6 +280,7 @@ const updateChart2 = () => {
     yAxis: {
       type: 'value',
       name: '窝均健仔数',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
@@ -376,6 +379,7 @@ const updateChart3 = () => {
     yAxis: {
       type: 'value',
       name: '窝均健仔数',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [

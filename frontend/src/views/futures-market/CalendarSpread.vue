@@ -90,7 +90,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
 import { futuresApi, type CalendarSpreadResponse } from '@/api/futures'
-import { axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const loading = ref(false)
 const viewType = ref<'季节性' | '全部日期'>('全部日期')
@@ -227,8 +227,8 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
     },
     xAxis: { type: 'time', boundaryGap: false },
     yAxis: [
-      { type: 'value', name: '价差(元/公斤)', position: 'left', axisLabel: { formatter: axisLabelDecimalFormatter } },
-      { type: 'value', name: '结算价(元/公斤)', position: 'right', axisLabel: { formatter: axisLabelDecimalFormatter } }
+      { type: 'value', name: '价差(元/公斤)', position: 'left', ...yAxisHideMinMaxLabel, axisLabel: { formatter: axisLabelDecimalFormatter } },
+      { type: 'value', name: '结算价(元/公斤)', position: 'right', ...yAxisHideMinMaxLabel, axisLabel: { formatter: axisLabelDecimalFormatter } }
     ],
     series: seriesOpt,
     dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }]
@@ -253,6 +253,10 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
     seasonalMap.get(sy)!.set(mmdd, d.spread)
   })
 
+  // X-Y价差时间轴：(Y+1)月1日～(X-1)月最后日。按价差计算起止月与是否跨年，用于 X 轴排序
+  const startMonth = farMonth >= 12 ? 1 : farMonth + 1
+  const endMonth = nearMonth <= 1 ? 12 : nearMonth - 1
+  const crossYear = startMonth > endMonth
   const mmddSet = new Set<string>()
   series.data.forEach(d => {
     const date = new Date(d.date)
@@ -263,7 +267,9 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
     const mb = parseInt(b.slice(0, 2), 10)
     const da = parseInt(a.slice(2), 10)
     const db = parseInt(b.slice(2), 10)
-    if (ma !== mb) return ma - mb
+    const aOrder = crossYear ? (ma >= startMonth ? ma : ma + 12) : ma
+    const bOrder = crossYear ? (mb >= startMonth ? mb : mb + 12) : mb
+    if (aOrder !== bOrder) return aOrder - bOrder
     return da - db
   })
 
@@ -334,8 +340,8 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
       axisLabel: { rotate: 45, formatter: (v: string) => v.length >= 4 ? `${v.slice(0, 2)}/${v.slice(2)}` : v }
     },
     yAxis: [
-      { type: 'value', name: '价差(元/公斤)', position: 'left', axisLabel: { formatter: axisLabelDecimalFormatter } },
-      { type: 'value', name: '结算价(元/公斤)', position: 'right', axisLabel: { formatter: axisLabelDecimalFormatter } }
+      { type: 'value', name: '价差(元/公斤)', position: 'left', ...yAxisHideMinMaxLabel, axisLabel: { formatter: axisLabelDecimalFormatter } },
+      { type: 'value', name: '结算价(元/公斤)', position: 'right', ...yAxisHideMinMaxLabel, axisLabel: { formatter: axisLabelDecimalFormatter } }
     ],
     series: seriesOpt,
     dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }]

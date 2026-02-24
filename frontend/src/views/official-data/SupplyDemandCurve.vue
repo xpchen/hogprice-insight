@@ -53,6 +53,7 @@ import type {
   InventoryPriceResponse
 } from '@/api/supply-demand'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const chart1Ref = ref<HTMLDivElement>()
 const chart2Ref = ref<HTMLDivElement>()
@@ -174,6 +175,7 @@ const updateChart1 = () => {
     yAxis: {
       type: 'value',
       name: '系数',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [
@@ -256,12 +258,14 @@ const updateChart2 = () => {
         type: 'value',
         name: '存栏指数',
         position: 'left',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       },
       {
         type: 'value',
         name: '猪价',
         position: 'right',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       }
     ],
@@ -344,12 +348,14 @@ const updateChart3 = () => {
         type: 'value',
         name: '存栏指数',
         position: 'left',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       },
       {
         type: 'value',
         name: '猪价',
         position: 'right',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       }
     ],

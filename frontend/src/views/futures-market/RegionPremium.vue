@@ -111,7 +111,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
 import { futuresApi, type PremiumResponseV2 } from '@/api/futures'
-import { axisLabelDecimalFormatter, axisLabelPercentFormatter } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, axisLabelPercentFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const loading = ref(false)
 const viewType = ref<'季节性' | '全部日期'>('全部日期')
@@ -265,7 +265,7 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       }
     },
     xAxis: { type: 'time', boundaryGap: false },
-    yAxis: [{ type: 'value', name: '价格', position: 'left', axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } }],
+    yAxis: [{ type: 'value', name: '价格', position: 'left', ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } }],
     series: seriesData,
     dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }]
   })
@@ -276,6 +276,11 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
   const key = `seasonal-${series.contract_month}`
   chartInstances.get(key)?.dispose()
   const chart = echarts.init(el)
+
+  const contractMonth = series.contract_month
+  const startMonth = contractMonth + 1 > 12 ? 1 : contractMonth + 1
+  const endMonth = contractMonth - 1 <= 0 ? 12 : contractMonth - 1
+  const crossYear = startMonth > endMonth
 
   const yearMap = new Map<number, Array<typeof series.data[0]>>()
   series.data.forEach(p => {
@@ -291,15 +296,13 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     const date = new Date(d.date)
     const m = date.getMonth() + 1
     const day = date.getDate()
-    if ((m === 4 && day >= 1) || (m > 4 && m <= 12) || (m >= 1 && m <= 2 && day <= 28)) {
-      dateSet.add(`${m.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`)
-    }
+    dateSet.add(`${m.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`)
   })
   const categories = Array.from(dateSet).sort((a, b) => {
     const [am, ad] = a.split('-').map(Number)
     const [bm, bd] = b.split('-').map(Number)
-    const ao = am >= 4 ? am : am + 12
-    const bo = bm >= 4 ? bm : bm + 12
+    const ao = crossYear ? (am >= startMonth ? am : am + 12) : am
+    const bo = crossYear ? (bm >= startMonth ? bm : bm + 12) : bm
     if (ao !== bo) return ao - bo
     return ad - bd
   })
@@ -340,7 +343,7 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       }
     },
     xAxis: { type: 'category', data: categories, boundaryGap: false, axisLabel: { rotate: 45 } },
-    yAxis: { type: 'value', name: '升贴水比率（%）', axisLabel: { formatter: (v: number) => axisLabelPercentFormatter(v) } },
+    yAxis: { type: 'value', name: '升贴水比率（%）', ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelPercentFormatter(v) } },
     series: seriesData,
     dataZoom: [{ type: 'inside', start: 0, end: 100 }, { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }]
   })

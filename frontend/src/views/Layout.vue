@@ -85,17 +85,13 @@
             <el-icon><TrendCharts /></el-icon>
             <template #title>C2. 月间价差</template>
           </el-menu-item>
-          <el-menu-item index="/futures-market/region-premium">
-            <el-icon><TrendCharts /></el-icon>
-            <template #title>C3. 重点区域升贴水</template>
-          </el-menu-item>
           <el-menu-item index="/futures-market/volatility">
             <el-icon><TrendCharts /></el-icon>
-            <template #title>C4. 波动率数据</template>
+            <template #title>C3. 波动率数据</template>
           </el-menu-item>
           <el-menu-item index="/futures-market/warehouse-receipt">
             <el-icon><TrendCharts /></el-icon>
-            <template #title>C5. 仓单数据</template>
+            <template #title>C4. 仓单数据</template>
           </el-menu-item>
         </el-sub-menu>
 

@@ -141,6 +141,7 @@ import {
 import { getFatStdSpreadProvinces, getFatStdSpreadProvinceSeasonality } from '../api/price-display'
 import { getSupplyDemandCurve } from '../api/supply-demand'
 import * as echarts from 'echarts'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 import type { DualAxisData } from '../components/DualAxisChart.vue'
 import type { SeasonalityData } from '../components/SeasonalityChart.vue'
 import type { ChartData } from '../components/ChartPanel.vue'
@@ -468,7 +469,7 @@ function updateSupplyDemandChart() {
     legend: { data: ['定点屠宰系数', '猪价系数'], bottom: 10 },
     grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
     xAxis: { type: 'category', boundaryGap: false, data: data.map((d: any) => d.month) },
-    yAxis: { type: 'value', name: '系数' },
+    yAxis: { type: 'value', name: '系数', ...yAxisHideMinMaxLabel },
     series: [
       { name: '定点屠宰系数', type: 'line', smooth: true, data: data.map((d: any) => d.slaughter_coefficient ?? null), itemStyle: { color: '#5470c6' } },
       { name: '猪价系数', type: 'line', smooth: true, data: data.map((d: any) => d.price_coefficient ?? null), itemStyle: { color: '#91cc75' } }

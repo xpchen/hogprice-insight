@@ -91,6 +91,7 @@ import type {
   ImportMeatResponse
 } from '@/api/statistics-bureau'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
+import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const chart1Ref = ref<HTMLDivElement>()
 const chart2Ref = ref<HTMLDivElement>()
@@ -300,12 +301,14 @@ const updateChart1 = () => {
         type: 'value',
         name: '出栏量/屠宰量',
         position: 'left',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
       },
       {
         type: 'value',
         name: '规模化率(%)',
         position: 'right',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2)) + '%' }
       }
     ],
@@ -440,6 +443,7 @@ const updateChart2 = () => {
     yAxis: {
       type: 'value',
       name: '系数',
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     dataZoom: [

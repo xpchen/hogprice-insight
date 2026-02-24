@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api import auth, import_excel, metadata, query, export, templates, reports, ingest, ts, futures, options, dashboard, reconciliation, observation, price_display, enterprise_statistics, sales_plan, structure_analysis, group_price, production_indicators, multi_source, supply_demand, statistics_bureau
+from app.middleware.chart_timing_and_cache import ChartTimingAndCacheMiddleware
+from app.middleware.request_logging import RequestLoggingMiddleware
 
 # 全局抑制常见警告
 # 抑制 openpyxl 的默认样式警告
@@ -25,6 +27,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 图表 API：超 3 秒打日志；优先返回预计算缓存
+app.add_middleware(ChartTimingAndCacheMiddleware)
+# 请求访问日志：记录 method、path、query、status、elapsed_ms
+app.add_middleware(RequestLoggingMiddleware)
 
 # 注册路由
 app.include_router(auth.router)

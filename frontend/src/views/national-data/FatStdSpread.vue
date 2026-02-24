@@ -79,7 +79,7 @@ import {
   type SeasonalityResponse,
   type ProvinceChangesResponse
 } from '@/api/price-display'
-import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 // 省区列表
 const provinces = ref<ProvinceSpreadInfo[]>([])
@@ -366,6 +366,7 @@ const renderChart = (provinceName: string) => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series as any

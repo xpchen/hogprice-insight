@@ -68,7 +68,7 @@ import {
   type SeasonalityResponse,
   type RegionSpreadChangesResponse
 } from '@/api/price-display'
-import { getYearColor, axisLabelDecimalFormatter } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 // 区域对列表（固定列表）
 const regionPairs = ref<string[]>([
@@ -350,6 +350,7 @@ const renderChart = (regionPair: string) => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
+      ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series as any

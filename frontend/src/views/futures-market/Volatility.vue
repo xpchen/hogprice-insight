@@ -36,7 +36,7 @@
 import { ref, onMounted, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
 import { futuresApi, type VolatilityResponse } from '@/api/futures'
-import { axisLabelPercentFormatter } from '@/utils/chart-style'
+import { axisLabelPercentFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
 
 const loading = ref(false)
 const windowDays = ref<number>(10)
@@ -221,6 +221,7 @@ const renderCharts = () => {
       yAxis: {
         type: 'value',
         name: '波动率（%）',
+        ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => axisLabelPercentFormatter(v) }
       },
       series: seriesData,
