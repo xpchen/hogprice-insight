@@ -1313,8 +1313,8 @@ WAREHOUSE_RECEIPT_COLS = {
     "中粮": 17,    # R列
 }
 ENTERPRISE_NAMES = ["德康", "牧原", "中粮", "神农", "富之源", "扬翔"]
-# 图表折线显示的企业候选（不含扬翔，用中粮等）
-CHART_ENTERPRISE_NAMES = ["德康", "牧原", "中粮", "神农", "富之源"]
+# 图表折线显示的企业候选（不含扬翔、富之源，用中粮等）
+CHART_ENTERPRISE_NAMES = ["德康", "牧原", "中粮", "神农"]
 
 
 class WarehouseReceiptChartPoint(BaseModel):
@@ -1345,7 +1345,7 @@ class WarehouseReceiptTableResponse(BaseModel):
 WAREHOUSE_ENTERPRISE_HEADERS = {
     "德康": [("德康农牧库", "德康"), ("常熟德康", "常熟"), ("江安德康", "江安"), ("泸州德康", "泸州"), ("泗阳德康", "泗阳"), ("渠县德康", "渠县")],
     "牧原": [("牧原", "牧原")],
-    "中粮": [("中粮", "中粮")],
+    "中粮": [("中粮肉食库", "中粮"), ("中粮肉食", "中粮"), ("中粮", "中粮")],  # DCE：猪：注册仓单：中粮肉食库（日）-> 中粮
     "神农": [("神农", "神农")],
     "富之源": [("富之源", "富之源")],
     "扬翔": [("扬翔", "扬翔")],
@@ -1398,18 +1398,62 @@ async def get_warehouse_receipt_chart(
             date_range={"start": None, "end": None},
             top2_enterprises=[]
         )
-    # 假设第0行为表头，第1行起为数据；日期在第0列
+    # 表头可能在首行或第二行（如 DCE：猪：注册仓单：中粮肉食库（日）），两行都参与匹配
+    row0 = table_data[0] if table_data else []
+    row1 = table_data[1] if len(table_data) > 1 else []
+    data_start = 1
+    # 若第0行没有企业/仓单相关文案，用第1行作表头、数据从第2行起
+    if not any(c and ("注册仓单" in str(c) or "中粮" in str(c) or "德康" in str(c)) for c in (row0 or [])):
+        if len(table_data) > 2:
+            row0 = row1
+            data_start = 2
+    header_rows = [row0] if row0 else []
+    if data_start == 1 and row1 and len(table_data) > 1:
+        header_rows.append(row1)
+    # 总量列
+    total_col = WAREHOUSE_RECEIPT_COLS["total"]
+    for hr in header_rows:
+        for col_idx in range(len(hr)):
+            cell = hr[col_idx] if col_idx < len(hr) else None
+            if cell and ("总仓单量" in str(cell) or ("注册仓单" in str(cell) and "总" in str(cell))):
+                total_col = col_idx
+                break
+        else:
+            continue
+        break
+    # 各企业列：从两行表头中匹配（先 row0 再 row1，取到即用）
+    enterprise_col: Dict[str, int] = {}
+    for name in ENTERPRISE_NAMES:
+        for hr in header_rows:
+            pairs = _find_warehouse_columns_for_enterprise(hr, name)
+            if pairs:
+                enterprise_col[name] = pairs[0][0]
+                break
+        if name not in enterprise_col and WAREHOUSE_RECEIPT_COLS.get(name) is not None:
+            enterprise_col[name] = WAREHOUSE_RECEIPT_COLS[name]
+    # 兜底：中粮列整行扫描两行表头
+    if "中粮" not in enterprise_col:
+        for hr in header_rows:
+            for col_idx in range(len(hr)):
+                cell = hr[col_idx] if col_idx < len(hr) else None
+                if cell and ("中粮肉食" in str(cell) or str(cell).strip() == "中粮"):
+                    enterprise_col["中粮"] = col_idx
+                    break
+            if "中粮" in enterprise_col:
+                break
+        if "中粮" not in enterprise_col and WAREHOUSE_RECEIPT_COLS.get("中粮") is not None:
+            enterprise_col["中粮"] = WAREHOUSE_RECEIPT_COLS["中粮"]
     points = []
-    for row in table_data[1:]:
+    for row in table_data[data_start:]:
         if not row or len(row) <= 1:
             continue
         dt = _parse_excel_date(row[0]) if len(row) > 0 else None
         if not dt:
             continue
-        total_val = _parse_warehouse_receipt_value(row[WAREHOUSE_RECEIPT_COLS["total"]]) if len(row) > WAREHOUSE_RECEIPT_COLS["total"] else None
+        total_val = _parse_warehouse_receipt_value(row[total_col]) if len(row) > total_col else None
         enterprises_val = {}
         for name in ENTERPRISE_NAMES:
-            col = WAREHOUSE_RECEIPT_COLS.get(name)
+            col = enterprise_col.get(name)
             if col is not None and len(row) > col:
                 enterprises_val[name] = _parse_warehouse_receipt_value(row[col])
         points.append(WarehouseReceiptChartPoint(
@@ -1429,11 +1473,16 @@ async def get_warehouse_receipt_chart(
     if not points:
         return WarehouseReceiptChartResponse(data=[], date_range={"start": None, "end": None}, top2_enterprises=[])
     date_range = {"start": points[0].date, "end": points[-1].date}
-    # 选择数值最大的2个企业作为折线图显示（不使用扬翔，使用中粮等）
-    last_point = points[-1]
-    ent_sums = [(name, last_point.enterprises.get(name) or 0) for name in CHART_ENTERPRISE_NAMES]
-    ent_sums.sort(key=lambda x: x[1], reverse=True)
-    top2 = [e[0] for e in ent_sums[:2] if e[1] > 0]
+    # 选择数值最大的2个企业作为折线图显示：按整段区间内最大单日值排序，避免仅看最后一天漏掉中粮等
+    ent_max: Dict[str, float] = {name: 0.0 for name in CHART_ENTERPRISE_NAMES}
+    for p in points:
+        for name in CHART_ENTERPRISE_NAMES:
+            v = p.enterprises.get(name)
+            if v is not None and (ent_max[name] is None or v > ent_max[name]):
+                ent_max[name] = float(v)
+    ent_list = [(name, ent_max.get(name) or 0) for name in CHART_ENTERPRISE_NAMES]
+    ent_list.sort(key=lambda x: x[1], reverse=True)
+    top2 = [e[0] for e in ent_list[:2] if e[1] > 0]
     return WarehouseReceiptChartResponse(data=points, date_range=date_range, top2_enterprises=top2)
 
 
