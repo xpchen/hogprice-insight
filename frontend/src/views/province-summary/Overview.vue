@@ -35,6 +35,9 @@
             :data="getChartData(indicatorName)"
             :loading="loading"
             :title="getChartTitle(indicatorName)"
+            :change-info="getChangeInfo(indicatorName)"
+            :source-name="getSourceName(indicatorName)"
+            :update-date="getUpdateDate(indicatorName)"
           />
         </div>
       </div>
@@ -94,13 +97,6 @@ const indicatorsData = ref<Record<string, SeasonalityResponse>>({})
 // 获取图表数据
 const getChartData = (indicatorName: string): SeasonalityData | null => {
   const indicator = indicatorsData.value[indicatorName]
-  
-  // #region agent log
-  if (indicatorName === '日度 均价' || indicatorName === '周度 宰后均重') {
-    fetch('http://127.0.0.1:7245/ingest/7208489b-4a4f-4400-8c21-52139d8c0ebd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Overview.vue:112',message:'getChartData调用',data:{indicatorName,has_indicator:!!indicator,has_series:!!(indicator?.series),series_length:indicator?.series?.length || 0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-  }
-  // #endregion
-  
   if (!indicator || !indicator.series || indicator.series.length === 0) {
     return null
   }
@@ -197,6 +193,76 @@ const getWeekOfYear = (date: Date): number => {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
 }
 
+// 指标对应的数据来源（根据后端数据源配置）
+const INDICATOR_SOURCE_MAP: Record<string, string> = {
+  '日度 均价': '涌益咨询',
+  '日度 散户标肥价差': '钢联数据',
+  '周度 出栏均重': '涌益咨询',
+  '周度 宰后均重': '钢联数据',
+  '周度 90KG占比': '涌益咨询',
+  '周度 冻品库容': '钢联数据'
+}
+
+// 从 series 数据计算本期涨跌、过去10日涨跌
+const computeChangeFromSeries = (indicator: SeasonalityResponse, isWeekly: boolean) => {
+  const points: Array<{ date: Date; value: number }> = []
+  for (const s of indicator.series || []) {
+    for (const d of s.data || []) {
+      if (d.month_day && d.value != null) {
+        const [m, day] = d.month_day.split('-').map(Number)
+        points.push({ date: new Date(s.year, m - 1, day), value: d.value })
+      }
+    }
+  }
+  if (points.length < 2) return { period_change: null as number | null, day10_change: null as number | null }
+  points.sort((a, b) => b.date.getTime() - a.date.getTime())
+  const latest = points[0]
+  const prev = points[1]
+  const period_change = latest.value - prev.value
+
+  let day10_change: number | null = null
+  if (isWeekly) {
+    // 周度数据：过去10日近似为上上周（约14天，与本期涨跌区分开）
+    if (points.length >= 3) day10_change = latest.value - points[2].value
+  } else {
+    // 日度数据：找约10天前的数据点
+    const targetDate = new Date(latest.date)
+    targetDate.setDate(targetDate.getDate() - 10)
+    const approx10DaysAgo = points.find(p => p.date.getTime() <= targetDate.getTime())
+    if (approx10DaysAgo) day10_change = latest.value - approx10DaysAgo.value
+  }
+  return { period_change, day10_change }
+}
+
+// 获取图表涨跌信息
+const getChangeInfo = (indicatorName: string) => {
+  const indicator = indicatorsData.value[indicatorName]
+  if (!indicator?.series?.length) return null
+  const isWeekly = indicatorName.includes('周度')
+  const { period_change, day10_change } = computeChangeFromSeries(indicator, isWeekly)
+  return { period_change, day10_change, yoy_change: null as number | null }
+}
+
+// 获取数据来源
+const getSourceName = (indicatorName: string): string | null => {
+  return INDICATOR_SOURCE_MAP[indicatorName] ?? null
+}
+
+// 格式化更新日期为 "YYYY年MM月DD日"
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const d = new Date(dateStr)
+    return `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月${String(d.getDate()).padStart(2, '0')}日`
+  } catch { return null }
+}
+
+// 获取更新日期
+const getUpdateDate = (indicatorName: string): string | null => {
+  const indicator = indicatorsData.value[indicatorName]
+  return formatUpdateDate(indicator?.update_time ?? indicator?.latest_date ?? null)
+}
+
 // 获取图表标题（格式：指标名称：省份，不显示"日度周度"）
 const getChartTitle = (indicatorName: string): string => {
   // 移除"日度"、"周度"前缀
@@ -222,11 +288,6 @@ const loadIndicatorsData = async () => {
     const response: ProvinceIndicatorsResponse = await getProvinceIndicatorsSeasonality(
       selectedProvince.value
     )
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7245/ingest/7208489b-4a4f-4400-8c21-52139d8c0ebd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Overview.vue:245',message:'API响应数据',data:{province:selectedProvince.value,indicators_keys:Object.keys(response.indicators),has_daily_price:'日度 均价' in response.indicators,has_slaughter_weight:'周度 宰后均重' in response.indicators,daily_price_series_count:response.indicators['日度 均价']?.series?.length || 0,slaughter_weight_series_count:response.indicators['周度 宰后均重']?.series?.length || 0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
-    
     indicatorsData.value = response.indicators
   } catch (error: any) {
     console.error('加载指标数据失败:', error)

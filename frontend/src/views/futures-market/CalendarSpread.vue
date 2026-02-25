@@ -178,16 +178,33 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
   const years = Array.from(yearMap.keys()).sort()
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
 
+  // 时间间隔超过 5 天则插入 null 制造断点，配合 connectNulls: false 实现中间无数据处留空
+  const toDataWithGaps = (arr: typeof series.data) => {
+    const out: [string, number | null][] = []
+    const GAP_DAYS = 5
+    for (let i = 0; i < arr.length; i++) {
+      out.push([arr[i].date, arr[i].spread])
+      if (i < arr.length - 1) {
+        const curr = new Date(arr[i].date).getTime()
+        const next = new Date(arr[i + 1].date).getTime()
+        if ((next - curr) / (24 * 60 * 60 * 1000) > GAP_DAYS) {
+          const mid = new Date((curr + next) / 2)
+          out.push([mid.toISOString().slice(0, 10), null])
+        }
+      }
+    }
+    return out
+  }
   const spreadSeriesList: any[] = years.map((year, i) => ({
     name: `${year}年`,
     type: 'line',
     yAxisIndex: 0,
-    data: yearMap.get(year)!.map(d => [d.date, d.spread]),
+    data: toDataWithGaps(yearMap.get(year)!),
     lineStyle: { color: colors[i % colors.length] },
     symbol: 'circle',
     symbolSize: 4,
     smooth: true,
-    connectNulls: true
+    connectNulls: false
   }))
   // 用结算价数据驱动右侧 Y 轴刻度，系列不显示、不参与图例和 tooltip
   const settleData = series.data.map(d => [d.date, d.near_contract_settle ?? d.far_contract_settle ?? null])

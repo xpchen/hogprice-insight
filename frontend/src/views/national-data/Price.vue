@@ -1029,6 +1029,13 @@ const renderSlaughterLunarChart = () => {
         type: 'inside',
         start: 0,
         end: 100
+      },
+      {
+        type: 'slider',
+        start: 0,
+        end: 100,
+        height: 20,
+        bottom: 10
       }
     ]
   }

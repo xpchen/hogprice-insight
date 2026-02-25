@@ -85,60 +85,76 @@ const renderCharts = () => {
     const chartInstance = echarts.init(el)
     chartInstances.set(key, chartInstance)
     
-    // 按年份分组数据
+    // X月合约季节性时间轴（与升贴水/月间价差一致）：
+    // 03合约:4月1日~次年2月最后一日 05:6月1日~次年4月最后一日 07:8月~次年6月 09:10月~次年8月 11:12月~次年10月 01:2月1日~当年12月31日
+    const contractMonth = series.contract_month
+    const startMonth = contractMonth === 1 ? 2 : (contractMonth + 1) > 12 ? 1 : contractMonth + 1
+    const endMonth = contractMonth - 1 <= 0 ? 12 : contractMonth - 1
+    const crossYear = startMonth > endMonth
+
+    const getSeasonalYear = (dateStr: string): number => {
+      const d = new Date(dateStr)
+      const month = d.getMonth() + 1
+      const year = d.getFullYear()
+      if (crossYear) {
+        if (month >= startMonth && month <= 12) return year + 1
+        if (month >= 1 && month <= endMonth) return year
+      }
+      return contractMonth === 1 ? year : year + 1
+    }
+    const getDisplayYearLabel = (cy: number): string =>
+      contractMonth === 1 ? `${cy - 1}年` : `${cy - 1}/${cy}`
+
     const yearMap = new Map<number, Array<typeof series.data[0]>>()
     series.data.forEach(point => {
-      const year = point.year || new Date(point.date).getFullYear()
+      const year = point.year ?? getSeasonalYear(point.date)
       if (!yearMap.has(year)) yearMap.set(year, [])
       yearMap.get(year)!.push(point)
     })
-    
+
     const years = Array.from(yearMap.keys()).sort()
     const colors = [
       '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
       '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3'
     ]
-    
-    // 获取所有日期（MM-DD格式），季节性图日期从4月1日到2月28日
+
     const dateSet = new Set<string>()
     series.data.forEach(d => {
       const date = new Date(d.date)
       const month = date.getMonth() + 1
       const day = date.getDate()
-      // 只包含4月1日到2月28日的数据
-      if ((month === 4 && day >= 1) || (month > 4 && month <= 12) || (month >= 1 && month <= 2 && day <= 28)) {
-        const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-        dateSet.add(monthDay)
-      }
+      const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+      dateSet.add(monthDay)
     })
     const categories = Array.from(dateSet).sort((a, b) => {
-      // 排序：4月1日-12月31日，然后1月1日-2月28日
       const [aMonth, aDay] = a.split('-').map(Number)
       const [bMonth, bDay] = b.split('-').map(Number)
-      const aOrder = aMonth >= 4 ? aMonth : aMonth + 12
-      const bOrder = bMonth >= 4 ? bMonth : bMonth + 12
+      const aOrder = crossYear ? (aMonth >= startMonth ? aMonth : aMonth + 12) : aMonth
+      const bOrder = crossYear ? (bMonth >= startMonth ? bMonth : bMonth + 12) : bMonth
       if (aOrder !== bOrder) return aOrder - bOrder
       return aDay - bDay
     })
     
     const tooltipLookup = new Map<string, { settle_price?: number; open_interest?: number }>()
     series.data.forEach(point => {
-      const year = point.year ?? new Date(point.date).getFullYear()
+      const cy = point.year ?? getSeasonalYear(point.date)
       const d = new Date(point.date)
       const mmdd = `${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')}`
-      tooltipLookup.set(`${year}-${mmdd}`, {
+      tooltipLookup.set(`${cy}-${mmdd}`, {
         settle_price: point.settle_price,
         open_interest: point.open_interest
       })
     })
+    const displayNameToYear = new Map<string, number>()
+    years.forEach(y => displayNameToYear.set(getDisplayYearLabel(y), y))
     
     const seriesData: any[] = []
-    
+
     years.forEach((year, idx) => {
       const yearData = yearMap.get(year)!
       const color = colors[idx % colors.length]
       const dataMap = new Map<string, number | null>()
-      
+
       yearData.forEach(d => {
         const date = new Date(d.date)
         const month = date.getMonth() + 1
@@ -146,9 +162,9 @@ const renderCharts = () => {
         const monthDay = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
         dataMap.set(monthDay, d.volatility)
       })
-      
+
       seriesData.push({
-        name: `${year}年`,
+        name: getDisplayYearLabel(year),
         type: 'line',
         data: categories.map(cat => dataMap.get(cat) || null),
         lineStyle: { color },
@@ -175,14 +191,13 @@ const renderCharts = () => {
           params.forEach((param: any) => {
             if (param.value !== null && param.value !== undefined) {
               const v = typeof param.value === 'number' ? param.value.toFixed(2) : param.value
-              const yearMatch = param.seriesName?.match(/^(\d{4})年?/)
-              const year = yearMatch ? yearMatch[1] : ''
+              const cy = param.seriesName ? displayNameToYear.get(param.seriesName) : undefined
               result += `<div style="margin: 2px 0;">
                 <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
                 ${param.seriesName}: <strong>${v}%</strong>
               </div>`
-              if (year) {
-                const extra = tooltipLookup.get(`${year}-${cat}`)
+              if (cy != null) {
+                const extra = tooltipLookup.get(`${cy}-${cat}`)
                 if (extra) {
                   if (extra.settle_price != null) result += `<div style="margin: 2px 0; color:#666;">主力合约结算价: ${extra.settle_price.toFixed(2)}</div>`
                   if (extra.open_interest != null) result += `<div style="margin: 2px 0; color:#666;">持仓量: ${extra.open_interest.toLocaleString()}</div>`

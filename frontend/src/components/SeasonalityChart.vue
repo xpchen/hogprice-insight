@@ -1,30 +1,36 @@
 <template>
   <el-card class="seasonality-chart-panel">
     <template #header>
-      <div style="display: flex; justify-content: space-between; align-items: center">
-        <span>{{ title || '季节性图表' }}</span>
-        <div v-if="changeInfo" class="change-info" style="display: flex; gap: 20px; font-size: 14px">
+      <span>{{ title || '季节性图表' }}</span>
+    </template>
+    <div class="chart-content">
+      <div ref="chartRef" class="chart-area" v-loading="loading"></div>
+      <div v-if="changeInfo || sourceName || updateDate" class="chart-footer">
+        <div v-if="changeInfo" class="change-info">
           <span v-if="changeInfo.period_change !== null" class="change-item">
             本期涨跌：
             <span :class="getChangeClass(changeInfo.period_change)">
               {{ formatChange(changeInfo.period_change) }}
             </span>
           </span>
-          <span v-if="changeInfo.yoy_change !== null" class="change-item">
+          <span v-if="changeInfo.day10_change != null" class="change-item">
+            过去10日涨跌：
+            <span :class="getChangeClass(changeInfo.day10_change)">
+              {{ formatChange(changeInfo.day10_change) }}
+            </span>
+          </span>
+          <span v-if="changeInfo.yoy_change != null" class="change-item">
             较去年同期涨跌：
             <span :class="getChangeClass(changeInfo.yoy_change)">
               {{ formatChange(changeInfo.yoy_change) }}
             </span>
           </span>
         </div>
-      </div>
-    </template>
-    <div class="chart-content">
-      <div ref="chartRef" style="width: 100%; height: 500px;" v-loading="loading"></div>
-      <div v-if="sourceName || updateDate" class="data-source-info">
-        <span v-if="sourceName">数据来源：{{ sourceName }}</span>
-        <span v-if="sourceName && updateDate" class="separator"> </span>
-        <span v-if="updateDate">更新日期：{{ updateDate }}</span>
+        <div v-if="sourceName || updateDate" class="data-source-info">
+          <span v-if="sourceName">数据来源：{{ sourceName }}</span>
+          <span v-if="sourceName && updateDate" class="separator"> </span>
+          <span v-if="updateDate">更新日期：{{ updateDate }}</span>
+        </div>
       </div>
     </div>
   </el-card>
@@ -55,8 +61,9 @@ const props = defineProps<{
   lunarAlignment?: boolean  // 是否支持农历对齐
   changeInfo?: {
     period_change: number | null
-    yoy_change: number | null
-  } | null  // 变化信息（本期涨跌、较去年同期涨跌）
+    yoy_change?: number | null
+    day10_change?: number | null  // 过去10日涨跌
+  } | null  // 变化信息（本期涨跌、较去年同期涨跌、过去10日涨跌）
   sourceName?: string | null  // 数据来源名称（标准化：钢联/涌益）
   updateDate?: string | null  // 更新日期（格式：X年X月X日）
 }>()
@@ -129,13 +136,13 @@ const updateChart = () => {
       },
       formatter: (params: any) => {
         if (!Array.isArray(params)) return ''
-        
+        const rawUnit = (meta.unit || '').toLowerCase()
+        const unit = (rawUnit === 'ratio' || rawUnit === 'radio') ? '' : (meta.unit || '')
         let result = `<div style="margin-bottom: 4px;"><strong>${formatXLabel(params[0].axisValue)}</strong></div>`
         params.forEach((param: any) => {
           const value = param.value !== null && param.value !== undefined 
             ? param.value.toFixed(2) 
             : '-'
-          const unit = meta.unit || ''
           result += `<div style="margin: 2px 0;">
             <span style="display:inline-block;width:10px;height:10px;background-color:${param.color};border-radius:50%;margin-right:5px;"></span>
             ${param.seriesName}: <strong>${value}${unit}</strong>
@@ -163,8 +170,8 @@ const updateChart = () => {
     grid: {
       left: '3%',
       right: '4%',
-      top: '15%',
-      bottom: '15%',
+      top: '12%',
+      bottom: '6%',
       containLabel: true
     },
     xAxis: {
@@ -184,10 +191,10 @@ const updateChart = () => {
           if (/^\d+$/.test(value)) {
             return value
           }
-          // 周序号格式（如 第1周）：只显示部分标签
+          // 周序号格式（如 第1周）：间隔更多，约每8周显示一个刻度，避免过于密集
           const weekNum = parseInt(value.replace('第', '').replace('周', ''), 10)
           if (!isNaN(weekNum)) {
-            if (weekNum % 4 === 0 || weekNum === 1 || weekNum === 52) return value
+            if (weekNum % 8 === 0 || weekNum === 1 || weekNum === 52) return value
             return ''
           }
           return value
@@ -362,16 +369,30 @@ const getChangeClass = (value: number | null): string => {
   margin-bottom: 8px;
 }
 
+.chart-content {
+  position: relative;
+}
+
+.chart-area {
+  width: 100%;
+  height: 500px;
+}
+
+.chart-footer {
+  margin-top: 2px;
+}
+
 .change-info {
   display: flex;
-  gap: 20px;
-  font-size: 14px;
+  gap: 16px;
+  font-size: 13px;
+  margin-bottom: 2px;
 }
 
 .change-item {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .change-positive {
@@ -384,16 +405,10 @@ const getChangeClass = (value: number | null): string => {
   font-weight: bold;
 }
 
-.chart-content {
-  position: relative;
-}
-
 .data-source-info {
   font-size: 12px;
   color: #909399;
   text-align: right;
-  margin-top: 6px;
-  padding-right: 8px;
 }
 
 .separator {

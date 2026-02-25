@@ -50,6 +50,9 @@
             :data="getChartData(indicatorName)"
             :loading="loading"
             :title="`${selectedProvince} - ${indicatorName}`"
+            :change-info="getChangeInfo(indicatorName)"
+            :source-name="getSourceName(indicatorName)"
+            :update-date="getUpdateDate(indicatorName)"
           />
         </div>
       </div>
@@ -203,6 +206,65 @@ const getChartData = (indicatorName: string): SeasonalityData | null => {
       metric_name: indicator.metric_name
     }
   }
+}
+
+// 指标对应的数据来源
+const INDICATOR_SOURCE_MAP: Record<string, string> = {
+  '日度 均价': '涌益咨询',
+  '日度 散户标肥价差': '钢联数据',
+  '周度 出栏均重': '涌益咨询',
+  '周度 宰后均重': '钢联数据',
+  '周度 90KG占比': '涌益咨询',
+  '周度 冻品库容': '钢联数据'
+}
+
+// 从 series 计算本期涨跌、过去10日涨跌
+const computeChangeFromSeries = (indicator: SeasonalityResponse, isWeekly: boolean) => {
+  const points: Array<{ date: Date; value: number }> = []
+  for (const s of indicator.series || []) {
+    for (const d of s.data || []) {
+      if (d.month_day && d.value != null) {
+        const [m, day] = d.month_day.split('-').map(Number)
+        points.push({ date: new Date(s.year, m - 1, day), value: d.value })
+      }
+    }
+  }
+  if (points.length < 2) return { period_change: null as number | null, day10_change: null as number | null }
+  points.sort((a, b) => b.date.getTime() - a.date.getTime())
+  const latest = points[0]
+  const period_change = latest.value - points[1].value
+  let day10_change: number | null = null
+  if (isWeekly && points.length >= 3) day10_change = latest.value - points[2].value
+  else if (!isWeekly) {
+    const targetDate = new Date(latest.date)
+    targetDate.setDate(targetDate.getDate() - 10)
+    const approx = points.find(p => p.date.getTime() <= targetDate.getTime())
+    if (approx) day10_change = latest.value - approx.value
+  }
+  return { period_change, day10_change }
+}
+
+const getChangeInfo = (indicatorName: string) => {
+  const indicator = indicatorsData.value[indicatorName]
+  if (!indicator?.series?.length) return null
+  const isWeekly = indicatorName.includes('周度')
+  const { period_change, day10_change } = computeChangeFromSeries(indicator, isWeekly)
+  return { period_change, day10_change, yoy_change: null as number | null }
+}
+
+const getSourceName = (indicatorName: string): string | null => INDICATOR_SOURCE_MAP[indicatorName] ?? null
+
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr) return null
+  try {
+    const d = new Date(dateStr)
+    return `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月${String(d.getDate()).padStart(2, '0')}日`
+  } catch { return null }
+}
+
+const getUpdateDate = (indicatorName: string): string | null => {
+  const indicator = indicatorsData.value[indicatorName]
+  return formatUpdateDate(indicator?.update_time ?? indicator?.latest_date ?? null)
 }
 
 // 计算日期所在的周序号（ISO周）
