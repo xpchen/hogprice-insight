@@ -512,8 +512,8 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '15%',
-      top: '10%',
+      bottom: '6%',
+      top: '12%',
       containLabel: true
     },
     xAxis: {
@@ -632,19 +632,19 @@ onBeforeUnmount(() => {
 }
 
 .chart-box {
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 
 .info-box {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 6px;
+  gap: 2px;
+  padding-top: 2px;
   background-color: transparent;
 }
 
 .chart-title {
-  margin: 0 0 6px 0;
+  margin: 0 0 4px 0;
   font-size: 16px;
   font-weight: 600;
   color: #303133;
@@ -654,7 +654,7 @@ onBeforeUnmount(() => {
 
 .chart-container {
   width: 100%;
-  height: 400px;
+  height: 320px;
 }
 
 .loading-placeholder {
