@@ -394,7 +394,7 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     grid: { left: '3%', right: '4%', bottom: '15%', top: '22%', containLabel: true },
     xAxis: { type: 'time', boundaryGap: false },
     yAxis: [
-      { type: 'value', name: '价格', position: 'left', ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } },
+      { type: 'value', name: '价格', position: 'left', scale: true, ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } },
       { type: 'value', name: '升贴水', position: 'right', ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } }
     ],
     series: seriesData,
