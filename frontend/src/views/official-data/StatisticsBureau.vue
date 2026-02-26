@@ -12,33 +12,50 @@
         </div>
       </template>
 
-      <!-- 表1：统计局季度数据汇总 -->
+      <!-- 表1：统计局季度数据汇总（按 Excel 原样：多级表头 + 合并单元格） -->
       <div class="table-section">
         <h3>表1：统计局季度数据汇总</h3>
-        <div class="table-container">
-          <el-table
-            :data="quarterlyTableData"
-            border
-            stripe
-            v-loading="loadingTable1"
-            style="width: 100%"
-            :row-class-name="tableRowClassName"
-            max-height="600"
+        <p class="table-desc">数据来源：03.统计局季度数据（国家统计局）</p>
+        <div class="table-container raw-table-wrap" v-loading="loadingTable1">
+          <table
+            v-if="quarterlyTableData && (quarterlyTableData.header_row_0?.length || quarterlyTableData.rows?.length)"
+            class="raw-excel-table"
           >
-            <el-table-column prop="period" label="季度" width="120" fixed="left">
-            </el-table-column>
-            <el-table-column
-              v-for="(header, idx) in quarterlyHeaders"
-              :key="idx"
-              :label="header || `列${getColumnLetter(idx + 1)}`"
-              width="120"
-              align="right"
-            >
-              <template #default="{ row }">
-                {{ formatNumber(row.data[getColumnLetter(idx + 1)]) }}
-              </template>
-            </el-table-column>
-          </el-table>
+            <thead>
+              <tr v-for="(row, r) in quarterlyHeaderGrid" :key="'hr-' + r">
+                <template v-for="(cell, c) in row" :key="'h' + r + '-' + c">
+                  <th
+                    v-if="cell"
+                    :colspan="cell.colspan"
+                    :rowspan="cell.rowspan"
+                    :class="getHeaderCellClass(r, c, cell)"
+                  >
+                    {{ formatCell(cell.value) }}
+                  </th>
+                </template>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, ri) in quarterlyTableData.rows" :key="'r-' + ri">
+                <td
+                  v-for="(cell, ci) in row"
+                  :key="'c-' + ri + '-' + ci"
+                  :class="[getDataCellClass(ci, cell), ci <= 1 ? 'col-period' : '']"
+                >
+                  {{ formatDataCell(ci, cell) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div
+          v-if="!loadingTable1 && (!quarterlyTableData || (!quarterlyTableData.rows?.length && !quarterlyTableData.header_row_0?.length)) && !table1Error"
+          class="empty-hint"
+        >
+          <el-empty description="暂无数据，请先导入包含 03.统计局季度数据 的 Excel 文件" />
+        </div>
+        <div v-if="table1Error" class="error-hint">
+          <el-alert :title="table1Error" type="error" show-icon />
         </div>
       </div>
 
@@ -86,7 +103,7 @@ import {
   getImportMeat
 } from '@/api/statistics-bureau'
 import type {
-  QuarterlyDataResponse,
+  QuarterlyDataRawResponse,
   OutputSlaughterResponse,
   ImportMeatResponse
 } from '@/api/statistics-bureau'
@@ -103,7 +120,8 @@ const loadingTable1 = ref(false)
 const loadingChart1 = ref(false)
 const loadingChart2 = ref(false)
 
-const quarterlyData = ref<QuarterlyDataResponse | null>(null)
+const quarterlyData = ref<QuarterlyDataRawResponse | null>(null)
+const table1Error = ref('')
 const outputSlaughterData = ref<OutputSlaughterResponse | null>(null)
 const importMeatData = ref<ImportMeatResponse | null>(null)
 
@@ -113,12 +131,46 @@ const latestMonth = ref<string | null>(null)
 const timeRange = ref<[number, number]>([0, 100])
 
 // 计算属性
-const quarterlyHeaders = computed(() => {
-  return quarterlyData.value?.headers || []
-})
+const quarterlyTableData = computed(() => quarterlyData.value)
 
-const quarterlyTableData = computed(() => {
-  return quarterlyData.value?.data || []
+/** 根据 merged_cells 和表头构建带合并信息的表头网格 */
+const quarterlyHeaderGrid = computed(() => {
+  const td = quarterlyTableData.value
+  if (!td?.header_row_0?.length) return []
+  const rows: (string[])[] = [td.header_row_0]
+  if (td.header_row_1?.length) rows.push(td.header_row_1)
+  const maxCol = Math.max(...rows.map((r) => r.length), td.column_count || 0, 1)
+  const merged = td.merged_cells_json || []
+  type CellInfo = { value: string; rowspan: number; colspan: number }
+  const grid: (CellInfo | null)[][] = rows.map((row) =>
+    [...row, ...Array(Math.max(0, maxCol - row.length)).fill('')].map((v) => ({
+      value: String(v ?? '').trim() || '',
+      rowspan: 1,
+      colspan: 1
+    }))
+  )
+  for (const m of merged) {
+    const r0 = (m.min_row ?? 1) - 1
+    const c0 = (m.min_col ?? 1) - 1
+    const r1 = (m.max_row ?? 1) - 1
+    const c1 = (m.max_col ?? 1) - 1
+    if (r0 < 0 || r0 >= grid.length || c0 < 0) continue
+    const rowspan = r1 - r0 + 1
+    const colspan = c1 - c0 + 1
+    if (rowspan <= 0 || colspan <= 0) continue
+    const cell = grid[r0][c0] as CellInfo
+    if (cell) {
+      cell.rowspan = rowspan
+      cell.colspan = colspan
+    }
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        if (r === r0 && c === c0) continue
+        if (r < grid.length && c < (grid[r]?.length ?? 0)) grid[r][c] = null
+      }
+    }
+  }
+  return grid
 })
 
 const filteredOutputSlaughterData = computed(() => {
@@ -148,19 +200,57 @@ const timeRangeText = computed(() => {
   return `${startPeriod} 至 ${endPeriod}`
 })
 
-// 工具函数
-const getColumnLetter = (idx: number): string => {
-  // B=1, C=2, ..., Y=24
-  return String.fromCharCode(65 + idx) // A=65, B=66, etc.
+// 表1 工具函数
+function getHeaderCellClass(_r: number, _c: number, cell: { value: string } | null): string {
+  if (!cell?.value) return ''
+  const v = String(cell.value)
+  if (/能繁母猪/i.test(v)) return 'header-yellow'
+  if (/生猪存栏/i.test(v)) return 'header-green'
+  if (/生猪出栏/i.test(v)) return 'header-blue'
+  if (/定点屠宰|猪肉产量|猪肉进口|猪肉供给/i.test(v)) return 'header-orange'
+  return ''
 }
 
-const formatNumber = (val: number | null | undefined): string => {
-  if (val === null || val === undefined) return '-'
-  return val.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+function getParentHeader(colIdx: number): string {
+  const td = quarterlyTableData.value
+  if (!td?.header_row_1) return ''
+  for (let c = colIdx; c >= 0; c--) {
+    const v = String(td.header_row_1[c] ?? '').trim()
+    if (v && !/^环比$|^同比$|^比例$|^占比$|^累计$/.test(v)) return v
+  }
+  return String(td.header_row_0?.[colIdx] ?? '').trim()
 }
 
-const tableRowClassName = ({ rowIndex }: { rowIndex: number }) => {
-  return rowIndex % 2 === 1 ? 'even-row' : ''
+function getDataCellClass(colIdx: number, _cell: unknown): string {
+  const td = quarterlyTableData.value
+  if (!td) return ''
+  const cls: string[] = []
+  const h1 = td.header_row_1?.[colIdx] ?? ''
+  const isMomYoy = /环比|同比/.test(String(h1))
+  if (isMomYoy) cls.push('cell-mom-yoy')
+  const num = typeof _cell === 'number' ? _cell : parseFloat(String(_cell ?? ''))
+  if (Number.isFinite(num) && num < 0) cls.push('cell-negative')
+  return cls.join(' ')
+}
+
+function formatCell(val: unknown): string {
+  if (val === null || val === undefined) return ''
+  if (typeof val === 'number')
+    return Number.isFinite(val)
+      ? val.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+      : ''
+  return String(val).trim() || ''
+}
+
+function formatDataCell(colIdx: number, val: unknown): string {
+  const td = quarterlyTableData.value
+  const h1 = td?.header_row_1?.[colIdx] ?? ''
+  const isMomYoy = /环比|同比/.test(String(h1))
+  if (!isMomYoy) return formatCell(val)
+  if (val === null || val === undefined) return ''
+  const num = typeof val === 'number' ? val : parseFloat(String(val ?? ''))
+  if (!Number.isFinite(num)) return formatCell(val)
+  return `(${num})`
 }
 
 const handleTimeRangeChange = () => {
@@ -170,12 +260,14 @@ const handleTimeRangeChange = () => {
 // 加载表1数据
 const loadQuarterlyData = async () => {
   loadingTable1.value = true
+  table1Error.value = ''
   try {
     const response = await getQuarterlyData()
     quarterlyData.value = response
   } catch (error: any) {
-    console.error('加载季度数据失败:', error)
-    ElMessage.error('加载季度数据失败: ' + (error.message || '未知错误'))
+    table1Error.value = '加载季度数据失败: ' + (error.message || '未知错误')
+    quarterlyData.value = null
+    ElMessage.error(table1Error.value)
   } finally {
     loadingTable1.value = false
   }
@@ -513,9 +605,76 @@ onBeforeUnmount(() => {
 }
 
 .table-section h3 {
-  margin-bottom: 20px;
+  margin-bottom: 6px;
   font-size: 18px;
   font-weight: 600;
+}
+
+.table-desc {
+  font-size: 12px;
+  color: #909399;
+  margin: 0 0 12px 0;
+}
+
+.raw-table-wrap {
+  overflow-x: auto;
+  max-height: 600px;
+  overflow-y: auto;
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+}
+
+.raw-excel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.raw-excel-table th,
+.raw-excel-table td {
+  border: 1px solid #e4e7ed;
+  padding: 6px 10px;
+  text-align: center;
+}
+
+.raw-excel-table thead th {
+  background-color: #f5f7fa;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.raw-excel-table thead th.header-yellow {
+  background-color: #fff9e6;
+}
+.raw-excel-table thead th.header-green {
+  background-color: #e8f5e9;
+}
+.raw-excel-table thead th.header-blue {
+  background-color: #e3f2fd;
+}
+.raw-excel-table thead th.header-orange {
+  background-color: #fff3e0;
+}
+
+.raw-excel-table tbody td {
+  text-align: right;
+}
+
+.raw-excel-table tbody td.col-period {
+  text-align: center;
+}
+
+.raw-excel-table tbody tr:nth-child(even) td {
+  background-color: #fafafa;
+}
+
+.raw-excel-table tbody td.cell-negative {
+  color: #f56c6c;
+}
+
+.empty-hint,
+.error-hint {
+  margin-top: 16px;
 }
 
 .chart-section h3 {
@@ -542,7 +701,4 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-:deep(.even-row) {
-  background-color: #f5f7fa;
-}
 </style>

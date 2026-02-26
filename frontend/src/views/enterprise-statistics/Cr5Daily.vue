@@ -45,7 +45,7 @@
             <div class="info-box">
               <DataSourceInfo
                 :source-name="cr5Data?.data_source || '企业集团出栏跟踪'"
-                :update-date="formatUpdateDate(cr5Data?.update_time)"
+                :update-date="formatUpdateDate(cr5Data?.latest_date)"
               />
             </div>
           </div>
@@ -68,7 +68,7 @@
             <div class="info-box">
               <DataSourceInfo
                 :source-name="sichuanData?.data_source || '企业集团出栏跟踪'"
-                :update-date="formatUpdateDate(sichuanData?.update_time)"
+                :update-date="formatUpdateDate(sichuanData?.latest_date)"
               />
             </div>
           </div>
@@ -94,7 +94,7 @@
             <div class="info-box">
               <DataSourceInfo
                 :source-name="guangxiData?.data_source || '企业集团出栏跟踪'"
-                :update-date="formatUpdateDate(guangxiData?.update_time)"
+                :update-date="formatUpdateDate(guangxiData?.latest_date)"
               />
             </div>
           </div>
@@ -117,7 +117,7 @@
             <div class="info-box">
               <DataSourceInfo
                 :source-name="southwestData?.data_source || '企业集团出栏跟踪'"
-                :update-date="formatUpdateDate(southwestData?.update_time)"
+                :update-date="formatUpdateDate(southwestData?.latest_date)"
               />
             </div>
           </div>
@@ -135,7 +135,31 @@ import * as echarts from 'echarts'
 import { getCr5Daily, getSichuanDaily, getGuangxiDaily, getSouthwestSampleDaily } from '@/api/enterprise-statistics'
 import type { EnterpriseStatisticsResponse } from '@/api/enterprise-statistics'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
-import { axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, axisLabelIntegerFormatter, axisLabelPercentFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
+
+// 图表类型配置：左轴系列、右轴系列、是否排除价格
+type ChartTypeConfig = {
+  leftSeries: string[]
+  rightSeries: string[]
+  leftFormatter: 'integer' | 'decimal'
+  rightFormatter: 'decimal' | 'percent'
+}
+const CHART_CONFIGS: Record<string, ChartTypeConfig> = {
+  cr5: { leftSeries: ['日度出栏', '计划量'], rightSeries: ['价格'], leftFormatter: 'integer', rightFormatter: 'decimal' },
+  sichuan: { leftSeries: ['日度出栏', '计划出栏'], rightSeries: ['完成率'], leftFormatter: 'integer', rightFormatter: 'percent' },
+  guangxi: { leftSeries: ['日度出栏'], rightSeries: ['完成率'], leftFormatter: 'integer', rightFormatter: 'percent' },
+  southwest: { leftSeries: ['出栏量'], rightSeries: ['均重'], leftFormatter: 'integer', rightFormatter: 'decimal' }
+}
+
+const SERIES_COLORS: Record<string, string> = {
+  '日度出栏': '#409EFF',
+  '计划量': '#67C23A',
+  '计划出栏': '#67C23A',
+  '价格': '#E6A23C',
+  '完成率': '#F56C6C',
+  '出栏量': '#409EFF',
+  '均重': '#909399'
+}
 
 // 时间筛选
 const selectedMonths = ref<number>(6)
@@ -223,95 +247,99 @@ const generateXAxisGrid = (dates: string[]): string[] => {
   return gridDates.sort()
 }
 
-// 渲染图表
+// 渲染图表（支持双Y轴，左轴：出栏/计划量，右轴：价格/完成率）
 const renderChart = (
   chartRef: HTMLDivElement | undefined,
   chartInstance: echarts.ECharts | null,
   data: EnterpriseStatisticsResponse,
-  chartTitle: string
+  _chartTitle: string,
+  chartType: keyof typeof CHART_CONFIGS
 ): echarts.ECharts | null => {
   if (!chartRef) return null
   
-  // 销毁旧图表
-  if (chartInstance) {
-    chartInstance.dispose()
-  }
-  
-  // 创建新图表
+  if (chartInstance) chartInstance.dispose()
   const chart = echarts.init(chartRef)
   
-  // 收集所有日期
+  const config = CHART_CONFIGS[chartType] || CHART_CONFIGS.cr5
+  const displaySeries = data.series.filter(s => config.leftSeries.includes(s.name) || config.rightSeries.includes(s.name))
+  if (displaySeries.length === 0) {
+    chart.setOption({ title: { text: '暂无数据', left: 'center', top: 'center' } })
+    return chart
+  }
+  
   const allDates = new Set<string>()
-  data.series.forEach(series => {
-    series.data.forEach(point => {
-      if (point.date) allDates.add(point.date)
-    })
-  })
-  
+  displaySeries.forEach(s => s.data.forEach(p => { if (p.date) allDates.add(p.date) }))
   const sortedDates = Array.from(allDates).sort()
-  
-  // 生成X轴网格点（全部日期时使用月度网格）
   const gridDates = selectedMonths.value === 0 ? generateXAxisGrid(sortedDates) : sortedDates
   
-  // 构建系列数据
-  const series = data.series.map((s, idx) => {
+  const leftValues: number[] = []
+  const rightValues: number[] = []
+  
+  const series = displaySeries.map(s => {
     const seriesData = sortedDates.map(date => {
       const point = s.data.find(p => p.date === date)
-      return point?.value ?? null
+      const v = point?.value ?? null
+      if (v !== null) {
+        if (config.leftSeries.includes(s.name)) leftValues.push(v)
+        else rightValues.push(v)
+      }
+      return v
     })
-    
+    const yAxisIndex = config.leftSeries.includes(s.name) ? 0 : 1
+    const color = SERIES_COLORS[s.name] || '#409EFF'
     return {
       name: s.name,
-      type: 'line',
+      type: 'line' as const,
       data: seriesData,
+      yAxisIndex,
       smooth: true,
       symbol: 'none',
       connectNulls: true,
-      lineStyle: {
-        width: 2
-      }
+      lineStyle: { width: 2, color },
+      itemStyle: { color }
     }
   })
   
-  // 计算Y轴范围
-  const allValues = data.series.flatMap(s => s.data.map(p => p.value).filter(v => v !== null)) as number[]
-  const minValue = Math.min(...allValues)
-  const maxValue = Math.max(...allValues)
-  const padding = (maxValue - minValue) * 0.1
+  const leftMin = leftValues.length ? Math.min(...leftValues) : 0
+  const leftMax = leftValues.length ? Math.max(...leftValues) : 100
+  const leftPad = Math.max((leftMax - leftMin) * 0.08, 1)
+  const rightMin = rightValues.length ? Math.min(...rightValues) : 0
+  const rightMax = rightValues.length ? Math.max(...rightValues) : 100
+  const rightPad = rightValues.length
+    ? Math.max((rightMax - rightMin) * 0.08, rightValues.some(v => v < 0) ? 0.5 : 1)
+    : 1
+  
+  const leftAxisFormatter = config.leftFormatter === 'integer' ? axisLabelIntegerFormatter : axisLabelDecimalFormatter
+  const rightAxisFormatter = config.rightFormatter === 'percent' ? axisLabelPercentFormatter : axisLabelDecimalFormatter
   
   const option: echarts.EChartsOption = {
-    title: {
-      show: false
-    },
+    title: { show: false },
     tooltip: {
       trigger: 'axis',
       formatter: (params: any) => {
+        if (!Array.isArray(params)) return ''
         let result = `${params[0].axisValue}<br/>`
         params.forEach((param: any) => {
-          result += `${param.seriesName}: ${param.value !== null ? param.value.toFixed(2) : '无数据'}<br/>`
+          const val = param.value
+          const fmt = config.rightSeries.includes(param.seriesName) && config.rightFormatter === 'percent'
+            ? (val != null ? `${val.toFixed(2)}%` : '无数据')
+            : (val != null ? val.toFixed(2) : '无数据')
+          result += `${param.seriesName}: ${fmt}<br/>`
         })
         return result
       }
     },
     legend: {
-      data: data.series.map(s => s.name),
+      data: displaySeries.map(s => s.name),
       bottom: 0,
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
       itemGap: 15,
       left: 'left',
-      textStyle: {
-        fontSize: 12
-      }
+      textStyle: { fontSize: 12 }
     },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '15%',
-      top: '10%',
-      containLabel: true
-    },
+    grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
     xAxis: {
       type: 'category',
       data: sortedDates,
@@ -321,33 +349,36 @@ const renderChart = (
           const date = new Date(value)
           const month = date.getMonth() + 1
           const day = date.getDate()
-          // 如果是网格点（10、20、30号），显示完整日期
-          if ([10, 20, 30].includes(day)) {
-            return `${month}月${day}日`
-          }
+          if ([10, 20, 30].includes(day)) return `${month}月${day}日`
           return `${month}-${day}`
         },
         rotate: 45,
-        interval: selectedMonths.value === 0 ? (idx: number) => {
-          // 只显示网格点
-          return gridDates.includes(sortedDates[idx])
-        } : 'auto'
+        interval: selectedMonths.value === 0 ? (idx: number) => gridDates.includes(sortedDates[idx]) : 'auto'
       },
-      splitLine: {
-        show: true,
-        lineStyle: {
-          type: 'dashed'
-        }
+      splitLine: { show: true, lineStyle: { type: 'dashed' } }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: '出栏/计划',
+        position: 'left',
+        scale: true,
+        min: Math.max(0, leftMin - leftPad),
+        max: leftMax + leftPad,
+        ...yAxisHideMinMaxLabel,
+        axisLabel: { formatter: (v: number) => leftAxisFormatter(v) }
+      },
+      {
+        type: 'value',
+        name: config.rightFormatter === 'percent' ? '完成率(%)' : '价格',
+        position: 'right',
+        scale: true,
+        min: rightMin - rightPad,
+        max: rightMax + rightPad,
+        ...yAxisHideMinMaxLabel,
+        axisLabel: { formatter: (v: number) => rightAxisFormatter(v) }
       }
-    },
-    yAxis: {
-      type: 'value',
-      scale: false,
-      min: minValue - padding,
-      max: maxValue + padding,
-      ...yAxisHideMinMaxLabel,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
-    },
+    ],
     series: series as any
   }
   
@@ -364,7 +395,7 @@ const loadCr5Data = async () => {
     await nextTick()
     setTimeout(() => {
       if (cr5ChartRef.value) {
-        cr5Chart = renderChart(cr5ChartRef.value, cr5Chart, data, 'CR5企业日度出栏')
+        cr5Chart = renderChart(cr5ChartRef.value, cr5Chart, data, 'CR5企业日度出栏', 'cr5')
       }
     }, 200)
   } catch (error: any) {
@@ -383,7 +414,7 @@ const loadSichuanData = async () => {
     await nextTick()
     setTimeout(() => {
       if (sichuanChartRef.value) {
-        sichuanChart = renderChart(sichuanChartRef.value, sichuanChart, data, '四川重点企业日度出栏')
+        sichuanChart = renderChart(sichuanChartRef.value, sichuanChart, data, '四川重点企业日度出栏', 'sichuan')
       }
     }, 200)
   } catch (error: any) {
@@ -402,7 +433,7 @@ const loadGuangxiData = async () => {
     await nextTick()
     setTimeout(() => {
       if (guangxiChartRef.value) {
-        guangxiChart = renderChart(guangxiChartRef.value, guangxiChart, data, '广西重点企业日度出栏')
+        guangxiChart = renderChart(guangxiChartRef.value, guangxiChart, data, '广西重点企业日度出栏', 'guangxi')
       }
     }, 200)
   } catch (error: any) {
@@ -421,7 +452,7 @@ const loadSouthwestData = async () => {
     await nextTick()
     setTimeout(() => {
       if (southwestChartRef.value) {
-        southwestChart = renderChart(southwestChartRef.value, southwestChart, data, '西南样本企业日度出栏')
+        southwestChart = renderChart(southwestChartRef.value, southwestChart, data, '西南样本企业日度出栏', 'southwest')
       }
     }, 200)
   } catch (error: any) {

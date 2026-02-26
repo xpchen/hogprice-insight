@@ -6,29 +6,41 @@
           <span>E1. 规模场数据汇总</span>
           <DataSourceInfo
             v-if="chartLatestDate"
-            source-name="涌益咨询周度数据 - 月度-生产指标"
+            source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
             :update-date="chartLatestDate"
           />
         </div>
       </template>
 
-      <!-- 规模场数据汇总表格：按 Excel 原样输出（两行表头 + 数据行） -->
+      <!-- 规模场数据汇总表格：按 Excel 原样输出（多行表头 + 合并单元格 + 数据行） -->
       <div class="table-section">
         <h3 class="table-title">规模场数据汇总</h3>
         <p class="table-desc">数据来源：A1供给预测（2、【生猪产业数据】.xlsx）</p>
         <div class="table-container raw-table-wrap" v-loading="loading">
           <table v-if="tableData && (tableData.header_row_0?.length || tableData.rows?.length)" class="raw-excel-table">
             <thead>
-              <tr v-if="tableData.header_row_0?.length">
-                <th v-for="(cell, i) in tableData.header_row_0" :key="'h0-' + i">{{ formatCell(cell) }}</th>
-              </tr>
-              <tr v-if="tableData.header_row_1?.length">
-                <th v-for="(cell, i) in tableData.header_row_1" :key="'h1-' + i">{{ formatCell(cell) }}</th>
+              <tr v-for="(row, r) in headerGrid" :key="'hr-' + r">
+                <template v-for="(cell, c) in row" :key="'h' + r + '-' + c">
+                  <th
+                    v-if="cell"
+                    :colspan="cell.colspan"
+                    :rowspan="cell.rowspan"
+                    :class="getHeaderCellClass(r, c, cell)"
+                  >
+                    {{ formatCell(cell.value) }}
+                  </th>
+                </template>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(row, ri) in tableData.rows" :key="'r-' + ri">
-                <td v-for="(cell, ci) in row" :key="'c-' + ri + '-' + ci">{{ formatCell(cell) }}</td>
+                <td
+                  v-for="(cell, ci) in row"
+                  :key="'c-' + ri + '-' + ci"
+                  :class="getDataCellClass(ci, cell)"
+                >
+                  {{ formatDataCell(ci, cell) }}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -41,90 +53,182 @@
         </div>
       </div>
 
-      <!-- 图表1：母猪效能 -->
-      <div class="chart-section">
-        <h3 class="chart-title">图表1：母猪效能</h3>
-        <div class="chart-container">
-          <div ref="chart1Ref" style="width: 100%; height: 400px" v-loading="loading1"></div>
-        </div>
+      <!-- 母猪效能、压栏系数 并列显示（季节性，数据源：A1 表 F 列、N 列） -->
+      <div class="chart-section charts-row">
+        <el-row :gutter="20">
+          <el-col :xs="24" :sm="24" :md="12" :lg="12">
+            <SeasonalityChart
+              :data="sowEfficiencySeasonality"
+              :loading="loadingSeasonality"
+              title="母猪效能"
+              source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
+            />
+          </el-col>
+          <el-col :xs="24" :sm="24" :md="12" :lg="12">
+            <SeasonalityChart
+              :data="pressureCoefficientSeasonality"
+              :loading="loadingSeasonality"
+              title="压栏系数"
+              source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
+            />
+          </el-col>
+        </el-row>
       </div>
 
-      <!-- 图表2：压栏系数 -->
+      <!-- 涌益生产指标：五指标筛选 + 季节性图表（数据源：月度-生产指标2 F:J 列） -->
       <div class="chart-section">
-        <h3 class="chart-title">图表2：压栏系数</h3>
-        <div class="chart-container">
-          <div ref="chart2Ref" style="width: 100%; height: 400px" v-loading="loading2"></div>
-        </div>
-      </div>
-
-      <!-- 图表3：涌益生产指标 -->
-      <div class="chart-section">
-        <h3 class="chart-title">图表3：涌益生产指标</h3>
         <div class="filter-section">
           <span class="filter-label">图例筛选：</span>
-          <el-checkbox-group v-model="selectedIndicators" @change="handleIndicatorChange">
-            <el-checkbox v-for="indicator in indicatorNames" :key="indicator" :label="indicator">
-              {{ indicator }}
-            </el-checkbox>
-            <el-checkbox label="全部">全部</el-checkbox>
-          </el-checkbox-group>
+          <el-radio-group v-model="selectedProductionIndicator" @change="handleProductionIndicatorChange">
+            <el-radio-button v-for="ind in yongyiIndicatorNames" :key="ind" :label="ind" />
+            <el-radio-button label="全部">全部</el-radio-button>
+          </el-radio-group>
         </div>
-        <div class="chart-container">
-          <div ref="chart3Ref" style="width: 100%; height: 400px" v-loading="loading3"></div>
-        </div>
+        <SeasonalityChart
+          :data="yongyiProductionSeasonalityData"
+          :loading="loadingProductionSeasonality"
+          :title="yongyiChartTitle"
+          source-name="涌益咨询周度数据 - 月度-生产指标2（F:J列）"
+        />
       </div>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
 import {
   getA1SupplyForecastTable,
-  getSowEfficiency,
-  getPressureCoefficient,
-  getYongyiProductionIndicators
+  getA1SowEfficiencyPressureSeasonality,
+  getYongyiProductionSeasonality
 } from '@/api/production-indicators'
-import type {
-  A1SupplyForecastTableResponse,
-  ProductionIndicatorResponse,
-  ProductionIndicatorsResponse
-} from '@/api/production-indicators'
+import type { A1SupplyForecastTableResponse } from '@/api/production-indicators'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
-import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
+import SeasonalityChart, { type SeasonalityData } from '@/components/SeasonalityChart.vue'
 
 const loading = ref(false)
 const tableData = ref<A1SupplyForecastTableResponse | null>(null)
 const errorMessage = ref('')
 
-const chart1Ref = ref<HTMLDivElement>()
-const chart2Ref = ref<HTMLDivElement>()
-const chart3Ref = ref<HTMLDivElement>()
-let chart1Instance: echarts.ECharts | null = null
-let chart2Instance: echarts.ECharts | null = null
-let chart3Instance: echarts.ECharts | null = null
-const loading1 = ref(false)
-const loading2 = ref(false)
-const loading3 = ref(false)
-const chart1Data = ref<ProductionIndicatorResponse | null>(null)
-const chart2Data = ref<ProductionIndicatorResponse | null>(null)
-const chart3Data = ref<ProductionIndicatorsResponse | null>(null)
+const loadingSeasonality = ref(false)
+const loadingProductionSeasonality = ref(false)
+const sowEfficiencySeasonality = ref<SeasonalityData | null>(null)
+const pressureCoefficientSeasonality = ref<SeasonalityData | null>(null)
 const chartLatestDate = ref<string | null>(null)
-const indicatorNames = ref<string[]>([])
-const selectedIndicators = ref<string[]>(['全部'])
 
-const displayIndicators = computed(() => {
-  if (!chart3Data.value) return []
-  if (selectedIndicators.value.includes('全部')) return indicatorNames.value
-  return selectedIndicators.value.filter((name: string) => name !== '全部')
+const yongyiProductionSeasonalityRaw = ref<Record<string, SeasonalityData> | null>(null)
+const yongyiIndicatorNames = ref<string[]>(['窝均健仔数', '产房存活率', '配种分娩率', '断奶成活率', '育肥出栏成活率'])
+const selectedProductionIndicator = ref<string>('窝均健仔数')
+
+const yongyiProductionSeasonalityData = computed((): SeasonalityData | null => {
+  const raw = yongyiProductionSeasonalityRaw.value
+  if (!raw) return null
+  const ind = selectedProductionIndicator.value === '全部' ? '窝均健仔数' : selectedProductionIndicator.value
+  return raw[ind] ?? null
 })
 
+const yongyiChartTitle = computed(() => {
+  const ind = selectedProductionIndicator.value === '全部' ? '窝均健仔数' : selectedProductionIndicator.value
+  return ind
+})
+
+/** 根据 merged_cells 和表头构建带合并信息的表头网格，用于渲染 */
+const headerGrid = computed(() => {
+  const td = tableData.value
+  if (!td?.header_row_0?.length) return []
+  const rows: (string[])[] = [td.header_row_0]
+  if (td.header_row_1?.length) rows.push(td.header_row_1)
+  if (td.header_row_2?.length) rows.push(td.header_row_2)
+  const maxCol = Math.max(...rows.map((r) => r.length), td.column_count || 0, 1)
+  const merged = td.merged_cells_json || []
+  type CellInfo = { value: string; rowspan: number; colspan: number }
+  const grid: (CellInfo | null)[][] = rows.map((row) =>
+    [...row, ...Array(Math.max(0, maxCol - row.length)).fill('')].map((v) => ({
+      value: String(v ?? '').trim() || '',
+      rowspan: 1,
+      colspan: 1
+    }))
+  )
+  for (const m of merged) {
+    const r0 = (m.min_row ?? 1) - 1
+    const c0 = (m.min_col ?? 1) - 1
+    const r1 = (m.max_row ?? 1) - 1
+    const c1 = (m.max_col ?? 1) - 1
+    if (r0 < 0 || r0 >= grid.length || c0 < 0) continue
+    const rowspan = r1 - r0 + 1
+    const colspan = c1 - c0 + 1
+    if (rowspan <= 0 || colspan <= 0) continue
+    const cell = grid[r0][c0] as CellInfo
+    if (cell) {
+      cell.rowspan = rowspan
+      cell.colspan = colspan
+    }
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        if (r === r0 && c === c0) continue
+        if (r < grid.length && c < (grid[r]?.length ?? 0)) grid[r][c] = null
+      }
+    }
+  }
+  return grid
+})
+
+/** 表头列背景：母猪效能/新生仔猪=黄，5月大猪=绿，残差率/定点屠宰环比=橙 */
+function getHeaderCellClass(_r: number, _c: number, cell: { value: string } | null): string {
+  if (!cell?.value) return ''
+  const v = String(cell.value)
+  if (/母猪效能|新生仔猪/i.test(v)) return 'header-yellow'
+  if (/5月大猪/i.test(v)) return 'header-green'
+  if ((/残差率|定点屠宰/i.test(v) && /环比/i.test(v)) || v === '环比') return 'header-orange'
+  return ''
+}
+
+/** 查找列的父级表头（合并时 row1 可能为空，向左查找） */
+function getParentHeader(colIdx: number): string {
+  const td = tableData.value
+  if (!td?.header_row_1) return ''
+  for (let c = colIdx; c >= 0; c--) {
+    const v = String(td.header_row_1[c] ?? '').trim()
+    if (v && !/^环比$|^同比$/.test(v)) return v
+  }
+  return String(td.header_row_0?.[colIdx] ?? '').trim()
+}
+
+/** 数据单元格：负值红色、环比/同比列、残差率/定点屠宰环比列橙色 */
+function getDataCellClass(colIdx: number, _cell: unknown): string {
+  const td = tableData.value
+  if (!td) return ''
+  const cls: string[] = []
+  const h1 = td.header_row_1?.[colIdx] ?? ''
+  const h2 = td.header_row_2?.[colIdx] ?? ''
+  const isMomYoy = /环比|同比/.test(String(h1)) || /环比|同比/.test(String(h2))
+  if (isMomYoy) cls.push('cell-mom-yoy')
+  const parent = getParentHeader(colIdx)
+  if ((/残差率|定点屠宰/.test(parent)) && /环比/.test(String(h2))) cls.push('cell-orange')
+  const num = typeof _cell === 'number' ? _cell : parseFloat(String(_cell ?? ''))
+  if (Number.isFinite(num) && num < 0) cls.push('cell-negative')
+  return cls.join(' ')
+}
+
 function formatCell(val: unknown): string {
-  if (val === null || val === undefined) return '-'
-  if (typeof val === 'number') return Number.isFinite(val) ? String(val) : '-'
-  return String(val).trim() || '-'
+  if (val === null || val === undefined) return ''
+  if (typeof val === 'number') return Number.isFinite(val) ? String(val) : ''
+  return String(val).trim() || ''
+}
+
+/** 环比/同比列显示括号格式如 (0.3) */
+function formatDataCell(colIdx: number, val: unknown): string {
+  const s = formatCell(val)
+  if (!s || s === '-') return s
+  const td = tableData.value
+  const h1 = td?.header_row_1?.[colIdx] ?? ''
+  const h2 = td?.header_row_2?.[colIdx] ?? ''
+  const isMomYoy = /环比|同比/.test(String(h1)) || /环比|同比/.test(String(h2))
+  if (!isMomYoy) return s
+  const num = parseFloat(s)
+  if (!Number.isFinite(num)) return s
+  return `(${num})`
 }
 
 async function loadTable() {
@@ -141,131 +245,55 @@ async function loadTable() {
   }
 }
 
-async function loadChart1Data() {
-  loading1.value = true
+async function loadSeasonalityData() {
+  loadingSeasonality.value = true
   try {
-    const res = await getSowEfficiency()
-    chart1Data.value = res
-    if (res.latest_date && !chartLatestDate.value) chartLatestDate.value = res.latest_date
-    updateChart1()
+    const res = await getA1SowEfficiencyPressureSeasonality()
+    sowEfficiencySeasonality.value = res.sow_efficiency as SeasonalityData
+    pressureCoefficientSeasonality.value = res.pressure_coefficient as SeasonalityData
+    if (!chartLatestDate.value && (res.sow_efficiency.series?.length || res.pressure_coefficient.series?.length)) {
+      const years = [
+        ...(res.sow_efficiency.series?.map((s) => s.year) ?? []),
+        ...(res.pressure_coefficient.series?.map((s) => s.year) ?? [])
+      ]
+      chartLatestDate.value = years.length ? `${Math.max(...years)}年` : null
+    }
   } catch (e: any) {
-    console.error('加载图表1失败:', e)
-    ElMessage.error('加载图表1失败: ' + (e?.message || '未知错误'))
+    console.error('加载母猪效能/压栏系数季节性数据失败:', e)
+    ElMessage.error('加载季节性数据失败: ' + (e?.message || '未知错误'))
+    sowEfficiencySeasonality.value = null
+    pressureCoefficientSeasonality.value = null
   } finally {
-    loading1.value = false
+    loadingSeasonality.value = false
   }
 }
 
-async function loadChart2Data() {
-  loading2.value = true
+async function loadProductionSeasonalityData() {
+  loadingProductionSeasonality.value = true
   try {
-    const res = await getPressureCoefficient()
-    chart2Data.value = res
-    if (res.latest_date && !chartLatestDate.value) chartLatestDate.value = res.latest_date
-    updateChart2()
+    const res = await getYongyiProductionSeasonality()
+    yongyiProductionSeasonalityRaw.value = res.indicators as Record<string, SeasonalityData>
+    yongyiIndicatorNames.value = res.indicator_names
+    if (!selectedProductionIndicator.value || !res.indicator_names.includes(selectedProductionIndicator.value)) {
+      selectedProductionIndicator.value = res.indicator_names[0] ?? '窝均健仔数'
+    }
   } catch (e: any) {
-    console.error('加载图表2失败:', e)
-    ElMessage.error('加载图表2失败: ' + (e?.message || '未知错误'))
+    console.error('加载涌益生产指标季节性失败:', e)
+    ElMessage.error('加载涌益生产指标季节性失败: ' + (e?.message || '未知错误'))
+    yongyiProductionSeasonalityRaw.value = null
   } finally {
-    loading2.value = false
+    loadingProductionSeasonality.value = false
   }
 }
 
-async function loadChart3Data() {
-  loading3.value = true
-  try {
-    const res = await getYongyiProductionIndicators()
-    chart3Data.value = res
-    indicatorNames.value = res.indicator_names
-    selectedIndicators.value = ['全部']
-    if (res.latest_date && !chartLatestDate.value) chartLatestDate.value = res.latest_date
-    updateChart3()
-  } catch (e: any) {
-    console.error('加载图表3失败:', e)
-    ElMessage.error('加载图表3失败: ' + (e?.message || '未知错误'))
-  } finally {
-    loading3.value = false
-  }
+function handleProductionIndicatorChange() {
+  // computed 会自动更新，无需额外逻辑
 }
-
-function updateChart1() {
-  if (!chart1Ref.value || !chart1Data.value) return
-  if (!chart1Instance) chart1Instance = echarts.init(chart1Ref.value)
-  const option: echarts.EChartsOption = {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['分娩窝数'], bottom: 10, icon: 'circle', itemWidth: 10, itemHeight: 10, left: 'left' },
-    grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: chart1Data.value.data.map((d) => d.date) },
-    yAxis: { type: 'value', name: '窝数', ...yAxisHideMinMaxLabel },
-    dataZoom: [{ type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }, { type: 'inside', start: 0, end: 100 }],
-    series: [{ name: '分娩窝数', type: 'line', smooth: true, data: chart1Data.value.data.map((d) => d.value), itemStyle: { color: '#5470c6' } }]
-  }
-  chart1Instance.setOption(option)
-}
-
-function updateChart2() {
-  if (!chart2Ref.value || !chart2Data.value) return
-  if (!chart2Instance) chart2Instance = echarts.init(chart2Ref.value)
-  const option: echarts.EChartsOption = {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['窝均健仔数（河南）'], bottom: 10, icon: 'circle', itemWidth: 10, itemHeight: 10, left: 'left' },
-    grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: chart2Data.value.data.map((d) => d.date) },
-    yAxis: { type: 'value', name: '窝均健仔数', ...yAxisHideMinMaxLabel },
-    dataZoom: [{ type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }, { type: 'inside', start: 0, end: 100 }],
-    series: [{ name: '窝均健仔数（河南）', type: 'line', smooth: true, data: chart2Data.value.data.map((d) => d.value), itemStyle: { color: '#91cc75' } }]
-  }
-  chart2Instance.setOption(option)
-}
-
-function updateChart3() {
-  if (!chart3Ref.value || !chart3Data.value) return
-  if (!chart3Instance) chart3Instance = echarts.init(chart3Ref.value)
-  const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272']
-  const series = displayIndicators.value.map((indicator: string, idx: number) => {
-    const data = chart3Data.value!.indicators[indicator] || []
-    return { name: indicator, type: 'line', smooth: true, data: data.map((d) => d.value), itemStyle: { color: colors[idx % colors.length] } }
-  })
-  const dates = displayIndicators.value.length > 0 ? (chart3Data.value!.indicators[displayIndicators.value[0]] || []).map((d) => d.date) : []
-  const option: echarts.EChartsOption = {
-    tooltip: { trigger: 'axis' },
-    legend: { data: displayIndicators.value, bottom: 10, icon: 'circle', itemWidth: 10, itemHeight: 10, left: 'left' },
-    grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: dates },
-    yAxis: { type: 'value', name: '窝均健仔数', ...yAxisHideMinMaxLabel },
-    dataZoom: [{ type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }, { type: 'inside', start: 0, end: 100 }],
-    series
-  }
-  chart3Instance.setOption(option)
-}
-
-function handleIndicatorChange() {
-  updateChart3()
-}
-
-function handleResize() {
-  chart1Instance?.resize()
-  chart2Instance?.resize()
-  chart3Instance?.resize()
-}
-
-watch(displayIndicators, () => {
-  updateChart3()
-})
 
 onMounted(() => {
   loadTable()
-  loadChart1Data()
-  loadChart2Data()
-  loadChart3Data()
-  window.addEventListener('resize', handleResize)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  chart1Instance?.dispose()
-  chart2Instance?.dispose()
-  chart3Instance?.dispose()
+  loadSeasonalityData()
+  loadProductionSeasonalityData()
 })
 </script>
 
@@ -318,11 +346,28 @@ onBeforeUnmount(() => {
   font-weight: 600;
   white-space: nowrap;
 }
+/* Excel 条件格式：表头列背景 */
+.raw-excel-table thead th.header-yellow {
+  background-color: #fff9e6;
+}
+.raw-excel-table thead th.header-green {
+  background-color: #e8f5e9;
+}
+.raw-excel-table thead th.header-orange {
+  background-color: #fff3e0;
+}
 .raw-excel-table tbody td {
   text-align: right;
 }
-.raw-excel-table tbody tr:nth-child(even) {
+.raw-excel-table tbody tr:nth-child(even) td {
   background-color: #fafafa;
+}
+/* 负值红色、环比同比列、残差率/定点屠宰环比橙色 */
+.raw-excel-table tbody td.cell-negative {
+  color: #f56c6c;
+}
+.raw-excel-table tbody td.cell-orange {
+  background-color: #fff3e0 !important;
 }
 
 .empty-hint,

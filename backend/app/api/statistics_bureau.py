@@ -36,6 +36,15 @@ class QuarterlyDataResponse(BaseModel):
     data: List[QuarterlyDataRow]
 
 
+class QuarterlyDataRawResponse(BaseModel):
+    """季度数据汇总（按 Excel 原样，多级表头 + 合并单元格）"""
+    header_row_0: List[str]
+    header_row_1: List[str]
+    rows: List[List]
+    column_count: int
+    merged_cells_json: List[Dict]
+
+
 class OutputSlaughterPoint(BaseModel):
     """出栏量&屠宰量数据点"""
     period: str  # 季度，如"2024Q1"
@@ -64,25 +73,29 @@ class ImportMeatResponse(BaseModel):
 
 def _get_raw_table_data(db: Session, sheet_name: str) -> Optional[List[List]]:
     """获取raw_table数据"""
+    result = _get_raw_table_with_meta(db, sheet_name)
+    return result[0] if result else None
+
+
+def _get_raw_table_with_meta(db: Session, sheet_name: str) -> Optional[tuple]:
+    """获取raw_table数据及merged_cells_json，返回 (table_data, merged_cells_json)"""
     sheet = db.query(RawSheet).join(RawFile).filter(
         RawSheet.sheet_name == sheet_name
     ).first()
-    
     if not sheet:
         return None
-    
     raw_table = db.query(RawTable).filter(
         RawTable.raw_sheet_id == sheet.id
     ).first()
-    
     if not raw_table:
         return None
-    
     table_data = raw_table.table_json
     if isinstance(table_data, str):
         table_data = json.loads(table_data)
-    
-    return table_data
+    merged = raw_table.merged_cells_json
+    if isinstance(merged, str):
+        merged = json.loads(merged) if merged else []
+    return (table_data, merged or [])
 
 
 def _parse_excel_date(excel_date: any) -> Optional[date]:
@@ -142,104 +155,75 @@ def _parse_quarter(period_str: str) -> Optional[str]:
     return None
 
 
-@router.get("/quarterly-data", response_model=QuarterlyDataResponse)
+def _format_statistics_cell(val) -> str:
+    """格式化统计局表格单元格"""
+    if val is None:
+        return ""
+    if isinstance(val, (int, float)):
+        if math.isnan(val) or math.isinf(val):
+            return ""
+        return str(int(val)) if val == int(val) else f"{val:.2f}"
+    if hasattr(val, "isoformat"):
+        return val.isoformat()[:10]
+    return str(val).strip()
+
+
+@router.get("/quarterly-data", response_model=QuarterlyDataRawResponse)
 def get_quarterly_data(
     db: Session = Depends(get_db)
 ):
     """
     获取统计局季度数据汇总（表1）
-    数据来源：03.统计局季度数据 sheet，B-Y列
-    
-    数据结构：
-    - 第1行（索引0）：主表头（B列是"季度"，C列是"能繁母猪"，F列是"生猪存栏"等）
-    - 第2行（索引1）：子表头（C列是"存栏量"，D列是"环比"，E列是"同比"等）
-    - 第3行（索引2）开始：数据行（B列是季度日期，C-Y列是数据）
+    按 Excel 原样：2 行表头、合并单元格、数据行；B-Y 列。
+    数据来源：03.统计局季度数据 sheet
     """
-    table_data = _get_raw_table_data(db, "03.统计局季度数据")
-    
-    if not table_data or len(table_data) < 3:
-        return QuarterlyDataResponse(headers=[], data=[])
-    
-    # 合并第1行和第2行的表头，生成完整的列名
-    headers = []
-    main_header_row = table_data[0]  # 第1行：主表头
-    sub_header_row = table_data[1]   # 第2行：子表头
-    
-    # B-Y列（索引1-24）
-    for col_idx in range(1, 25):
-        col_letter = chr(65 + col_idx)  # B=66, C=67, ..., Y=89
-        
-        # 获取主表头（第1行）
-        main_header = ""
-        if col_idx < len(main_header_row) and main_header_row[col_idx]:
-            main_header = str(main_header_row[col_idx]).strip()
-        
-        # 获取子表头（第2行）
-        sub_header = ""
-        if col_idx < len(sub_header_row) and sub_header_row[col_idx]:
-            sub_header = str(sub_header_row[col_idx]).strip()
-        
-        # 合并表头
-        if main_header and sub_header:
-            header_name = f"{main_header}-{sub_header}"
-        elif main_header:
-            header_name = main_header
-        elif sub_header:
-            header_name = sub_header
-        else:
-            header_name = col_letter
-        
-        headers.append(header_name)
-    
-    # 解析数据行（从第3行开始，索引2）
-    data_rows = []
-    for row_idx, row in enumerate(table_data[2:], start=3):
-        if len(row) < 2:
+    result = _get_raw_table_with_meta(db, "03.统计局季度数据")
+    if not result or len(result[0]) < 2:
+        return QuarterlyDataRawResponse(
+            header_row_0=[],
+            header_row_1=[],
+            rows=[],
+            column_count=0,
+            merged_cells_json=[],
+        )
+    table_data, merged_cells = result
+    max_col = min(
+        max(len(table_data[0]), len(table_data[1]), *(len(r) for r in table_data[2:]), 1),
+        25,  # B-Y 共 24 列 + B 列季度，限 25 列
+    )
+
+    def pad_row(row, length):
+        r = list(row) if row else []
+        return [r[i] if i < len(r) else "" for i in range(length)]
+
+    row0 = pad_row(table_data[0], max_col)
+    row1 = pad_row(table_data[1], max_col)
+    header_row_0 = [_format_statistics_cell(v) or "" for v in row0]
+    header_row_1 = [_format_statistics_cell(v) or "" for v in row1]
+
+    rows = []
+    for row_idx in range(2, len(table_data)):
+        row = pad_row(table_data[row_idx], max_col)
+        if len(row) < 2 or not row[1]:  # B 列为季度，不能为空
             continue
-        
-        # B列（索引1）是季度日期
-        period_str = row[1] if len(row) > 1 and row[1] else None
-        if not period_str:
-            continue
-        
-        # 解析季度日期
-        period = None
-        parsed_date = _parse_excel_date(period_str)
+        parsed_date = _parse_excel_date(row[1])
         if parsed_date:
-            # 转换为季度格式：YYYYQ格式
             year = parsed_date.year
             quarter = (parsed_date.month - 1) // 3 + 1
-            period = f"{year}Q{quarter}"
+            row[1] = f"{year}Q{quarter}"
         else:
-            # 尝试直接解析季度字符串
-            period = _parse_quarter(str(period_str))
-            if not period:
-                period = str(period_str)
-        
-        # 提取B-Y列数据（索引1-24）
-        row_data = {}
-        for col_idx in range(1, 25):
-            col_letter = chr(65 + col_idx)  # B=66, C=67, ..., Y=89
-            if col_idx < len(row):
-                value = row[col_idx]
-                # 尝试转换为浮点数
-                if value is not None and value != "":
-                    try:
-                        float_val = float(value)
-                        if not (math.isnan(float_val) or math.isinf(float_val)):
-                            row_data[col_letter] = float_val
-                        else:
-                            row_data[col_letter] = None
-                    except (ValueError, TypeError):
-                        row_data[col_letter] = None
-                else:
-                    row_data[col_letter] = None
-            else:
-                row_data[col_letter] = None
-        
-        data_rows.append(QuarterlyDataRow(period=period, data=row_data))
-    
-    return QuarterlyDataResponse(headers=headers, data=data_rows)
+            q = _parse_quarter(str(row[1]))
+            if q:
+                row[1] = q
+        rows.append([_format_statistics_cell(v) for v in row])
+
+    return QuarterlyDataRawResponse(
+        header_row_0=header_row_0,
+        header_row_1=header_row_1,
+        rows=rows,
+        column_count=max_col,
+        merged_cells_json=merged_cells,
+    )
 
 
 @router.get("/output-slaughter", response_model=OutputSlaughterResponse)

@@ -49,7 +49,17 @@ class ChartTimingAndCacheMiddleware(BaseHTTPMiddleware):
         body = b""
         async for chunk in response.body_iterator:
             body += chunk
-        if response.status_code == 200 and body:
+        # 不缓存空的统计局季度数据（避免导入数据后仍返回旧缓存）
+        should_cache = response.status_code == 200 and body
+        if should_cache and "/statistics-bureau/quarterly-data" in path:
+            try:
+                import json
+                data = json.loads(body.decode("utf-8"))
+                if isinstance(data, dict) and not data.get("rows") and not data.get("header_row_0"):
+                    should_cache = False
+            except Exception:
+                pass
+        if should_cache:
             db_write = SessionLocal()
             try:
                 set_cached(db_write, cache_key, body.decode("utf-8"))

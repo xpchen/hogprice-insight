@@ -5,9 +5,9 @@
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span>D4. 集团价格</span>
           <DataSourceInfo
-            v-if="table1Data && table1Data.latest_date"
+            v-if="table1Data && (table1Data.latest_date || table1Data.date_range?.end)"
             source-name="钢联模板"
-            :update-date="table1Data.latest_date"
+            :update-date="formatUpdateDate(table1Data.latest_date || table1Data.date_range?.end)"
           />
         </div>
       </template>
@@ -35,9 +35,9 @@
             stripe
             v-loading="loading1"
             style="width: 100%"
-            height="400"
+            max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
+            <el-table-column prop="date" label="日期" width="100" fixed="left" align="center">
               <template #default="{ row }">
                 {{ formatDate(row.date) }}
               </template>
@@ -45,18 +45,13 @@
             <el-table-column
               v-for="company in table1FlatColumns"
               :key="company"
-              :label="company"
-              width="120"
+              :label="getColumnLabel(company)"
+              min-width="85"
               align="right"
               header-align="center"
             >
               <template #default="{ row }">
-                <div v-if="getCompanyPrice(row, company) !== null">
-                  <div class="price-value">{{ formatCompanyPrice(company, getCompanyPrice(row, company)) }}</div>
-                  <div class="premium-discount" v-if="getPremiumDiscount(company) !== null && getPremiumDiscount(company) !== 0">
-                    ({{ formatPremiumDiscount(getPremiumDiscount(company)) }})
-                  </div>
-                </div>
+                <span v-if="getCompanyPrice(row, company) !== null">{{ formatCompanyPrice(company, getCompanyPrice(row, company)) }}</span>
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -71,7 +66,7 @@
                 :key="region"
                 :label="region"
                 :prop="region"
-                width="110"
+                min-width="80"
                 align="right"
                 header-align="center"
               >
@@ -128,21 +123,21 @@
             stripe
             v-loading="loading2"
             style="width: 100%"
-            height="400"
+            max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="date" label="日期" width="120" fixed="left">
+            <el-table-column prop="date" label="日期" width="100" fixed="left">
               <template #default="{ row }">
                 {{ formatDate(row.date) }}
               </template>
             </el-table-column>
-            <el-table-column prop="market" label="市场" width="150" fixed="left">
+            <el-table-column prop="market" label="市场" min-width="100" fixed="left">
             </el-table-column>
-            <el-table-column prop="arrival_volume" label="到货量" width="120" align="right">
+            <el-table-column prop="arrival_volume" label="到货量" min-width="85" align="right">
               <template #default="{ row }">
                 {{ formatValue(row.arrival_volume) }}
               </template>
             </el-table-column>
-            <el-table-column prop="price" label="价格" width="120" align="right">
+            <el-table-column prop="price" label="价格" min-width="85" align="right">
               <template #default="{ row }">
                 {{ formatPrice(row.price) }}
               </template>
@@ -223,10 +218,15 @@ const getCompanyPrice = (row: any, company: string): number | null => {
 // 获取升贴水（从API返回的数据中获取）
 const getPremiumDiscount = (company: string): number | null => {
   if (!table1Data.value) return null
-  
-  // 从API返回的数据中查找该企业的升贴水
   const dataPoint = table1Data.value.data.find(d => d.company === company)
   return dataPoint?.premium_discount ?? null
+}
+
+// 列标题：企业名称 + 升贴水（括号内），升贴水移至标题行
+const getColumnLabel = (company: string): string => {
+  const pd = getPremiumDiscount(company)
+  if (pd != null && pd !== 0) return `${company} (${formatPremiumDiscount(pd)})`
+  return company
 }
 
 // 加载表格1数据
@@ -344,6 +344,17 @@ const formatPremiumDiscount = (value: number | null | undefined) => {
   return `${value >= 0 ? '+' : ''}${value}`
 }
 
+const formatUpdateDate = (dateStr: string | null | undefined): string | null => {
+  if (!dateStr || String(dateStr).includes('年')) return dateStr || null
+  try {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return null
+    return `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月${String(d.getDate()).padStart(2, '0')}日`
+  } catch {
+    return null
+  }
+}
+
 // 组件挂载
 onMounted(() => {
   loadTable1Data()
@@ -353,59 +364,51 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .group-price-page {
+  padding: 8px;
+  :deep(.el-card__body) { padding: 8px 12px; }
+
   .table-section {
-    margin-bottom: 30px;
-    
+    margin-bottom: 16px;
+
     h3 {
-      margin-bottom: 15px;
-      font-size: 16px;
+      margin-bottom: 8px;
+      font-size: 15px;
       font-weight: 600;
     }
   }
 
   .filter-section {
-    margin-bottom: 15px;
+    margin-bottom: 8px;
     display: flex;
     align-items: center;
-    
+
     .filter-label {
       font-weight: 500;
-      margin-right: 10px;
-      min-width: 80px;
+      margin-right: 8px;
+      min-width: 72px;
     }
   }
 
   .table-container {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
   }
 
   .range-section {
-    margin-top: 20px;
-    padding: 15px;
+    margin-top: 12px;
+    padding: 10px;
     background-color: #f5f7fa;
     border-radius: 4px;
     display: flex;
     align-items: center;
-    
-    .filter-label {
-      font-weight: 500;
-      margin-right: 10px;
-    }
-    
-    .range-result {
-      margin-left: 20px;
-      font-size: 14px;
-    }
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .filter-label { font-weight: 500; margin-right: 4px; }
+    .range-result { font-size: 13px; }
   }
 
-  .price-value {
-    font-weight: 500;
-  }
-
-  .premium-discount {
-    font-size: 12px;
-    color: #909399;
-    margin-top: 2px;
-  }
+  :deep(.el-table) { font-size: 12px; }
+  :deep(.el-table th) { padding: 4px 0; font-weight: 600; background-color: #f5f7fa; }
+  :deep(.el-table td) { padding: 2px 0; }
 }
 </style>

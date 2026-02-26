@@ -12,9 +12,10 @@
         </div>
       </template>
 
-      <!-- 图表1：长周期生猪供需曲线 -->
+      <!-- 图表1：长周期生猪供需曲线（横轴价格系数，纵轴屠宰系数，每年一条线） -->
       <div class="chart-section">
         <h3>图表1：长周期生猪供需曲线</h3>
+        <p class="chart-desc">横轴：价格系数；纵轴：屠宰系数。价格系数=钢联X月均价/历年X月均值；屠宰系数=Y月定点屠宰/历年Y月均值。</p>
         <div class="chart-container">
           <div ref="chart1Ref" style="width: 100%; height: 500px" v-loading="loading1"></div>
         </div>
@@ -78,12 +79,10 @@ const loadChart1Data = async () => {
   loading1.value = true
   try {
     const response = await getSupplyDemandCurve()
-    console.log('图表1数据加载成功:', response)
     chart1Data.value = response
     if (response.latest_month && !latestMonth.value) {
       latestMonth.value = response.latest_month
     }
-    console.log('chart1Data.value:', chart1Data.value)
     updateChart1()
   } catch (error: any) {
     console.error('加载图表1数据失败:', error)
@@ -129,19 +128,61 @@ const loadChart3Data = async () => {
   }
 }
 
-// 更新图表1
-const updateChart1 = () => {
-  if (!chart1Ref.value || !chart1Data.value) {
-    console.log('updateChart1: 缺少数据或ref')
-    return
+// 将数据按年份分组，每年一条线：(价格系数, 屠宰系数)，按月份顺序
+function buildSupplyDemandSeries(data: { month: string; slaughter_coefficient?: number | null; price_coefficient?: number | null }[]) {
+  const byYear = new Map<number, Array<{ price: number; slaughter: number; month: string }>>()
+  for (const d of data) {
+    const price = d.price_coefficient
+    const slaughter = d.slaughter_coefficient
+    if (price == null || slaughter == null || isNaN(price) || isNaN(slaughter)) continue
+    const [yStr, mStr] = d.month.split('-')
+    const year = parseInt(yStr, 10)
+    if (isNaN(year)) continue
+    if (!byYear.has(year)) byYear.set(year, [])
+    byYear.get(year)!.push({ price, slaughter, month: d.month })
   }
+  const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452']
+  const series: echarts.SeriesOption[] = []
+  const years = Array.from(byYear.keys()).sort((a, b) => a - b)
+  years.forEach((year, i) => {
+    const pts = byYear.get(year)!
+    pts.sort((a, b) => a.month.localeCompare(b.month))
+    const lineData = pts.map(p => [p.price, p.slaughter])
+    series.push({
+      name: `${year}年`,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data: lineData,
+      itemStyle: { color: colors[i % colors.length] },
+      lineStyle: { width: 2 }
+    })
+  })
+  return { series, years }
+}
+
+// 更新图表1：供需曲线（横轴价格系数，纵轴屠宰系数，每年一条线）
+const updateChart1 = () => {
+  if (!chart1Ref.value || !chart1Data.value) return
 
   if (!chart1Instance) {
     chart1Instance = echarts.init(chart1Ref.value)
   }
 
-  console.log('updateChart1: 数据条数:', chart1Data.value.data.length)
-  console.log('updateChart1: 前5条数据:', chart1Data.value.data.slice(0, 5))
+  const { series, years } = buildSupplyDemandSeries(chart1Data.value.data)
+  if (series.length === 0) {
+    chart1Instance.setOption({
+      title: { text: '长周期生猪供需曲线', left: 'left' },
+      graphic: {
+        type: 'text',
+        left: 'center',
+        top: 'middle',
+        style: { text: '暂无有效数据（需同时有价格系数和屠宰系数）', fontSize: 14, fill: '#999' }
+      }
+    })
+    return
+  }
 
   const option: echarts.EChartsOption = {
     title: {
@@ -149,12 +190,17 @@ const updateChart1 = () => {
       left: 'left'
     },
     tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' }
+      trigger: 'item',
+      formatter: (params: any) => {
+        if (!params?.data) return ''
+        const [price, slaughter] = params.data
+        return `${params.seriesName}<br/>价格系数: ${Number(price).toFixed(2)}<br/>屠宰系数: ${Number(slaughter).toFixed(2)}`
+      }
     },
     legend: {
-      data: ['定点屠宰系数', '猪价系数'],
+      data: years.map(y => `${y}年`),
       bottom: 10,
+      type: 'scroll',
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
@@ -164,52 +210,22 @@ const updateChart1 = () => {
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '15%',
+      bottom: '18%',
       containLabel: true
     },
     xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: chart1Data.value.data.map(d => d.month)
-    },
-    yAxis: {
       type: 'value',
-      name: '系数',
+      name: '价格系数',
       ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
-    dataZoom: [
-      {
-        type: 'slider',
-        start: 0,
-        end: 100,
-        height: 20,
-        bottom: 10
-      },
-      {
-        type: 'inside',
-        start: 0,
-        end: 100
-      }
-    ],
-    series: [
-      {
-        name: '定点屠宰系数',
-        type: 'line',
-        smooth: true,
-        data: chart1Data.value.data.map(d => d.slaughter_coefficient ?? null),
-        itemStyle: { color: '#5470c6' },
-        connectNulls: false  // 不连接null值
-      },
-      {
-        name: '猪价系数',
-        type: 'line',
-        smooth: true,
-        data: chart1Data.value.data.map(d => d.price_coefficient ?? null),
-        itemStyle: { color: '#91cc75' },
-        connectNulls: false  // 不连接null值
-      }
-    ]
+    yAxis: {
+      type: 'value',
+      name: '屠宰系数',
+      ...yAxisHideMinMaxLabel,
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
+    },
+    series
   }
 
   chart1Instance.setOption(option)
@@ -428,6 +444,13 @@ onBeforeUnmount(() => {
   
   .chart-section {
     margin-bottom: 12px;
+
+    .chart-desc {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      color: #666;
+      line-height: 1.5;
+    }
     
     h3 {
       margin-bottom: 6px;

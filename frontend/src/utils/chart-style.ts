@@ -20,6 +20,11 @@ export function axisLabelDecimalFormatter(value: number): string {
   return value.toFixed(2)
 }
 
+/** 数量轴标签：显示整数（出栏量、计划量等） */
+export function axisLabelIntegerFormatter(value: number): string {
+  return String(Math.round(value))
+}
+
 /** 百分比轴标签：保留两位小数 */
 export function axisLabelPercentFormatter(value: number): string {
   if (Number.isInteger(value)) return `${value}%`

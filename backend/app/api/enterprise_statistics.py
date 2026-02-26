@@ -950,8 +950,26 @@ async def get_province_summary_table(
         
         rows.append(row)
     
-    # 获取数据来源和更新时间
-    latest_date = max([dp[0] for dp in dates_periods]) if dates_periods else None
+    # 获取数据来源和更新时间：以实际出栏量（PROVINCE_ACTUAL）有数据的日期为准
+    latest_date = None
+    actual_output_metric = next(
+        (
+            m for m in valid_metrics
+            if (m.parse_json or {}).get('metric_key') == 'PROVINCE_ACTUAL'
+            or (m.metric_name or '').find('实际出栏') >= 0
+        ),
+        None
+    )
+    if actual_output_metric:
+        actual_max = db.query(func.max(FactObservation.obs_date)).filter(
+            FactObservation.metric_id == actual_output_metric.id,
+            FactObservation.obs_date >= start,
+            FactObservation.obs_date <= end,
+            FactObservation.value.isnot(None)
+        ).scalar()
+        latest_date = actual_max
+    if latest_date is None and dates_periods:
+        latest_date = max([dp[0] for dp in dates_periods])
     data_source = get_source_name_from_metric(valid_metrics[0]) if valid_metrics else "企业集团出栏跟踪"
     
     return ProvinceSummaryTableResponse(

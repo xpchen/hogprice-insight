@@ -5,7 +5,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 from pydantic import BaseModel
 import json
@@ -59,26 +59,28 @@ def _parse_date(value: any) -> Optional[date]:
 
 def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[List[List]]:
     """获取raw_table数据"""
+    result = _get_raw_table_with_meta(db, sheet_name, filename_pattern)
+    return result[0] if result else None
+
+
+def _get_raw_table_with_meta(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[tuple]:
+    """获取raw_table数据及merged_cells_json，返回 (table_data, merged_cells_json)"""
     query = db.query(RawSheet).join(RawFile).filter(RawSheet.sheet_name == sheet_name)
     if filename_pattern:
         query = query.filter(RawFile.filename.like(f'%{filename_pattern}%'))
     sheet = query.first()
-    
     if not sheet:
         return None
-    
-    raw_table = db.query(RawTable).filter(
-        RawTable.raw_sheet_id == sheet.id
-    ).first()
-    
+    raw_table = db.query(RawTable).filter(RawTable.raw_sheet_id == sheet.id).first()
     if not raw_table:
         return None
-    
     table_data = raw_table.table_json
     if isinstance(table_data, str):
         table_data = json.loads(table_data)
-    
-    return table_data
+    merged = raw_table.merged_cells_json
+    if isinstance(merged, str):
+        merged = json.loads(merged) if merged else []
+    return (table_data, merged or [])
 
 
 @router.get("/sow-efficiency", response_model=ProductionIndicatorResponse)
@@ -181,10 +183,49 @@ async def get_pressure_coefficient(db: Session = Depends(get_db)):
     )
 
 
+class YongyiProductionSeasonalityResponse(BaseModel):
+    """涌益生产指标季节性数据（月度-生产指标2，F:J 列五指标）"""
+    indicators: Dict[str, Dict[str, Any]]  # key: 指标名称, value: { x_values, series, meta }
+    indicator_names: List[str]
+
+
+@router.get("/yongyi-production-seasonality", response_model=YongyiProductionSeasonalityResponse)
+async def get_yongyi_production_seasonality(db: Session = Depends(get_db)):
+    """
+    涌益生产指标季节性数据
+    数据源：《涌益咨询周度数据》- 月度-生产指标2，F:J 列
+    五指标：窝均健仔数、产房存活率、配种分娩率、断奶成活率、育肥出栏成活率
+    """
+    table_data = _get_raw_table_data(db, "月度-生产指标2", "涌益")
+    indicator_names = ["窝均健仔数", "产房存活率", "配种分娩率", "断奶成活率", "育肥出栏成活率"]
+    # 月度-生产指标2：row0=生产指标, row1=日期+列名, data from row2; 日期=col0, F:J=col5-9
+    date_col = 0
+    col_mapping = {name: 5 + i for i, name in enumerate(indicator_names)}
+    empty_result = {
+        "x_values": [f"{m}月" for m in range(1, 13)],
+        "series": [],
+        "meta": {"unit": "", "freq": "M", "metric_name": ""},
+    }
+    if not table_data or len(table_data) < 3:
+        return YongyiProductionSeasonalityResponse(
+            indicators={name: {**empty_result, "meta": {**empty_result["meta"], "metric_name": name}} for name in indicator_names},
+            indicator_names=indicator_names,
+        )
+    data_start = 2
+    result = {}
+    for name, value_col in col_mapping.items():
+        seasonality = _extract_a1_column_seasonality(table_data, date_col, value_col, data_start)
+        seasonality["meta"]["metric_name"] = name
+        if name == "产房存活率" or name == "配种分娩率" or name == "断奶成活率" or name == "育肥出栏成活率":
+            seasonality["meta"]["unit"] = "ratio"
+        result[name] = seasonality
+    return YongyiProductionSeasonalityResponse(indicators=result, indicator_names=indicator_names)
+
+
 @router.get("/yongyi-production-indicators", response_model=ProductionIndicatorsResponse)
 async def get_yongyi_production_indicators(db: Session = Depends(get_db)):
     """
-    获取涌益生产指标数据
+    获取涌益生产指标数据（旧接口，保留兼容）
     返回5个省份的窝均健仔数：辽宁(J列)、广东(L列)、河南(N列)、湖南(P列)、四川(R列)
     """
     table_data = _get_raw_table_data(db, "月度-生产指标（2021.5.7新增）")
@@ -284,33 +325,124 @@ def _is_a1_row_valid(row: list, max_col: int) -> bool:
     return True
 
 
+def _is_a1_header_row_2(row: list) -> bool:
+    """判断是否为第三行表头（含环比/同比等子表头）"""
+    if not row or len(row) < 3:
+        return False
+    row_str = " ".join(str(c or "").strip() for c in row[:50])
+    return "环比" in row_str or "同比" in row_str
+
+
+class A1SeasonalityResponse(BaseModel):
+    """A1 表格 F/N 列季节性数据（母猪效能、压栏系数）"""
+    sow_efficiency: Dict  # { x_values, series, meta }
+    pressure_coefficient: Dict  # { x_values, series, meta }
+
+
+def _extract_a1_column_seasonality(table_data: list, date_col: int, value_col: int, data_start: int) -> Dict[str, Any]:
+    """从 A1 表格提取指定列，转为季节性格式（按年月分组，多年叠线）"""
+    # 收集 (year, month) -> value
+    by_year_month: Dict[tuple, float] = {}
+    for row_idx in range(data_start, len(table_data)):
+        row = table_data[row_idx] if row_idx < len(table_data) else []
+        if len(row) <= max(date_col, value_col):
+            continue
+        date_val = row[date_col] if date_col < len(row) else None
+        val = row[value_col] if value_col < len(row) else None
+        if not date_val or val is None or val == "":
+            continue
+        parsed = _parse_date(date_val)
+        if not parsed:
+            continue
+        try:
+            fv = float(val)
+            if math.isnan(fv) or math.isinf(fv):
+                continue
+            by_year_month[(parsed.year, parsed.month)] = round(fv, 2)
+        except (ValueError, TypeError):
+            continue
+    # 按年分组，构建 series（x 轴用 "1月".."12月"）
+    years = sorted({y for y, _ in by_year_month.keys()})
+    x_values = [f"{m}月" for m in range(1, 13)]
+    series = []
+    for year in years:
+        values = [by_year_month.get((year, m)) for m in range(1, 13)]
+        series.append({"year": year, "values": values})
+    return {"x_values": x_values, "series": series, "meta": {"unit": "", "freq": "M", "metric_name": ""}}
+
+
+@router.get("/a1-sow-efficiency-pressure-seasonality", response_model=A1SeasonalityResponse)
+async def get_a1_sow_efficiency_pressure_seasonality(db: Session = Depends(get_db)):
+    """
+    从 A1供给预测 表格 F 列（母猪效能）、N 列（压栏系数）提取数据，返回季节性格式。
+    数据源：2、【生猪产业数据】.xlsx - A1供给预测
+    """
+    result = _get_raw_table_with_meta(db, "A1供给预测", "2、【生猪产业数据】")
+    if not result or len(result[0]) < 2:
+        return A1SeasonalityResponse(
+            sow_efficiency={"x_values": [f"{m}月" for m in range(1, 13)], "series": [], "meta": {"unit": "", "freq": "M", "metric_name": "母猪效能"}},
+            pressure_coefficient={"x_values": [f"{m}月" for m in range(1, 13)], "series": [], "meta": {"unit": "", "freq": "M", "metric_name": "压栏系数"}},
+        )
+    table_data, _ = result
+    max_col = max(len(r) for r in table_data) if table_data else 0
+    data_start = 2
+    row2 = list(table_data[2]) if len(table_data) > 2 and table_data[2] else []
+    if len(table_data) >= 3 and _is_a1_header_row_2(row2):
+        data_start = 3
+    # B 列(索引1)=月度, F 列(索引5)=母猪效能, N 列(索引13)=压栏系数
+    date_col, f_col, n_col = 1, 5, 13
+    if max_col <= n_col:
+        return A1SeasonalityResponse(
+            sow_efficiency={"x_values": [f"{m}月" for m in range(1, 13)], "series": [], "meta": {"unit": "", "freq": "M", "metric_name": "母猪效能"}},
+            pressure_coefficient={"x_values": [f"{m}月" for m in range(1, 13)], "series": [], "meta": {"unit": "", "freq": "M", "metric_name": "压栏系数"}},
+        )
+    sow = _extract_a1_column_seasonality(table_data, date_col, f_col, data_start)
+    sow["meta"]["metric_name"] = "母猪效能"
+    press = _extract_a1_column_seasonality(table_data, date_col, n_col, data_start)
+    press["meta"]["metric_name"] = "压栏系数"
+    return A1SeasonalityResponse(sow_efficiency=sow, pressure_coefficient=press)
+
+
 @router.get("/a1-supply-forecast-table")
 async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
     """
     A1供给预测表格（sheet_name: A1供给预测）
-    按 Excel 原样：全表两行表头 + 数据行；月度 yyyy-MM-dd，数字 1 位小数，清理无效行。
+    按 Excel 原样：支持 2～3 行表头、合并单元格、数据行；月度 yyyy-MM-dd，数字 1 位小数。
     """
-    table_data = _get_raw_table_data(db, "A1供给预测", "2、【生猪产业数据】")
-    if not table_data or len(table_data) < 2:
+    result = _get_raw_table_with_meta(db, "A1供给预测", "2、【生猪产业数据】")
+    if not result or len(result[0]) < 2:
         return {
             "header_row_0": [],
             "header_row_1": [],
+            "header_row_2": [],
             "rows": [],
             "column_count": 0,
+            "merged_cells_json": [],
         }
+    table_data, merged_cells = result
     max_col = max(len(table_data[0]), len(table_data[1]), *(len(r) for r in table_data[2:]), 1)
 
     def pad_row(row, length):
         r = list(row) if row else []
         return [r[i] if i < len(r) else "" for i in range(length)]
 
+    # 表头行
     row0 = pad_row(table_data[0], max_col)
     row1 = pad_row(table_data[1], max_col)
     header_row_0 = [_format_a1_cell(v) or "" for v in row0]
     header_row_1 = [_format_a1_cell(v) or "" for v in row1]
 
+    # 判断是否存在第三行表头
+    data_start = 2
+    header_row_2 = []
+    if len(table_data) >= 3:
+        row2 = pad_row(table_data[2], max_col)
+        if _is_a1_header_row_2(row2):
+            header_row_2 = [_format_a1_cell(v) or "" for v in row2]
+            data_start = 3
+
     rows = []
-    for row_idx in range(2, len(table_data)):
+    for row_idx in range(data_start, len(table_data)):
         row = pad_row(table_data[row_idx], max_col)
         if not _is_a1_row_valid(row, max_col):
             continue
@@ -319,6 +451,8 @@ async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
     return {
         "header_row_0": header_row_0,
         "header_row_1": header_row_1,
+        "header_row_2": header_row_2,
         "rows": rows,
         "column_count": max_col,
+        "merged_cells_json": merged_cells,
     }

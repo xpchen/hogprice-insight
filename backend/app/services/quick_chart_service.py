@@ -63,6 +63,15 @@ def clear_all_cached(db: Session) -> int:
     return n
 
 
+def clear_cached_by_prefix(db: Session, prefix: str) -> int:
+    """按 cache_key 前缀删除缓存，返回删除条数"""
+    n = db.query(QuickChartCache).filter(QuickChartCache.cache_key.startswith(prefix)).delete(
+        synchronize_session=False
+    )
+    db.commit()
+    return n
+
+
 def regenerate_cache_sync(db: Session) -> dict:
     """
     同步预计算：清空缓存后按 QUICK_CHART_PRECOMPUTE_URLS 请求并写入缓存。

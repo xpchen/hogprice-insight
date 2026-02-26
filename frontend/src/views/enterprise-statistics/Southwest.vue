@@ -3,45 +3,51 @@
     <el-card>
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
-          <span>重点省份旬度</span>
+          <span>D2. 重点省份旬度出栏</span>
           <DataSourceInfo
-            v-if="tableData && tableData.update_time"
+            v-if="tableData && (tableData.latest_date || tableData.update_time)"
             :source-name="tableData.data_source || '企业集团出栏跟踪'"
-            :update-date="tableData.update_time"
+            :update-date="formatUpdateDate(tableData.latest_date) || tableData.update_time"
           />
         </div>
       </template>
 
-      <!-- 时间范围选择 -->
-      <div class="date-range-selector">
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          format="YYYY-MM-DD"
-          value-format="YYYY-MM-DD"
-          @change="handleDateRangeChange"
-        />
-        <el-button
-          type="primary"
-          size="small"
-          @click="loadDefaultRange"
-          style="margin-left: 10px"
-        >
-          最近4个月
-        </el-button>
+      <!-- 时间范围 + 旬度筛选 -->
+      <div class="filter-row">
+        <div class="date-range-selector">
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+            size="small"
+            @change="handleDateRangeChange"
+          />
+          <el-button type="primary" size="small" @click="loadDefaultRange">
+            最近4个月
+          </el-button>
+        </div>
+        <div class="period-filter">
+          <span class="filter-label">旬度筛选：</span>
+          <el-checkbox-group v-model="periodTypeFilter" size="small">
+            <el-checkbox label="上旬">上旬</el-checkbox>
+            <el-checkbox label="中旬">中旬</el-checkbox>
+            <el-checkbox label="月度">月度</el-checkbox>
+          </el-checkbox-group>
+        </div>
       </div>
 
-      <!-- 表格容器：多表头，相同省份合并 -->
+      <!-- 表格容器：多表头，表头固定 -->
       <div class="table-container" ref="tableContainerRef">
         <el-table
-          :data="allRows"
+          :data="filteredRows"
           border
           stripe
           v-loading="loading"
-          height="500"
+          max-height="calc(100vh - 280px)"
           style="width: 100%"
         >
           <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
@@ -67,7 +73,7 @@
               :key="col.key"
               :prop="col.key"
               :label="col.label"
-              width="110"
+              min-width="85"
               align="right"
               header-align="center"
             >
@@ -80,9 +86,9 @@
       </div>
 
       <!-- 滚动提示 -->
-      <div v-if="hasMoreData" class="scroll-hint">
+      <div v-if="filteredRows.length > 12" class="scroll-hint">
         <el-icon><ArrowRight /></el-icon>
-        <span>表格共 {{ allRows.length }} 行数据，可滚动查看</span>
+        <span>表格共 {{ filteredRows.length }} 行数据，表头固定可滚动查看</span>
       </div>
     </el-card>
   </div>
@@ -106,8 +112,18 @@ const allRows = ref<any[]>([])
 // 日期范围（默认最近4个月）
 const dateRange = ref<[string, string] | null>(null)
 
+// 旬度筛选（默认全选）
+const periodTypeFilter = ref<string[]>(['上旬', '中旬', '月度'])
+
 // 表格容器引用
 const tableContainerRef = ref<HTMLDivElement>()
+
+// 按旬度筛选后的行数据
+const filteredRows = computed(() => {
+  const sel = periodTypeFilter.value
+  if (!sel || sel.length === 0 || sel.length === 3) return allRows.value
+  return allRows.value.filter(row => sel.includes(row.period_type || ''))
+})
 
 
 // 格式化日期
@@ -158,11 +174,6 @@ const formatUpdateDate = (dateStr: string | null | undefined): string | null => 
   }
 }
 
-// 是否有更多数据（用于滚动提示）
-const hasMoreData = computed(() => {
-  // 表格高度600px，每行约40px，大约可显示15行，如果数据超过15行，显示提示
-  return allRows.value.length > 15
-})
 
 // 多表头：按省份分组，相同省份合并为一级表头
 // 列名格式为 "省份-指标"，如 "广东-出栏计划"、"四川-实际出栏量"
@@ -250,24 +261,48 @@ onMounted(() => {
 
 <style scoped>
 .southwest-page {
-  padding: 20px;
+  padding: 8px;
+}
+
+.southwest-page :deep(.el-card__body) {
+  padding: 8px 12px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
 }
 
 .date-range-selector {
-  margin-bottom: 20px;
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.period-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.period-filter .filter-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #606266;
 }
 
 .table-container {
-  margin-top: 20px;
+  margin-top: 8px;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
   overflow: hidden;
 }
 
 .scroll-hint {
-  margin-top: 10px;
+  margin-top: 6px;
   text-align: center;
   color: #909399;
   font-size: 12px;
@@ -284,9 +319,10 @@ onMounted(() => {
 :deep(.el-table th) {
   background-color: #f5f7fa;
   font-weight: 600;
+  padding: 4px 0;
 }
 
 :deep(.el-table td) {
-  padding: 8px 0;
+  padding: 2px 0;
 }
 </style>

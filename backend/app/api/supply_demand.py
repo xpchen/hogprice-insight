@@ -52,11 +52,12 @@ class InventoryPriceResponse(BaseModel):
     latest_month: Optional[str] = None
 
 
-def _get_raw_table_data(db: Session, sheet_name: str) -> Optional[List[List]]:
+def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[List[List]]:
     """获取raw_table数据"""
-    sheet = db.query(RawSheet).join(RawFile).filter(
-        RawSheet.sheet_name == sheet_name
-    ).first()
+    query = db.query(RawSheet).join(RawFile).filter(RawSheet.sheet_name == sheet_name)
+    if filename_pattern:
+        query = query.filter(RawFile.filename.like(f"%{filename_pattern}%"))
+    sheet = query.first()
     
     if not sheet:
         return None
@@ -97,23 +98,179 @@ def _parse_excel_date(excel_date: any) -> Optional[date]:
     return None
 
 
+def _extract_month_str(d: date) -> str:
+    """日期转 YYYY-MM"""
+    return d.strftime('%Y-%m')
+
+
+def _compute_curve_from_backend(db: Session) -> Optional[SupplyDemandCurveResponse]:
+    """
+    后端计算供需曲线系数
+    - 屠宰：A1供给预测 AG列（定点屠宰），多列头，数据从第3行起
+    - 价格：钢联全国猪价（fact_observation 按月聚合）
+    - 历年范围：数据库有哪些年份就用哪些年份
+    """
+    # 1. 屠宰：A1供给预测 AG列（索引32），多列头数据从第3行起
+    a1_data = _get_raw_table_data(db, "A1供给预测", "2、【生猪产业数据】")
+    if not a1_data:
+        a1_data = _get_raw_table_data(db, "A1供给预测", "生猪产业数据")
+    if not a1_data or len(a1_data) < 3:
+        return None
+
+    AG_IDX = 32
+    DATE_COL = 1
+    HEADER_ROWS = 2  # 前2行为表头
+
+    slaughter_by_month = {}  # YYYY-MM -> value
+    slaughter_years = set()
+    for row_idx in range(HEADER_ROWS, len(a1_data)):
+        row = a1_data[row_idx]
+        if len(row) <= AG_IDX:
+            continue
+        date_val = row[DATE_COL] if len(row) > DATE_COL else None
+        ag_val = row[AG_IDX]
+        if not date_val or ag_val is None or ag_val == "":
+            continue
+        parsed = _parse_excel_date(date_val)
+        if not parsed:
+            continue
+        try:
+            v = float(ag_val)
+            if math.isnan(v) or math.isinf(v) or v <= 0:
+                continue
+        except (ValueError, TypeError):
+            continue
+        month_str = _extract_month_str(parsed)
+        slaughter_by_month[month_str] = v
+        slaughter_years.add(parsed.year)
+
+    if not slaughter_by_month:
+        return None
+
+    # 2. 价格：钢联全国猪价
+    price_metric = db.query(DimMetric).filter(
+        func.json_extract(DimMetric.parse_json, '$.metric_key') == 'GL_D_PRICE_NATION',
+        DimMetric.freq.in_(["D", "daily"])
+    ).first()
+    if not price_metric:
+        price_metric = db.query(DimMetric).filter(
+            DimMetric.sheet_name == "分省区猪价",
+            or_(
+                DimMetric.raw_header.like('%中国%'),
+                DimMetric.raw_header.like('%全国%')
+            ),
+            DimMetric.freq.in_(["D", "daily"])
+        ).first()
+    if not price_metric:
+        price_metric = db.query(DimMetric).filter(
+            DimMetric.sheet_name.like('%钢联%'),
+            or_(
+                DimMetric.raw_header.like('%全国%价%'),
+                DimMetric.raw_header.like('%中国%价%')
+            ),
+            DimMetric.freq.in_(["D", "daily"])
+        ).first()
+    if not price_metric:
+        return None
+
+    price_rows = db.query(
+        func.date_format(FactObservation.obs_date, '%Y-%m-01').label('month'),
+        func.avg(FactObservation.value).label('monthly_avg')
+    ).filter(
+        FactObservation.metric_id == price_metric.id,
+        FactObservation.period_type == 'day'
+    ).group_by('month').order_by('month').all()
+
+    price_by_month = {}
+    price_years = set()
+    for r in price_rows:
+        if r.monthly_avg is None:
+            continue
+        mk = r.month[:7] if r.month and len(r.month) > 7 else r.month
+        price_by_month[mk] = float(r.monthly_avg)
+        if mk:
+            price_years.add(int(mk[:4]))
+
+    if not price_by_month:
+        return None
+
+    # 3. 历年范围：取两种数据都有的年份
+    common_years = slaughter_years & price_years
+    if not common_years:
+        common_years = slaughter_years | price_years
+    if not common_years:
+        return None
+
+    # 4. 计算各月历年均值（仅用 common_years）
+    slaughter_avg_by_month_num = {}  # 1-12 -> avg
+    price_avg_by_month_num = {}  # 1-12 -> avg
+    for m in range(1, 13):
+        slaughter_vals = []
+        price_vals = []
+        for y in common_years:
+            mm = f"{y}-{m:02d}"
+            if mm in slaughter_by_month:
+                slaughter_vals.append(slaughter_by_month[mm])
+            if mm in price_by_month:
+                price_vals.append(price_by_month[mm])
+        if slaughter_vals:
+            slaughter_avg_by_month_num[m] = sum(slaughter_vals) / len(slaughter_vals)
+        if price_vals:
+            price_avg_by_month_num[m] = sum(price_vals) / len(price_vals)
+
+    # 5. 计算系数
+    all_months = sorted(set(list(slaughter_by_month.keys()) + list(price_by_month.keys())))
+    result = []
+    for month_str in all_months:
+        slaughter_coef = None
+        price_coef = None
+        parts = month_str.split('-')
+        if len(parts) == 2:
+            try:
+                month_num = int(parts[1])
+            except ValueError:
+                month_num = 0
+        else:
+            month_num = 0
+
+        if month_str in slaughter_by_month and month_num and month_num in slaughter_avg_by_month_num:
+            avg_s = slaughter_avg_by_month_num[month_num]
+            if avg_s and avg_s > 0:
+                slaughter_coef = slaughter_by_month[month_str] / avg_s
+        if month_str in price_by_month and month_num and month_num in price_avg_by_month_num:
+            avg_p = price_avg_by_month_num[month_num]
+            if avg_p and avg_p > 0:
+                price_coef = price_by_month[month_str] / avg_p
+
+        if slaughter_coef is not None or price_coef is not None:
+            result.append(SupplyDemandCurvePoint(
+                month=month_str,
+                slaughter_coefficient=round(slaughter_coef, 4) if slaughter_coef is not None else None,
+                price_coefficient=round(price_coef, 4) if price_coef is not None else None
+            ))
+
+    if not result:
+        return None
+
+    latest = result[-1].month if result else None
+    return SupplyDemandCurveResponse(data=result, latest_month=latest)
+
+
 @router.get("/curve", response_model=SupplyDemandCurveResponse)
 async def get_supply_demand_curve(
     db: Session = Depends(get_db)
 ):
     """
     获取长周期生猪供需曲线数据
-    数据来源：【生猪产业数据】.xlsx - "供需曲线"sheet
-    定点屠宰系数 = 当月/平均值
-    猪价系数 = 月度均值/历年平均值
-    
-    数据格式：
-    - 第31行开始是时间序列数据
-    - B列：日期，C列：屠宰系数，D列：价格系数
-    - E列：日期，F列：屠宰系数，G列：价格系数
-    - 以此类推，每3列为一组（日期、屠宰系数、价格系数）
+    优先使用后端计算：屠宰=A1供给预测AG列，价格=钢联全国猪价，历年=DB实际年份
+    备选：供需曲线sheet预计算值，最后：fact_observation
     """
-    # 优先从"供需曲线"sheet读取数据
+    # 1. 优先后端计算（A1 AG列 + 钢联价格，历年用DB实际年份）
+    backend_result = _compute_curve_from_backend(db)
+    if backend_result and len(backend_result.data) > 0:
+        return backend_result
+
+    # 2. 从"供需曲线"sheet读取预计算数据
     curve_data = _get_raw_table_data(db, "供需曲线")
     
     if curve_data and len(curve_data) > 30:
