@@ -178,6 +178,8 @@ async def query_observations(
     
     # Indicator筛选（通过tags_json中的indicator字段）
     # 出栏均重：库中可能为 indicator='均重'（原始）或 indicator='全国2'（修复后），兼容两种
+    # 90Kg出栏占比：兼容 indicator='90kg以下'（原始）
+    # 150Kg出栏占重：兼容 indicator='150kg以上'（原始）
     if indicator:
         if (
             metric_key == "YY_W_OUT_WEIGHT"
@@ -194,6 +196,38 @@ async def query_observations(
                         func.json_extract(FactObservation.tags_json, "$.indicator")
                     )
                     == "全国2",
+                )
+            )
+        elif (
+            metric_key == "YY_W_OUT_WEIGHT"
+            and indicator == "90Kg出栏占比"
+        ):
+            query = query.filter(FactObservation.geo_id.is_(None)).filter(
+                or_(
+                    func.json_unquote(
+                        func.json_extract(FactObservation.tags_json, "$.indicator")
+                    )
+                    == "90Kg出栏占比",
+                    func.json_unquote(
+                        func.json_extract(FactObservation.tags_json, "$.indicator")
+                    )
+                    == "90kg以下",
+                )
+            )
+        elif (
+            metric_key == "YY_W_OUT_WEIGHT"
+            and indicator == "150Kg出栏占重"
+        ):
+            query = query.filter(FactObservation.geo_id.is_(None)).filter(
+                or_(
+                    func.json_unquote(
+                        func.json_extract(FactObservation.tags_json, "$.indicator")
+                    )
+                    == "150Kg出栏占重",
+                    func.json_unquote(
+                        func.json_extract(FactObservation.tags_json, "$.indicator")
+                    )
+                    == "150kg以上",
                 )
             )
         else:

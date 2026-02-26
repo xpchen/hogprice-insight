@@ -12,10 +12,9 @@
         </div>
       </template>
 
-      <!-- 图表1：长周期生猪供需曲线（横轴价格系数，纵轴屠宰系数，每年一条线） -->
+      <!-- 图表1：长周期生猪供需曲线 -->
       <div class="chart-section">
-        <h3>图表1：长周期生猪供需曲线</h3>
-        <p class="chart-desc">横轴：价格系数；纵轴：屠宰系数。价格系数=钢联X月均价/历年X月均值；屠宰系数=Y月定点屠宰/历年Y月均值。</p>
+        <h3>图1：长周期生猪供需曲线</h3>
         <div class="chart-container">
           <div ref="chart1Ref" style="width: 100%; height: 500px" v-loading="loading1"></div>
         </div>
@@ -23,7 +22,7 @@
 
       <!-- 图表2：能繁母猪存栏&猪价（滞后10个月） -->
       <div class="chart-section">
-        <h3>图表2：能繁母猪存栏&猪价（滞后10个月）</h3>
+        <h3>图2：能繁母猪存栏&猪价（滞后10个月）</h3>
         <div class="chart-container">
           <div ref="chart2Ref" style="width: 100%; height: 500px" v-loading="loading2"></div>
         </div>
@@ -31,7 +30,7 @@
 
       <!-- 图表3：新生仔猪&猪价（滞后10个月） -->
       <div class="chart-section">
-        <h3>图表3：新生仔猪&猪价（滞后10个月）</h3>
+        <h3>图3：新生仔猪&猪价（滞后10个月）</h3>
         <div class="chart-container">
           <div ref="chart3Ref" style="width: 100%; height: 500px" v-loading="loading3"></div>
         </div>
@@ -128,7 +127,7 @@ const loadChart3Data = async () => {
   }
 }
 
-// 将数据按年份分组，每年一条线：(价格系数, 屠宰系数)，按月份顺序
+// 将数据按年份分组，每年一条线：横轴屠宰系数，纵轴价格系数，按月份顺序
 function buildSupplyDemandSeries(data: { month: string; slaughter_coefficient?: number | null; price_coefficient?: number | null }[]) {
   const byYear = new Map<number, Array<{ price: number; slaughter: number; month: string }>>()
   for (const d of data) {
@@ -147,7 +146,7 @@ function buildSupplyDemandSeries(data: { month: string; slaughter_coefficient?: 
   years.forEach((year, i) => {
     const pts = byYear.get(year)!
     pts.sort((a, b) => a.month.localeCompare(b.month))
-    const lineData = pts.map(p => [p.price, p.slaughter])
+    const lineData = pts.map(p => [p.slaughter, p.price])  // [x屠宰系数, y价格系数]
     series.push({
       name: `${year}年`,
       type: 'line',
@@ -173,7 +172,6 @@ const updateChart1 = () => {
   const { series, years } = buildSupplyDemandSeries(chart1Data.value.data)
   if (series.length === 0) {
     chart1Instance.setOption({
-      title: { text: '长周期生猪供需曲线', left: 'left' },
       graphic: {
         type: 'text',
         left: 'center',
@@ -185,21 +183,17 @@ const updateChart1 = () => {
   }
 
   const option: echarts.EChartsOption = {
-    title: {
-      text: '长周期生猪供需曲线',
-      left: 'left'
-    },
     tooltip: {
       trigger: 'item',
       formatter: (params: any) => {
         if (!params?.data) return ''
-        const [price, slaughter] = params.data
-        return `${params.seriesName}<br/>价格系数: ${Number(price).toFixed(2)}<br/>屠宰系数: ${Number(slaughter).toFixed(2)}`
+        const [slaughter, price] = params.data
+        return `${params.seriesName}<br/>屠宰系数: ${Number(slaughter).toFixed(2)}<br/>价格系数: ${Number(price).toFixed(2)}`
       }
     },
     legend: {
       data: years.map(y => `${y}年`),
-      bottom: 10,
+      top: 8,
       type: 'scroll',
       icon: 'circle',
       itemWidth: 10,
@@ -210,18 +204,23 @@ const updateChart1 = () => {
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '18%',
+      top: '12%',
+      bottom: '8%',
       containLabel: true
     },
     xAxis: {
       type: 'value',
-      name: '价格系数',
+      name: '屠宰系数',
+      interval: 0.2,
+      minInterval: 0.2,
       ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
     yAxis: {
       type: 'value',
-      name: '屠宰系数',
+      name: '价格系数',
+      interval: 0.2,
+      minInterval: 0.2,
       ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
     },
@@ -241,17 +240,13 @@ const updateChart2 = () => {
 
   // 双Y轴：左轴存栏指数，右轴猪价
   const option: echarts.EChartsOption = {
-    title: {
-      text: '能繁母猪存栏&猪价（滞后10个月）',
-      left: 'left'
-    },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' }
     },
     legend: {
       data: ['能繁母猪存栏指数', '猪价'],
-      bottom: 10,
+      top: 8,
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
@@ -261,6 +256,7 @@ const updateChart2 = () => {
     grid: {
       left: '3%',
       right: '4%',
+      top: '12%',
       bottom: '15%',
       containLabel: true
     },
@@ -331,17 +327,13 @@ const updateChart3 = () => {
   }
 
   const option: echarts.EChartsOption = {
-    title: {
-      text: '新生仔猪&猪价（滞后10个月）',
-      left: 'left'
-    },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' }
     },
     legend: {
       data: ['新生仔猪指数', '猪价'],
-      bottom: 10,
+      top: 8,
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
@@ -351,6 +343,7 @@ const updateChart3 = () => {
     grid: {
       left: '3%',
       right: '4%',
+      top: '12%',
       bottom: '15%',
       containLabel: true
     },
@@ -445,18 +438,11 @@ onBeforeUnmount(() => {
   .chart-section {
     margin-bottom: 12px;
 
-    .chart-desc {
-      margin: 0 0 8px 0;
-      font-size: 12px;
-      color: #666;
-      line-height: 1.5;
-    }
-    
     h3 {
-      margin-bottom: 6px;
-      text-align: left;
-      font-size: 16px;
+      font-size: 14px;
       font-weight: 600;
+      margin: 0 0 8px 0;
+      color: #303133;
     }
   }
 

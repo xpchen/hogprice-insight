@@ -107,7 +107,7 @@
           </el-menu-item>
           <el-menu-item index="/enterprise-statistics/southwest">
             <el-icon><DataAnalysis /></el-icon>
-            <template #title>D2. 西南地区企业统计</template>
+            <template #title>D2.重点省份出栏统计</template>
           </el-menu-item>
           <el-menu-item index="/enterprise-statistics/sales-plan">
             <el-icon><DataAnalysis /></el-icon>

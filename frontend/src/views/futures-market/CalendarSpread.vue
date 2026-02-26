@@ -169,43 +169,40 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
   const chart = echarts.init(el)
   chartInstances.set(key, chart)
 
-  const yearMap = new Map<number, typeof series.data>()
+  const nearMonth = series.near_month
+  const farMonth = series.far_month
+  // 按季节性周期分组（与季节性图一致），每个周期一条连续线、一个颜色
+  const seasonalMap = new Map<string, typeof series.data>()
   series.data.forEach(d => {
-    const y = new Date(d.date).getFullYear()
-    if (!yearMap.has(y)) yearMap.set(y, [])
-    yearMap.get(y)!.push(d)
+    const sy = getSeasonalYear(d.date, nearMonth, farMonth)
+    if (!seasonalMap.has(sy)) seasonalMap.set(sy, [])
+    seasonalMap.get(sy)!.push(d)
   })
-  const years = Array.from(yearMap.keys()).sort()
+  const seasonalYears = Array.from(seasonalMap.keys()).sort()
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
-
-  // 时间间隔超过 5 天则插入 null 制造断点，配合 connectNulls: false 实现中间无数据处留空
-  const toDataWithGaps = (arr: typeof series.data) => {
-    const out: [string, number | null][] = []
-    const GAP_DAYS = 5
-    for (let i = 0; i < arr.length; i++) {
-      out.push([arr[i].date, arr[i].spread])
-      if (i < arr.length - 1) {
-        const curr = new Date(arr[i].date).getTime()
-        const next = new Date(arr[i + 1].date).getTime()
-        if ((next - curr) / (24 * 60 * 60 * 1000) > GAP_DAYS) {
-          const mid = new Date((curr + next) / 2)
-          out.push([mid.toISOString().slice(0, 10), null])
-        }
-      }
-    }
-    return out
+  const getColorForSeasonalYear = (sy: string) => {
+    const parts = sy.split('/')
+    const year = parts.length >= 2 ? parseInt(parts[1], 10) : parseInt(parts[0], 10)
+    return colors[Math.max(0, (year - 2019) % colors.length)]
   }
-  const spreadSeriesList: any[] = years.map((year, i) => ({
-    name: `${year}年`,
-    type: 'line',
-    yAxisIndex: 0,
-    data: toDataWithGaps(yearMap.get(year)!),
-    lineStyle: { color: colors[i % colors.length] },
-    symbol: 'circle',
-    symbolSize: 4,
-    smooth: true,
-    connectNulls: false
-  }))
+
+  // 每个周期的数据按日期排序，直接绘制（周期间自然断开）
+  const spreadSeriesList: any[] = seasonalYears.map((sy) => {
+    const arr = seasonalMap.get(sy)!.slice().sort((a, b) => a.date.localeCompare(b.date))
+    const color = getColorForSeasonalYear(sy)
+    return {
+      name: sy,
+      type: 'line',
+      yAxisIndex: 0,
+      data: arr.map(d => [d.date, d.spread]),
+      lineStyle: { color },
+      itemStyle: { color },
+      symbol: 'circle',
+      symbolSize: 4,
+      smooth: true,
+      connectNulls: false
+    }
+  })
   // 用结算价数据驱动右侧 Y 轴刻度，系列不显示、不参与图例和 tooltip
   const settleData = series.data.map(d => [d.date, d.near_contract_settle ?? d.far_contract_settle ?? null])
   const hasSettle = settleData.some(([, v]) => v != null && Number.isFinite(v))
@@ -291,18 +288,27 @@ const renderSeasonalChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
   })
 
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
+  const getColorForSeasonalYear = (sy: string) => {
+    const parts = sy.split('/')
+    const year = parts.length >= 2 ? parseInt(parts[1], 10) : parseInt(parts[0], 10)
+    return colors[Math.max(0, (year - 2019) % colors.length)]
+  }
   const seasonalYears = Array.from(seasonalMap.keys()).sort()
-  const spreadSeriesList: any[] = seasonalYears.map((sy, i) => ({
-    name: sy,
-    type: 'line',
-    yAxisIndex: 0,
-    data: categories.map(c => seasonalMap.get(sy)!.get(c) ?? null),
-    lineStyle: { color: colors[i % colors.length] },
-    symbol: 'circle',
-    symbolSize: 4,
-    smooth: true,
-    connectNulls: true
-  }))
+  const spreadSeriesList: any[] = seasonalYears.map((sy) => {
+    const color = getColorForSeasonalYear(sy)
+    return {
+      name: sy,
+      type: 'line',
+      yAxisIndex: 0,
+      data: categories.map(c => seasonalMap.get(sy)!.get(c) ?? null),
+      lineStyle: { color },
+      itemStyle: { color },
+      symbol: 'circle',
+      symbolSize: 4,
+      smooth: true,
+      connectNulls: true
+    }
+  })
   // 结算价按 mmdd 汇总以驱动右侧 Y 轴（近月/远月任取有值），系列不显示
   const settleByCat = new Map<string, number[]>()
   categories.forEach(c => { settleByCat.set(c, []) })

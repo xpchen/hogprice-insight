@@ -3,7 +3,7 @@
     <el-card>
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
-          <span>D2. 重点省份旬度出栏</span>
+          <span>D2.重点省份出栏统计</span>
           <DataSourceInfo
             v-if="tableData && (tableData.latest_date || tableData.update_time)"
             :source-name="tableData.data_source || '企业集团出栏跟踪'"
@@ -47,15 +47,15 @@
           border
           stripe
           v-loading="loading"
-          max-height="calc(100vh - 280px)"
+          max-height="calc(100vh - 200px)"
           style="width: 100%"
         >
-          <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
+          <el-table-column prop="date" label="日期" width="90" fixed="left" align="center">
             <template #default="{ row }">
               {{ formatDate(row.date) }}
             </template>
           </el-table-column>
-          <el-table-column prop="period_type" label="旬度" width="80" fixed="left" align="center">
+          <el-table-column prop="period_type" label="旬度" width="60" fixed="left" align="center">
             <template #default="{ row }">
               {{ row.period_type || '-' }}
             </template>
@@ -73,7 +73,7 @@
               :key="col.key"
               :prop="col.key"
               :label="col.label"
-              min-width="85"
+              min-width="65"
               align="right"
               header-align="center"
             >
@@ -261,68 +261,76 @@ onMounted(() => {
 
 <style scoped>
 .southwest-page {
-  padding: 8px;
+  padding: 4px;
 }
 
 .southwest-page :deep(.el-card__body) {
-  padding: 8px 12px;
+  padding: 4px 8px;
+}
+
+.southwest-page :deep(.el-card__header) {
+  padding: 6px 12px;
 }
 
 .filter-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 8px;
+  gap: 10px;
+  margin-bottom: 4px;
 }
 
 .date-range-selector {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .period-filter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .period-filter .filter-label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: #606266;
 }
 
 .table-container {
-  margin-top: 8px;
+  margin-top: 4px;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
   overflow: hidden;
 }
 
 .scroll-hint {
-  margin-top: 6px;
+  margin-top: 4px;
   text-align: center;
   color: #909399;
-  font-size: 12px;
+  font-size: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 :deep(.el-table) {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 :deep(.el-table th) {
   background-color: #f5f7fa;
   font-weight: 600;
-  padding: 4px 0;
+  padding: 2px 4px;
 }
 
 :deep(.el-table td) {
-  padding: 2px 0;
+  padding: 1px 4px;
+}
+
+:deep(.el-table .cell) {
+  padding: 2px 4px;
 }
 </style>

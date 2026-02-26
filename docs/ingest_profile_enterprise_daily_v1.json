@@ -89,7 +89,17 @@
           }
         },
         {
-          "column_pattern": "成交率|完成率",
+          "column_pattern": "成交率",
+          "metric_name": "成交率",
+          "metric_key": "SOUTHWEST_TRANSACTION_RATE",
+          "unit": "%",
+          "metric_group": "enterprise",
+          "tags": {
+            "region": "${region_from_row1}"
+          }
+        },
+        {
+          "column_pattern": "完成率",
           "metric_name": "完成率",
           "metric_key": "SOUTHWEST_COMPLETION_RATE",
           "unit": "%",

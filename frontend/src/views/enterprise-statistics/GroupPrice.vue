@@ -37,7 +37,7 @@
             style="width: 100%"
             max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="date" label="日期" width="100" fixed="left" align="center">
+            <el-table-column prop="date" label="日期" width="88" fixed="left" align="center">
               <template #default="{ row }">
                 {{ formatDate(row.date) }}
               </template>
@@ -46,12 +46,12 @@
               v-for="company in table1FlatColumns"
               :key="company"
               :label="getColumnLabel(company)"
-              min-width="85"
+              min-width="68"
               align="right"
               header-align="center"
             >
               <template #default="{ row }">
-                <span v-if="getCompanyPrice(row, company) !== null">{{ formatCompanyPrice(company, getCompanyPrice(row, company)) }}</span>
+                <span v-if="getCompanyPrice(row, company) !== null">{{ formatCompanyPrice(company, getCompanyPrice(row, company)!) }}</span>
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -66,7 +66,7 @@
                 :key="region"
                 :label="region"
                 :prop="region"
-                min-width="80"
+                min-width="62"
                 align="right"
                 header-align="center"
               >
@@ -125,19 +125,19 @@
             style="width: 100%"
             max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="date" label="日期" width="100" fixed="left">
+            <el-table-column prop="date" label="日期" width="88" fixed="left">
               <template #default="{ row }">
                 {{ formatDate(row.date) }}
               </template>
             </el-table-column>
-            <el-table-column prop="market" label="市场" min-width="100" fixed="left">
+            <el-table-column prop="market" label="市场" min-width="72" fixed="left">
             </el-table-column>
-            <el-table-column prop="arrival_volume" label="到货量" min-width="85" align="right">
+            <el-table-column prop="arrival_volume" label="到货量" min-width="68" align="right">
               <template #default="{ row }">
                 {{ formatValue(row.arrival_volume) }}
               </template>
             </el-table-column>
-            <el-table-column prop="price" label="价格" min-width="85" align="right">
+            <el-table-column prop="price" label="价格" min-width="68" align="right">
               <template #default="{ row }">
                 {{ formatPrice(row.price) }}
               </template>
@@ -161,8 +161,8 @@ const loading2 = ref(false)
 const table1Data = ref<GroupPriceTableResponse | null>(null)
 const table2Data = ref<WhiteStripMarketResponse | null>(null)
 
-const selectedDays = ref(15)
-const selectedDays2 = ref(15)
+const selectedDays = ref(90)
+const selectedDays2 = ref(90)
 const dateRange = ref<[Date, Date] | null>(null)
 const rangeChangeResult = ref<number | null>(null)
 
@@ -322,11 +322,8 @@ const formatPrice = (price: number | null | undefined) => {
   return price.toFixed(2)
 }
 
-// 华宝白条列当前数据源为升贴水（元），非价格（元/公斤），展示时注明
-const formatCompanyPrice = (company: string, value: number) => {
-  const s = value.toFixed(2)
-  if (company === '华宝白条') return `${s} (升贴水)`
-  return s
+const formatCompanyPrice = (_company: string, value: number) => {
+  return value.toFixed(2)
 }
 
 const formatValue = (value: number | null | undefined) => {
@@ -407,8 +404,8 @@ onMounted(() => {
     .range-result { font-size: 13px; }
   }
 
-  :deep(.el-table) { font-size: 12px; }
-  :deep(.el-table th) { padding: 4px 0; font-weight: 600; background-color: #f5f7fa; }
-  :deep(.el-table td) { padding: 2px 0; }
+  :deep(.el-table) { font-size: 11px; }
+  :deep(.el-table th) { padding: 2px 4px; font-weight: 600; background-color: #f5f7fa; }
+  :deep(.el-table td) { padding: 1px 4px; }
 }
 </style>

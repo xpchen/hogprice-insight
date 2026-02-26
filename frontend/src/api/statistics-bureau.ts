@@ -42,9 +42,15 @@ export interface OutputSlaughterResponse {
   latest_period?: string | null
 }
 
+export interface ImportMeatCountryPoint {
+  country: string
+  value?: number | null
+}
+
 export interface ImportMeatPoint {
   month: string
-  price_coefficient?: number | null  // 猪价系数（月度均值/历年平均值）
+  total?: number | null  // 进口总量（万吨）
+  top_countries: ImportMeatCountryPoint[]  // 进口量前2的国家
 }
 
 export interface ImportMeatResponse {
@@ -74,10 +80,12 @@ export function getOutputSlaughter(): Promise<OutputSlaughterResponse> {
 
 /**
  * 获取猪肉进口数据（图2）
+ * @param noCache 为 true 时加时间戳避免浏览器缓存
  */
-export function getImportMeat(): Promise<ImportMeatResponse> {
+export function getImportMeat(noCache = true): Promise<ImportMeatResponse> {
   return request({
     url: '/v1/statistics-bureau/import-meat',
-    method: 'get'
+    method: 'get',
+    params: noCache ? { _t: Date.now() } : undefined
   })
 }

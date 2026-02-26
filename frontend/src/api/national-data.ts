@@ -129,7 +129,8 @@ export async function getWeightData(
       start_date: startDate,
       end_date: endDate,
       period_type: 'week',
-      indicator: '90Kg出栏占比'
+      indicator: '90Kg出栏占比',
+      geo_code: 'NATION'
     }),
     // 图6：150Kg出栏占重 - sheet表：周度-体重 X列 全国2
     queryObservations({
@@ -138,7 +139,8 @@ export async function getWeightData(
       start_date: startDate,
       end_date: endDate,
       period_type: 'week',
-      indicator: '150Kg出栏占重'
+      indicator: '150Kg出栏占重',
+      geo_code: 'NATION'
     })
   ])
 

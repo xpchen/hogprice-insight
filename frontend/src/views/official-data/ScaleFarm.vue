@@ -15,7 +15,6 @@
       <!-- 规模场数据汇总表格：按 Excel 原样输出（多行表头 + 合并单元格 + 数据行） -->
       <div class="table-section">
         <h3 class="table-title">规模场数据汇总</h3>
-        <p class="table-desc">数据来源：A1供给预测（2、【生猪产业数据】.xlsx）</p>
         <div class="table-container raw-table-wrap" v-loading="loading">
           <table v-if="tableData && (tableData.header_row_0?.length || tableData.rows?.length)" class="raw-excel-table">
             <thead>
@@ -309,12 +308,6 @@ onMounted(() => {
 .table-title {
   font-size: 16px;
   font-weight: 600;
-  margin: 0 0 6px 0;
-}
-
-.table-desc {
-  font-size: 12px;
-  color: #909399;
   margin: 0 0 12px 0;
 }
 
@@ -342,9 +335,13 @@ onMounted(() => {
   text-align: center;
 }
 .raw-excel-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background-color: #f5f7fa;
   font-weight: 600;
   white-space: nowrap;
+  box-shadow: 0 1px 0 #e4e7ed;
 }
 /* Excel 条件格式：表头列背景 */
 .raw-excel-table thead th.header-yellow {
@@ -386,6 +383,11 @@ onMounted(() => {
 
 .chart-section {
   margin-bottom: 24px;
+}
+
+/* 母猪效能、压栏系数：与下方涌益季节性图表大小一致（350px） */
+.charts-row :deep(.chart-area) {
+  height: 350px;
 }
 
 .chart-title {

@@ -223,7 +223,7 @@ async def get_sichuan_daily(
     指标：
     - 日度出栏（实际成交）
     - 计划出栏（计划日均）
-    - 完成率
+    - 成交率
     - 价格
     """
     # 计算日期范围
@@ -233,13 +233,14 @@ async def get_sichuan_daily(
     else:
         start_date = None
     
-    # 查询指标（西南汇总sheet，四川地区）
+    # 查询指标（西南汇总sheet，四川地区，成交率优先于完成率）
     metrics = db.query(DimMetric).filter(
         and_(
             DimMetric.sheet_name == "西南汇总",
             or_(
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_ACTUAL_OUTPUT',
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PLAN_OUTPUT',
+                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_TRANSACTION_RATE',
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_COMPLETION_RATE',
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PRICE'
             )
@@ -249,7 +250,7 @@ async def get_sichuan_daily(
     if not metrics:
         raise HTTPException(status_code=404, detail="未找到四川重点企业数据")
     
-    # 构建指标映射
+    # 构建指标映射（成交率优先，兼容旧数据完成率）
     metric_map = {}
     for m in metrics:
         metric_key = m.parse_json.get('metric_key') if m.parse_json else None
@@ -257,8 +258,10 @@ async def get_sichuan_daily(
             metric_map['actual'] = m
         elif metric_key == 'SOUTHWEST_PLAN_OUTPUT':
             metric_map['plan'] = m
-        elif metric_key == 'SOUTHWEST_COMPLETION_RATE':
-            metric_map['rate'] = m
+        elif metric_key == 'SOUTHWEST_TRANSACTION_RATE':
+            metric_map['rate'] = m  # 成交率优先
+        elif metric_key == 'SOUTHWEST_COMPLETION_RATE' and 'rate' not in metric_map:
+            metric_map['rate'] = m  # 兼容旧数据
         elif metric_key == 'SOUTHWEST_PRICE':
             metric_map['price'] = m
     
@@ -322,7 +325,7 @@ async def get_sichuan_daily(
             unit=metric_map['plan'].unit
         ))
     
-    # 3. 完成率
+    # 3. 成交率
     if 'rate' in metric_map:
         query = db.query(
             FactObservation.obs_date,
@@ -344,7 +347,7 @@ async def get_sichuan_daily(
             ))
         
         series_list.append(TimeSeriesSeries(
-            name="完成率",
+            name="成交率",
             data=data_points,
             unit=metric_map['rate'].unit
         ))
@@ -398,7 +401,7 @@ async def get_guangxi_daily(
     
     指标：
     - 日度出栏（实际成交）
-    - 完成率
+    - 成交率
     - 价格
     """
     # 计算日期范围
@@ -408,12 +411,13 @@ async def get_guangxi_daily(
     else:
         start_date = None
     
-    # 查询指标（西南汇总sheet，广西地区）
+    # 查询指标（西南汇总sheet，广西地区，成交率优先于完成率）
     metrics = db.query(DimMetric).filter(
         and_(
             DimMetric.sheet_name == "西南汇总",
             or_(
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_ACTUAL_OUTPUT',
+                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_TRANSACTION_RATE',
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_COMPLETION_RATE',
                 func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PRICE'
             )
@@ -423,14 +427,16 @@ async def get_guangxi_daily(
     if not metrics:
         raise HTTPException(status_code=404, detail="未找到广西重点企业数据")
     
-    # 构建指标映射
+    # 构建指标映射（成交率优先，兼容旧数据完成率）
     metric_map = {}
     for m in metrics:
         metric_key = m.parse_json.get('metric_key') if m.parse_json else None
         if metric_key == 'SOUTHWEST_ACTUAL_OUTPUT':
             metric_map['actual'] = m
-        elif metric_key == 'SOUTHWEST_COMPLETION_RATE':
-            metric_map['rate'] = m
+        elif metric_key == 'SOUTHWEST_TRANSACTION_RATE':
+            metric_map['rate'] = m  # 成交率优先
+        elif metric_key == 'SOUTHWEST_COMPLETION_RATE' and 'rate' not in metric_map:
+            metric_map['rate'] = m  # 兼容旧数据
         elif metric_key == 'SOUTHWEST_PRICE':
             metric_map['price'] = m
     
@@ -467,7 +473,7 @@ async def get_guangxi_daily(
             unit=metric_map['actual'].unit
         ))
     
-    # 2. 完成率
+    # 2. 成交率
     if 'rate' in metric_map:
         query = db.query(
             FactObservation.obs_date,
@@ -489,7 +495,7 @@ async def get_guangxi_daily(
             ))
         
         series_list.append(TimeSeriesSeries(
-            name="完成率",
+            name="成交率",
             data=data_points,
             unit=metric_map['rate'].unit
         ))

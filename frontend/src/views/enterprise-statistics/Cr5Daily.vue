@@ -146,8 +146,8 @@ type ChartTypeConfig = {
 }
 const CHART_CONFIGS: Record<string, ChartTypeConfig> = {
   cr5: { leftSeries: ['日度出栏', '计划量'], rightSeries: ['价格'], leftFormatter: 'integer', rightFormatter: 'decimal' },
-  sichuan: { leftSeries: ['日度出栏', '计划出栏'], rightSeries: ['完成率'], leftFormatter: 'integer', rightFormatter: 'percent' },
-  guangxi: { leftSeries: ['日度出栏'], rightSeries: ['完成率'], leftFormatter: 'integer', rightFormatter: 'percent' },
+  sichuan: { leftSeries: ['日度出栏', '计划出栏'], rightSeries: ['成交率'], leftFormatter: 'integer', rightFormatter: 'percent' },
+  guangxi: { leftSeries: ['日度出栏'], rightSeries: ['成交率'], leftFormatter: 'integer', rightFormatter: 'percent' },
   southwest: { leftSeries: ['出栏量'], rightSeries: ['均重'], leftFormatter: 'integer', rightFormatter: 'decimal' }
 }
 
@@ -156,7 +156,7 @@ const SERIES_COLORS: Record<string, string> = {
   '计划量': '#67C23A',
   '计划出栏': '#67C23A',
   '价格': '#E6A23C',
-  '完成率': '#F56C6C',
+  '成交率': '#F56C6C',
   '出栏量': '#409EFF',
   '均重': '#909399'
 }
@@ -370,7 +370,7 @@ const renderChart = (
       },
       {
         type: 'value',
-        name: config.rightFormatter === 'percent' ? '完成率(%)' : '价格',
+        name: config.rightFormatter === 'percent' ? '成交率(%)' : '价格',
         position: 'right',
         scale: true,
         min: rightMin - rightPad,

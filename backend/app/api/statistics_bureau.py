@@ -3,15 +3,17 @@ E4. 统计局数据汇总 API
 包含：
 1. 表1：统计局季度数据汇总（B-Y列）
 2. 图1：统计局生猪出栏量&屠宰量（季度出栏量J列、定点屠宰量P列、规模化率）
-3. 图2：猪肉进口（实际是钢联全国猪价的月度均值/历年平均值系数）
+3. 图2：猪肉进口（钢联猪肉进口 sheet 或 涌益进口肉 sheet）
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
 from datetime import date, datetime, timedelta
 from pydantic import BaseModel
+from pathlib import Path
 import json
 import math
+import re
 
 from app.core.database import get_db
 from app.models.raw_sheet import RawSheet
@@ -59,29 +61,37 @@ class OutputSlaughterResponse(BaseModel):
     latest_period: Optional[str] = None
 
 
+class ImportMeatCountryPoint(BaseModel):
+    """国别进口量"""
+    country: str
+    value: Optional[float] = None
+
+
 class ImportMeatPoint(BaseModel):
-    """猪肉进口数据点（实际是猪价系数）"""
+    """猪肉进口数据点"""
     month: str  # 月份 YYYY-MM
-    price_coefficient: Optional[float] = None  # 猪价系数（月度均值/历年平均值）
+    total: Optional[float] = None  # 进口总量（万吨）
+    top_countries: List[ImportMeatCountryPoint] = []  # 进口量前2的国家
 
 
 class ImportMeatResponse(BaseModel):
-    """猪肉进口响应（实际是猪价系数响应）"""
+    """猪肉进口响应"""
     data: List[ImportMeatPoint]
     latest_month: Optional[str] = None
 
 
-def _get_raw_table_data(db: Session, sheet_name: str) -> Optional[List[List]]:
-    """获取raw_table数据"""
-    result = _get_raw_table_with_meta(db, sheet_name)
+def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[List[List]]:
+    """获取raw_table数据。filename_pattern 用于限定来源文件（如 钢联自动更新模板）"""
+    result = _get_raw_table_with_meta(db, sheet_name, filename_pattern)
     return result[0] if result else None
 
 
-def _get_raw_table_with_meta(db: Session, sheet_name: str) -> Optional[tuple]:
+def _get_raw_table_with_meta(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[tuple]:
     """获取raw_table数据及merged_cells_json，返回 (table_data, merged_cells_json)"""
-    sheet = db.query(RawSheet).join(RawFile).filter(
-        RawSheet.sheet_name == sheet_name
-    ).first()
+    query = db.query(RawSheet).join(RawFile).filter(RawSheet.sheet_name == sheet_name)
+    if filename_pattern:
+        query = query.filter(RawFile.filename.like(f'%{filename_pattern}%'))
+    sheet = query.order_by(RawFile.id.desc()).first()
     if not sheet:
         return None
     raw_table = db.query(RawTable).filter(
@@ -317,90 +327,245 @@ def get_output_slaughter(
     return OutputSlaughterResponse(data=data_points, latest_period=latest_period)
 
 
+def _parse_pork_import_from_sheet(table_data: List[List]) -> tuple:
+    """
+    解析猪肉进口数据。支持格式：
+    1. 猪肉进口 sheet（含钢联自动更新模板）：
+       - 钢联格式：第1行大标题，第2行表头（月份、总量、国别列），第3行单位，第4行更新时间，第5行起数据
+       - 通用格式：第1行即表头
+    2. 进口肉 sheet：矩阵格式，行=月度(1-2月,3月...)，列=年份(2016年...)
+    返回 (data_points, latest_month)
+    """
+    if not table_data or len(table_data) < 2:
+        return [], None
+
+    exclude_keywords = ('日期', '月份', '月', '总量', '合计', '环比', '同比', '比例', '占比', '累计', '猪肉', '猪杂碎', '猪总量')
+
+    # 尝试格式1：猪肉进口（月份+总量+国别列），支持表头在 row 0/1/2
+    # 钢联格式：第2行表头含「进口数量合计」「进口数量：XX→中国」；第1列=日期
+    for header_row_idx in range(min(3, len(table_data))):
+        header = table_data[header_row_idx]
+        header_strs = [str(h).strip() if h is not None else '' for h in header]
+        country_cols = []
+        month_col = -1
+        total_col = -1
+        for i, h in enumerate(header_strs):
+            if not h:
+                continue
+            # 月份列：指标名称/日期/月份，数据行首列为日期
+            if any(kw in h for kw in ('日期', '月份', '指标名称')) or (h.endswith('月') and len(h) <= 4):
+                if month_col < 0:
+                    month_col = i
+            elif '总量' in h or '合计' in h:
+                total_col = i
+            elif '→中国' in h or '->中国' in h:
+                # 钢联格式：猪肉及猪杂碎：进口数量：阿根廷→中国（月）→ 提取国名
+                m = re.search(r'[：:]\s*([^：:→]+)\s*[→>\-]', h)
+                if m:
+                    cname = m.group(1).strip()
+                    if len(cname) >= 2 and cname not in ('全球', '进口数量'):
+                        country_cols.append((i, cname))
+            elif len(h) >= 2 and len(h) <= 8 and not any(kw in h for kw in exclude_keywords):
+                country_cols.append((i, h))
+
+        if month_col >= 0 and (total_col >= 0 or country_cols):
+            # 数据从表头下一行开始；钢联有单位行、更新行时需跳过（非数字行）
+            data_start = header_row_idx + 1
+            data_points = []
+            latest_month = None
+            for row in table_data[data_start:]:
+                if len(row) <= month_col:
+                    continue
+                month_val = row[month_col]
+                if month_val is None or str(month_val).strip() == '':
+                    continue
+                month_str = _parse_month_to_yyyy_mm(month_val)
+                if not month_str:
+                    continue
+                total_val = None
+                country_vals = []
+                if total_col >= 0 and len(row) > total_col:
+                    try:
+                        total_val = float(row[total_col]) if row[total_col] not in (None, '') else None
+                    except (ValueError, TypeError):
+                        pass
+                for ci, cname in country_cols:
+                    if len(row) > ci and row[ci] not in (None, ''):
+                        try:
+                            v = float(row[ci])
+                            if v > 0:
+                                country_vals.append((cname, v))
+                        except (ValueError, TypeError):
+                            pass
+                if total_val is None and country_vals:
+                    total_val = sum(v for _, v in country_vals)
+                if total_val is None and not country_vals:
+                    continue
+                top2 = sorted(country_vals, key=lambda x: -x[1])[:2]
+                data_points.append(ImportMeatPoint(
+                    month=month_str,
+                    total=round(total_val, 2) if total_val else None,
+                    top_countries=[ImportMeatCountryPoint(country=c, value=round(v, 2)) for c, v in top2]
+                ))
+                if month_str and (not latest_month or month_str > latest_month):
+                    latest_month = month_str
+            if data_points:
+                data_points.sort(key=lambda x: x.month)
+                return data_points, latest_month
+
+    # 尝试格式2：进口肉（矩阵：行=月度，列=年份）
+    year_row_idx = -1
+    for ri, row in enumerate(table_data[:5]):
+        row_str = [str(c).strip() if c else '' for c in row]
+        if any('年' in s and s[:-1].isdigit() for s in row_str):
+            year_row_idx = ri
+            break
+    if year_row_idx >= 0:
+        year_row = table_data[year_row_idx]
+        year_cols = []
+        for i, c in enumerate(year_row):
+            s = str(c).strip() if c else ''
+            if '年' in s and len(s) <= 6:
+                try:
+                    y = int(s.replace('年', ''))
+                    if 2010 <= y <= 2030:
+                        year_cols.append((i, y))
+                except ValueError:
+                    pass
+        month_map = {'1-2月': 1, '1月': 1, '2月': 2, '3月': 3, '4月': 4, '5月': 5, '6月': 6,
+                     '7月': 7, '8月': 8, '9月': 9, '10月': 10, '11月': 11, '12月': 12}
+        data_points = []
+        latest_month = None
+        for row in table_data[year_row_idx + 1:]:
+            if len(row) == 0:
+                continue
+            month_key = str(row[0]).strip() if row else ''
+            month_num = month_map.get(month_key)
+            if month_num is None:
+                for k, v in month_map.items():
+                    if k in month_key:
+                        month_num = v
+                        break
+            if month_num is None:
+                continue
+            for col_i, year in year_cols:
+                if len(row) <= col_i:
+                    continue
+                try:
+                    val = float(row[col_i]) if row[col_i] not in (None, '') else None
+                except (ValueError, TypeError):
+                    val = None
+                if val is None or val <= 0:
+                    continue
+                month_str = f"{year}-{month_num:02d}"
+                data_points.append(ImportMeatPoint(
+                    month=month_str,
+                    total=round(val, 2),
+                    top_countries=[]
+                ))
+                if not latest_month or month_str > latest_month:
+                    latest_month = month_str
+        if data_points:
+            data_points.sort(key=lambda x: x.month)
+            return data_points, latest_month
+
+    return [], None
+
+
+# 本地 Excel 回退：当数据库无数据时，从 docs 下的钢联模板读取
+_PORK_IMPORT_FALLBACK_PATHS = [
+    Path(__file__).resolve().parents[2] / "docs" / "1、价格：钢联自动更新模板(3).xlsx",
+    Path(__file__).resolve().parents[2] / "docs" / "1、价格：钢联自动更新模板.xlsx",
+]
+
+
+def _load_pork_import_from_local_excel() -> Optional[List[List]]:
+    """当数据库无猪肉进口数据时，从本地钢联 Excel 读取"""
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return None
+    workspace = Path(__file__).resolve().parents[2]
+    docs_dir = workspace / "docs"
+    if not docs_dir.exists():
+        return None
+    # 优先使用指定文件，其次匹配 钢联自动更新模板*.xlsx
+    for p in _PORK_IMPORT_FALLBACK_PATHS:
+        if p.exists():
+            try:
+                wb = load_workbook(p, data_only=True)
+                if "猪肉进口" not in wb.sheetnames:
+                    continue
+                ws = wb["猪肉进口"]
+                rows = list(ws.iter_rows(values_only=True))
+                if rows:
+                    return [list(r) for r in rows]
+            except Exception:
+                continue
+    for f in docs_dir.glob("*钢联自动更新模板*.xlsx"):
+        try:
+            wb = load_workbook(f, data_only=True)
+            if "猪肉进口" in wb.sheetnames:
+                ws = wb["猪肉进口"]
+                rows = list(ws.iter_rows(values_only=True))
+                if rows:
+                    return [list(r) for r in rows]
+        except Exception:
+            continue
+    return None
+
+
+def _parse_month_to_yyyy_mm(val) -> Optional[str]:
+    """将月份值解析为 YYYY-MM"""
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    if len(s) == 7 and s[4] == '-':  # 已是 YYYY-MM
+        return s
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(s, '%Y-%m-%d')
+        return dt.strftime('%Y-%m')
+    except Exception:
+        pass
+    m = re.search(r'(\d{4})年?\s*(\d{1,2})月?', s)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    m = re.search(r'(\d{4})-(\d{1,2})', s)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    return None
+
+
 @router.get("/import-meat", response_model=ImportMeatResponse)
 def get_import_meat(
     db: Session = Depends(get_db)
 ):
     """
     获取猪肉进口数据（图2）
-    实际返回：钢联全国猪价的月度均值/历年平均值系数
-    数据来源：钢联全国猪价（日度数据，按月聚合）
-    计算公式：系数 = 月度均值 / 历年平均值
+    数据来源：钢联自动更新模板 sheet「猪肉进口」或涌益「进口肉」
+    优先从钢联自动更新模板读取猪肉进口 sheet
+    返回：每月进口总量 + 进口量前2的国家（如有分国别数据）
     """
-    # 1. 获取钢联全国猪价数据（日度，需要按月聚合）
-    # 优先查找：分省区猪价sheet中的"中国"列
-    price_metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "分省区猪价",
-        or_(
-            DimMetric.raw_header.like('%中国%'),
-            DimMetric.raw_header.like('%全国%')
-        ),
-        DimMetric.freq.in_(["D", "daily"])
-    ).first()
-    
-    # 如果没找到，尝试通过metric_key查找
-    if not price_metric:
-        price_metric = db.query(DimMetric).filter(
-            func.json_extract(DimMetric.parse_json, '$.metric_key') == 'GL_D_PRICE_NATION',
-            DimMetric.freq.in_(["D", "daily"])
-        ).first()
-    
-    # 如果还没找到，尝试其他方式
-    if not price_metric:
-        price_metric = db.query(DimMetric).filter(
-            DimMetric.sheet_name.like('%钢联%'),
-            or_(
-                DimMetric.raw_header.like('%全国%价%'),
-                DimMetric.raw_header.like('%中国%价%')
-            ),
-            DimMetric.freq.in_(["D", "daily"])
-        ).first()
-    
-    if not price_metric:
-        return ImportMeatResponse(data=[], latest_month=None)
-    
-    # 2. 查询价格数据并按月聚合
-    price_monthly = db.query(
-        func.date_format(FactObservation.obs_date, '%Y-%m-01').label('month'),
-        func.avg(FactObservation.value).label('monthly_avg')
-    ).filter(
-        FactObservation.metric_id == price_metric.id,
-        FactObservation.period_type == 'day'
-    ).group_by('month').order_by('month').all()
-    
-    if not price_monthly:
-        return ImportMeatResponse(data=[], latest_month=None)
-    
-    # 3. 计算历年平均值
-    price_values = [float(item.monthly_avg) for item in price_monthly if item.monthly_avg]
-    price_avg = sum(price_values) / len(price_values) if price_values else None
-    
-    if not price_avg or price_avg <= 0:
-        return ImportMeatResponse(data=[], latest_month=None)
-    
-    # 4. 计算系数并构建数据点
-    data_points = []
-    latest_month = None
-    
-    for item in price_monthly:
-        if not item.monthly_avg:
-            continue
-        
-        month_str = item.month
-        monthly_avg = float(item.monthly_avg)
-        
-        # 计算系数：月度均值 / 历年平均值
-        price_coef = monthly_avg / price_avg
-        
-        data_points.append(ImportMeatPoint(
-            month=month_str,
-            price_coefficient=round(price_coef, 4)
-        ))
-        
-        if month_str and (not latest_month or month_str > latest_month):
-            latest_month = month_str
-    
-    # 按月份排序
-    data_points.sort(key=lambda x: x.month)
-    
-    return ImportMeatResponse(data=data_points, latest_month=latest_month)
+    # 1. 优先从钢联自动更新模板读取猪肉进口
+    table_data = _get_raw_table_data(db, "猪肉进口", filename_pattern="钢联自动更新模板")
+    if table_data:
+        data_points, latest_month = _parse_pork_import_from_sheet(table_data)
+        if data_points:
+            return ImportMeatResponse(data=data_points, latest_month=latest_month)
+    # 2. 无 filename 限定，兼容其他来源（如 2、【生猪产业数据】.xlsx）
+    for sheet_name in ("猪肉进口", "进口肉"):
+        table_data = _get_raw_table_data(db, sheet_name)
+        if table_data:
+            data_points, latest_month = _parse_pork_import_from_sheet(table_data)
+            if data_points:
+                return ImportMeatResponse(data=data_points, latest_month=latest_month)
+    # 3. 数据库无数据时，从本地钢联 Excel 回退（docs/1、价格：钢联自动更新模板(3).xlsx 等）
+    table_data = _load_pork_import_from_local_excel()
+    if table_data:
+        data_points, latest_month = _parse_pork_import_from_sheet(table_data)
+        if data_points:
+            return ImportMeatResponse(data=data_points, latest_month=latest_month)
+    return ImportMeatResponse(data=[], latest_month=None)

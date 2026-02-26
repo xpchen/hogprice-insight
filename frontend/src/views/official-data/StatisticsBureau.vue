@@ -62,29 +62,28 @@
       <!-- 图1：统计局生猪出栏量&屠宰量 -->
       <div class="chart-section">
         <h3>图1：统计局生猪出栏量&屠宰量</h3>
-        <div class="filter-section">
-          <span class="filter-label">时间周期筛选：</span>
+        <div class="chart-container">
+          <div ref="chart1Ref" style="width: 100%; height: 420px" v-loading="loadingChart1"></div>
+        </div>
+        <div class="filter-section filter-section-below">
+          <span class="filter-label">特定周期筛选：</span>
           <el-slider
             v-model="timeRange"
             :min="0"
             :max="100"
             :step="1"
             range
+            show-stops
             @change="handleTimeRangeChange"
-            style="width: 400px; margin-left: 20px"
+            style="flex: 1; max-width: 500px; margin: 0 12px"
           />
-          <span style="margin-left: 20px; color: #666">
-            {{ timeRangeText }}
-          </span>
-        </div>
-        <div class="chart-container">
-          <div ref="chart1Ref" style="width: 100%; height: 500px" v-loading="loadingChart1"></div>
+          <span class="filter-range-text">{{ timeRangeText }}</span>
         </div>
       </div>
 
-      <!-- 图2：猪肉进口（实际是猪价系数） -->
+      <!-- 图2：猪肉进口 -->
       <div class="chart-section">
-        <h3>图2：猪肉进口（猪价系数）</h3>
+        <h3>图2：猪肉进口</h3>
         <div class="chart-container">
           <div ref="chart2Ref" style="width: 100%; height: 500px" v-loading="loadingChart2"></div>
         </div>
@@ -320,10 +319,6 @@ const updateChart1 = () => {
   const data = filteredOutputSlaughterData.value
   if (data.length === 0) {
     chart1Instance.setOption({
-      title: {
-        text: '统计局生猪出栏量&屠宰量',
-        left: 'left'
-      },
       graphic: {
         type: 'text',
         left: 'center',
@@ -344,10 +339,6 @@ const updateChart1 = () => {
   const scaleRates = data.map(d => d.scale_rate ? d.scale_rate * 100 : null) // 转换为百分比
 
   const option: echarts.EChartsOption = {
-    title: {
-      text: '统计局生猪出栏量&屠宰量',
-      left: 'left'
-    },
     tooltip: {
       trigger: 'axis',
       axisPointer: {
@@ -370,16 +361,18 @@ const updateChart1 = () => {
     },
     legend: {
       data: ['季度出栏量', '定点屠宰量', '规模化率'],
-      top: 30,
+      top: 8,
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
-      itemGap: 15,
-      left: 'left'
+      itemGap: 28,
+      left: 'left',
+      type: 'plain'
     },
     grid: {
       left: '3%',
       right: '4%',
+      top: '15%',
       bottom: '3%',
       containLabel: true
     },
@@ -456,7 +449,7 @@ const updateChart1 = () => {
   chart1Instance.setOption(option)
 }
 
-// 更新图表2
+// 更新图表2：猪肉进口柱形图
 const updateChart2 = () => {
   if (!chart2Ref.value || !importMeatData.value) return
 
@@ -467,10 +460,6 @@ const updateChart2 = () => {
   const data = importMeatData.value.data
   if (data.length === 0) {
     chart2Instance.setOption({
-      title: {
-        text: '猪肉进口（猪价系数）',
-        left: 'left'
-      },
       graphic: {
         type: 'text',
         left: 'center',
@@ -486,85 +475,89 @@ const updateChart2 = () => {
   }
 
   const months = data.map(d => d.month)
-  const priceCoefficients = data.map(d => d.price_coefficient)
+  const hasTopCountries = data.some(d => d.top_countries && d.top_countries.length > 0)
+
+  // 钢联数据单位为吨，图表显示为万吨（÷10000）
+  const toWanTon = (v: number | null | undefined) => (v != null ? v / 10000 : 0)
+
+  // 构建堆叠柱形图数据
+  const totalData = data.map(d => (d.total != null ? toWanTon(d.total) : null))
+  const countryColors = ['#5470c6', '#91cc75']  // 最大、次大国家颜色
+  const series: any[] = []
+
+  if (hasTopCountries) {
+    const c1Data = data.map(d => toWanTon(d.top_countries?.[0]?.value))
+    const c2Data = data.map(d => toWanTon(d.top_countries?.[1]?.value))
+    const otherData = data.map((d) => {
+      const total = d.total ?? 0
+      const c1v = d.top_countries?.[0]?.value ?? 0
+      const c2v = d.top_countries?.[1]?.value ?? 0
+      const other = Math.max(0, total - c1v - c2v)
+      return toWanTon(other)
+    })
+    // 使用最新月份的前两名国家作为图例（每月前两名可能不同）
+    const lastPoint = data[data.length - 1]
+    const c1Name = lastPoint?.top_countries?.[0]?.country ?? '进口量第1'
+    const c2Name = lastPoint?.top_countries?.[1]?.country ?? '进口量第2'
+    series.push(
+      { name: '其他', type: 'bar', stack: 'total', data: otherData, itemStyle: { color: '#e0e0e0' } },
+      { name: c1Name, type: 'bar', stack: 'total', data: c1Data, itemStyle: { color: countryColors[0] } },
+      { name: c2Name, type: 'bar', stack: 'total', data: c2Data, itemStyle: { color: countryColors[1] } }
+    )
+  } else {
+    series.push({
+      name: '进口总量',
+      type: 'bar',
+      data: totalData,
+      itemStyle: { color: '#5470c6' }
+    })
+  }
 
   const option: echarts.EChartsOption = {
-    title: {
-      text: '猪肉进口（猪价系数）',
-      left: 'left'
-    },
     tooltip: {
       trigger: 'axis',
-      axisPointer: {
-        type: 'cross'
-      },
+      axisPointer: { type: 'shadow' },
       formatter: (params: any) => {
-        if (!Array.isArray(params)) return ''
+        if (!Array.isArray(params) || params.length === 0) return ''
         const month = params[0].axisValue
-        let result = `${month}<br/>`
-        
-        params.forEach((param: any) => {
-          if (param.value !== null && param.value !== undefined) {
-            result += `${param.seriesName}: ${param.value.toFixed(4)}<br/>`
-          }
-        })
-        
+        const idx = params[0].dataIndex
+        const point = data[idx]
+        const fmt = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2 })
+        const totalWanTon = (point.total ?? 0) / 10000
+        let result = `<strong>${month}</strong><br/>`
+        result += `进口总量: ${fmt(totalWanTon)} 万吨<br/>`
+        if (point.top_countries?.length) {
+          point.top_countries.forEach((c: { country: string; value?: number | null }) => {
+            result += `${c.country}进口量: ${fmt((c.value ?? 0) / 10000)} 万吨<br/>`
+          })
+        }
         return result
       }
     },
-    legend: {
-      data: ['猪价系数'],
-      top: 30,
-      icon: 'circle',
-      itemWidth: 10,
-      itemHeight: 10,
-      itemGap: 15,
-      left: 'left'
-    },
+    legend: hasTopCountries ? { top: 4, left: 'center', type: 'plain' } : { show: false },
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '3%',
+      top: '10%',
+      bottom: '12%',
       containLabel: true
     },
     xAxis: {
       type: 'category',
-      boundaryGap: false,
-      data: months
+      data: months,
+      axisLabel: { rotate: 45 }
     },
     yAxis: {
       type: 'value',
-      name: '系数',
+      name: '万吨',
       ...yAxisHideMinMaxLabel,
-      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2) }
+      axisLabel: { formatter: (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(1) }
     },
     dataZoom: [
-      {
-        type: 'slider',
-        show: true,
-        xAxisIndex: [0],
-        start: 0,
-        end: 100
-      },
-      {
-        type: 'inside',
-        xAxisIndex: [0],
-        start: 0,
-        end: 100
-      }
+      { type: 'slider', show: true, xAxisIndex: [0], start: 0, end: 100, height: 20, bottom: 0 },
+      { type: 'inside', xAxisIndex: [0], start: 0, end: 100 }
     ],
-    series: [
-      {
-        name: '猪价系数',
-        type: 'line',
-        smooth: true,
-        data: priceCoefficients,
-        connectNulls: false,
-        itemStyle: {
-          color: '#5470c6'
-        }
-      }
-    ]
+    series
   }
 
   chart2Instance.setOption(option)
@@ -678,7 +671,7 @@ onBeforeUnmount(() => {
 }
 
 .chart-section h3 {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-size: 18px;
   font-weight: 600;
 }
@@ -688,17 +681,30 @@ onBeforeUnmount(() => {
 }
 
 .chart-container {
-  margin-top: 15px;
+  margin-top: 8px;
 }
 
 .filter-section {
   display: flex;
   align-items: center;
-  margin-bottom: 20px;
 }
 
-.filter-label {
+.filter-section-below {
+  margin-top: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #ebeef5;
+}
+
+.filter-section .filter-label {
   font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.filter-range-text {
+  color: #606266;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 </style>

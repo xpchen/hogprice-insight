@@ -426,11 +426,12 @@ async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
         r = list(row) if row else []
         return [r[i] if i < len(r) else "" for i in range(length)]
 
-    # 表头行
+    # 表头行（排除第1列「天数」）
+    SKIP_COL = 1  # A列/天数，1-based
     row0 = pad_row(table_data[0], max_col)
     row1 = pad_row(table_data[1], max_col)
-    header_row_0 = [_format_a1_cell(v) or "" for v in row0]
-    header_row_1 = [_format_a1_cell(v) or "" for v in row1]
+    header_row_0 = [_format_a1_cell(v) or "" for v in row0[SKIP_COL:]]
+    header_row_1 = [_format_a1_cell(v) or "" for v in row1[SKIP_COL:]]
 
     # 判断是否存在第三行表头
     data_start = 2
@@ -438,7 +439,7 @@ async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
     if len(table_data) >= 3:
         row2 = pad_row(table_data[2], max_col)
         if _is_a1_header_row_2(row2):
-            header_row_2 = [_format_a1_cell(v) or "" for v in row2]
+            header_row_2 = [_format_a1_cell(v) or "" for v in row2[SKIP_COL:]]
             data_start = 3
 
     rows = []
@@ -446,13 +447,30 @@ async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
         row = pad_row(table_data[row_idx], max_col)
         if not _is_a1_row_valid(row, max_col):
             continue
-        rows.append([_format_a1_cell(v) for v in row])
+        rows.append([_format_a1_cell(v) for v in row[SKIP_COL:]])
+
+    # 合并单元格：排除第1列（天数），列索引整体左移（1-based）
+    new_merged = []
+    for m in (merged_cells or []):
+        mc, mx = (m.get("min_col") or 1), (m.get("max_col") or 1)
+        if mx < SKIP_COL:
+            continue
+        new_min = 1 if mc <= SKIP_COL else mc - SKIP_COL
+        new_max = mx - SKIP_COL
+        if new_min > new_max:
+            continue
+        new_merged.append({
+            "min_row": m.get("min_row"),
+            "max_row": m.get("max_row"),
+            "min_col": new_min,
+            "max_col": new_max,
+        })
 
     return {
         "header_row_0": header_row_0,
         "header_row_1": header_row_1,
         "header_row_2": header_row_2,
         "rows": rows,
-        "column_count": max_col,
-        "merged_cells_json": merged_cells,
+        "column_count": max(0, max_col - SKIP_COL),
+        "merged_cells_json": new_merged,
     }

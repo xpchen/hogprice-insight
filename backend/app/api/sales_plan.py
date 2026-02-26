@@ -21,6 +21,11 @@ from app.models.raw_table import RawTable
 router = APIRouter(prefix="/api/v1/sales-plan", tags=["sales-plan"])
 
 
+def _normalize_to_month_start(d: date) -> str:
+    """将日期统一为当月1日，便于涌益（月初）与钢联（月末）数据同行对齐"""
+    return d.replace(day=1).isoformat()
+
+
 class SalesPlanDataPoint(BaseModel):
     """销售计划数据点"""
     date: str  # YYYY-MM-DD格式
@@ -170,17 +175,17 @@ def _get_enterprise_data(db: Session, regions: List[str]) -> List[SalesPlanDataP
             ) == '月度'
         ).order_by(FactObservation.obs_date.desc()).all()
         
-        # 按日期分组
+        # 按日期分组，统一为月初（与涌益、钢联对齐，便于同月数据同行展示）
         date_data: Dict[str, Dict[str, float]] = {}
         
         for obs in plan_obs:
-            date_str = obs.obs_date.isoformat()
+            date_str = _normalize_to_month_start(obs.obs_date)
             if date_str not in date_data:
                 date_data[date_str] = {}
             date_data[date_str]['plan'] = float(obs.value) if obs.value else None
         
         for obs in actual_obs:
-            date_str = obs.obs_date.isoformat()
+            date_str = _normalize_to_month_start(obs.obs_date)
             if date_str not in date_data:
                 date_data[date_str] = {}
             date_data[date_str]['actual'] = float(obs.value) if obs.value else None
@@ -323,7 +328,7 @@ def _get_yongyi_data(db: Session) -> List[SalesPlanDataPoint]:
         except:
             continue
         
-        date_str = date_obj.isoformat()
+        date_str = _normalize_to_month_start(date_obj)
         
         # Q列（索引16）：上月样本企业合计销售（但用户说原数据是上月出栏，需要修正为当月出栏）
         # 注意：用户说Q列原数据是上月出栏，但需要修正为当月出栏，这意味着我们需要将Q列的值作为当月出栏
@@ -438,17 +443,17 @@ def _get_ganglian_data(db: Session) -> List[SalesPlanDataPoint]:
         FactObservation.period_type == "month"
     ).order_by(FactObservation.obs_date.desc()).all()
     
-    # 按日期分组
+    # 按日期分组，统一为月初（与涌益对齐，便于同月数据同行展示）
     date_data: Dict[str, Dict[str, float]] = {}
     
     for obs in actual_obs:
-        date_str = obs.obs_date.isoformat()
+        date_str = _normalize_to_month_start(obs.obs_date)
         if date_str not in date_data:
             date_data[date_str] = {}
         date_data[date_str]['actual'] = float(obs.value) if obs.value else None
     
     for obs in plan_obs:
-        date_str = obs.obs_date.isoformat()
+        date_str = _normalize_to_month_start(obs.obs_date)
         if date_str not in date_data:
             date_data[date_str] = {}
         date_data[date_str]['plan'] = float(obs.value) if obs.value else None

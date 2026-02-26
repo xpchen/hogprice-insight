@@ -243,7 +243,13 @@ class P8EnterpriseDailyParser(BaseParser):
                     "metric_key": "SOUTHWEST_PLAN_OUTPUT",
                     "unit": "头"
                 }
-            elif "成交率" in metric_str or "完成率" in metric_str:
+            elif "成交率" in metric_str:
+                metric_columns[idx] = {
+                    "metric_name": "成交率",
+                    "metric_key": "SOUTHWEST_TRANSACTION_RATE",
+                    "unit": "%"
+                }
+            elif "完成率" in metric_str:
                 metric_columns[idx] = {
                     "metric_name": "完成率",
                     "metric_key": "SOUTHWEST_COMPLETION_RATE",
@@ -306,6 +312,10 @@ class P8EnterpriseDailyParser(BaseParser):
                 if cleaned_result is None or cleaned_result[0] is None:
                     continue
                 cleaned_value, raw_value = cleaned_result
+                # 成交率/完成率：Excel 多为小数 0.94=94%，转为百分比
+                if metric_info.get("unit") == "%" and cleaned_value is not None:
+                    if 0 < abs(cleaned_value) <= 1.5:
+                        cleaned_value = round(cleaned_value * 100, 2)
                 
                 # 确定地区
                 region_name = None
