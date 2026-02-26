@@ -102,8 +102,11 @@ const renderCharts = () => {
       }
       return contractMonth === 1 ? year : year + 1
     }
-    const getDisplayYearLabel = (cy: number): string =>
-      contractMonth === 1 ? `${cy - 1}年` : `${cy - 1}/${cy}`
+    const getDisplayYearLabel = (cy: number): string => {
+      const yy = (cy % 100).toString().padStart(2, '0')
+      const mm = contractMonth.toString().padStart(2, '0')
+      return yy + mm  // 如 2201、2301、2401
+    }
 
     const yearMap = new Map<number, Array<typeof series.data[0]>>()
     series.data.forEach(point => {

@@ -2,8 +2,11 @@
  * 图表样式统一配置：图例圆点、坐标轴小数、年份颜色等
  */
 
-/** Y 轴不显示最大值、最小值刻度标签（所有图表统一） */
-export const yAxisHideMinMaxLabel = { showMinLabel: false, showMaxLabel: false }
+/** axisLabel 内不显示最大/最小刻度（ECharts 要求在此层级） */
+export const axisLabelHideMinMax = { showMinLabel: false, showMaxLabel: false }
+
+/** @deprecated 请使用 axisLabel: { ...axisLabelHideMinMax, formatter } 合并到 axisLabel */
+export const yAxisHideMinMaxLabel = { axisLabel: { showMinLabel: false, showMaxLabel: false } }
 
 /** 图例圆点配置（参照 A2.均重） */
 export const legendCircleConfig = {

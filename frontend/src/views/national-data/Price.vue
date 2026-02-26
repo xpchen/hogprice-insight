@@ -193,7 +193,7 @@ import {
 } from '@/api/price-display'
 import { downloadSQL, generateInsertSQL } from '@/utils/sql-generator'
 import type { MetricConfig, SQLGenerationOptions } from '@/utils/sql-generator'
-import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, axisLabelHideMinMax } from '@/utils/chart-style'
 
 // 加载状态
 const loadingPrice = ref(false)
@@ -504,9 +504,7 @@ const renderPriceSeasonalityChart = () => {
       name: '价格',
       min: yMinPrice,
       max: yMaxPrice,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) },
-      showMinLabel: false,
-      showMaxLabel: false
+      axisLabel: { ...axisLabelHideMinMax, formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     dataZoom: [
@@ -524,9 +522,34 @@ const renderPriceSeasonalityChart = () => {
       }
     ]
   }
-  
+
   priceSeasonalityChart.setOption(option)
-  
+
+  // 图例切换年份时重新计算 Y 轴范围，使坐标轴自适应可见数据
+  const updateYAxisFromVisibleSeries = (selected: Record<string, boolean>) => {
+    if (!priceSeasonalityChart) return
+    const visibleData: number[] = []
+    series.forEach(s => {
+      const isVisible = selected[s.name] !== false
+      if (isVisible) {
+        s.data.forEach(v => {
+          if (v != null && typeof v === 'number') visibleData.push(v)
+        })
+      }
+    })
+    const pMin = visibleData.length > 0 ? Math.min(...visibleData) : 0
+    const pMax = visibleData.length > 0 ? Math.max(...visibleData) : 30
+    const pPadding = Math.max((pMax - pMin) * 0.08, 0.5)
+    const newMin = pMin - pPadding
+    const newMax = pMax + pPadding
+    priceSeasonalityChart.setOption({ yAxis: { min: newMin, max: newMax } })
+  }
+
+  priceSeasonalityChart.off('legendselectchanged')
+  priceSeasonalityChart.on('legendselectchanged', (params: { selected?: Record<string, boolean> }) => {
+    updateYAxisFromVisibleSeries(params.selected || {})
+  })
+
   // 确保图表正确渲染
   setTimeout(() => {
     priceSeasonalityChart?.resize()
@@ -642,8 +665,7 @@ const renderSpreadSeasonalityChart = () => {
     yAxis: {
       type: 'value',
       name: '价差',
-      ...yAxisHideMinMaxLabel,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+      axisLabel: { ...axisLabelHideMinMax, formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     dataZoom: [
@@ -828,15 +850,13 @@ const renderPriceSpreadChart = () => {
         type: 'value',
         name: '价格',
         position: 'left',
-        ...yAxisHideMinMaxLabel,
-        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+        axisLabel: { ...axisLabelHideMinMax, formatter: (v: number) => axisLabelDecimalFormatter(v) }
       },
       {
         type: 'value',
         name: '价差',
         position: 'right',
-        ...yAxisHideMinMaxLabel,
-        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+        axisLabel: { ...axisLabelHideMinMax, formatter: (v: number) => axisLabelDecimalFormatter(v) }
       }
     ],
     series: series,
@@ -1019,9 +1039,7 @@ const renderSlaughterLunarChart = () => {
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) },
-      showMinLabel: false,
-      showMaxLabel: false
+      axisLabel: { ...axisLabelHideMinMax, formatter: (v: number) => axisLabelDecimalFormatter(v) }
     },
     series: series,
     dataZoom: [
