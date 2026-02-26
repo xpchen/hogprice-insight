@@ -202,14 +202,16 @@ def test_import_file(file_path: Path, dataset_type: str, source_code: str = None
             batch.updated_count = result.get("updated", 0)
             db.commit()
             
-            # 包装结果格式
+            # 包装结果格式（errors 可能是 int 或 list）
+            _err = result.get("errors")
+            _err_cnt = len(_err) if isinstance(_err, (list, tuple)) else (_err or 0)
             result = {
                 "batch_id": batch_id,
                 "success": result.get("success", False),
                 "inserted": result.get("inserted", 0),
                 "updated": result.get("updated", 0),
-                "error_count": len(result.get("errors", [])),
-                "errors": result.get("errors", [])
+                "error_count": _err_cnt,
+                "errors": _err if isinstance(_err, (list, tuple)) else []
             }
             
         elif dataset_type == "LH_OPT":
@@ -241,14 +243,16 @@ def test_import_file(file_path: Path, dataset_type: str, source_code: str = None
             batch.updated_count = result.get("updated", 0)
             db.commit()
             
-            # 包装结果格式
+            # 包装结果格式（errors 可能是 int 或 list）
+            _err = result.get("errors")
+            _err_cnt = len(_err) if isinstance(_err, (list, tuple)) else (_err or 0)
             result = {
                 "batch_id": batch_id,
                 "success": result.get("success", False),
                 "inserted": result.get("inserted", 0),
                 "updated": result.get("updated", 0),
-                "error_count": len(result.get("errors", [])),
-                "errors": result.get("errors", [])
+                "error_count": _err_cnt,
+                "errors": _err if isinstance(_err, (list, tuple)) else []
             }
         else:
             # 使用unified_import

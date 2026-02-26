@@ -57,6 +57,17 @@ def decode_access_token(token: str) -> Optional[dict]:
         return None
 
 
+async def get_token_from_query_or_header(request: Request) -> Optional[str]:
+    """从 query 参数 token 或 Authorization header 获取 token（用于 EventSource 等无法传 header 的场景）"""
+    token = request.query_params.get("token")
+    if token:
+        return token
+    auth = request.headers.get("Authorization")
+    if auth and auth.startswith("Bearer "):
+        return auth[7:]
+    return None
+
+
 async def get_current_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
@@ -94,6 +105,30 @@ async def get_current_user(
             detail="User is inactive"
         )
     
+    return user
+
+
+async def get_current_user_from_request(request: Request, db: Session = Depends(get_db)) -> SysUser:
+    """从 Request 的 query param token 或 Authorization header 获取当前用户（用于 SSE 等）"""
+    token = await get_token_from_query_or_header(request)
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if token is None:
+        raise credentials_exception
+    payload = decode_access_token(token)
+    if payload is None:
+        raise credentials_exception
+    username: str = payload.get("sub")
+    if username is None:
+        raise credentials_exception
+    user = db.query(SysUser).filter(SysUser.username == username).first()
+    if user is None:
+        raise credentials_exception
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
     return user
 
 

@@ -1,12 +1,26 @@
 """统一导入工作流 - 整合Raw层、Dispatcher、Parser、Validator、Upsert、Extractor"""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 from sqlalchemy.orm import Session
 from openpyxl import load_workbook
 from io import BytesIO
 import hashlib
+import json
+import time
+from pathlib import Path
 
 from app.models.import_batch import ImportBatch
+
+# #region agent log
+def _debug_log(location: str, message: str, data: dict, hypothesis_id: str = "H3"):
+    try:
+        log_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "debug-cd597e.log"
+        payload = {"sessionId": "cd597e", "timestamp": int(time.time() * 1000), "location": location, "message": message, "data": data, "hypothesisId": hypothesis_id}
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+# #endregion
 from app.services.ingestors.raw_writer import (
     save_raw_file, save_all_sheets_from_workbook, update_sheet_parse_status
 )
@@ -24,7 +38,8 @@ def unified_import(
     filename: str,
     uploader_id: int,
     dataset_type: str,
-    source_code: Optional[str] = None
+    source_code: Optional[str] = None,
+    on_sheet_progress: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     统一导入工作流
@@ -90,6 +105,9 @@ def unified_import(
         # 3. 加载profile和创建dispatcher
         profile = get_profile_by_dataset_type(db, dataset_type)
         if not profile:
+            # #region agent log
+            _debug_log("unified_ingestor.py", "profile_not_found", {"dataset_type": dataset_type, "source_code": source_code}, "H3")
+            # #endregion
             # 尝试自动加载配置文件
             print(f"  ⚠️  Profile不存在，尝试自动加载...", flush=True)
             from app.services.ingestors.profile_loader import load_profile_from_json
@@ -128,6 +146,9 @@ def unified_import(
             raise ValueError(f"Profile存在但sheets配置为空: profile_code={profile.profile_code}")
         
         print(f"  ✓ Profile已加载: {profile.profile_code} ({len(profile.sheets)} sheets)", flush=True)
+        # #region agent log
+        _debug_log("unified_ingestor.py", "profile_loaded", {"profile_code": profile.profile_code, "dataset_type": dataset_type, "sheet_count": len(profile.sheets), "sheet_names": [s.sheet_name for s in profile.sheets]}, "H3")
+        # #endregion
         
         dispatcher = Dispatcher(db, profile)
         error_collector = ErrorCollector(db, batch_id)
@@ -152,6 +173,11 @@ def unified_import(
             # 记录sheet处理开始（强制刷新输出）
             print(f"\n  📄 处理Sheet [{sheet_idx}/{total_sheets}]: {sheet_name}", flush=True)
             print(f"     └─ 开始时间: {datetime.now().strftime('%H:%M:%S')}", flush=True)
+            if on_sheet_progress:
+                try:
+                    on_sheet_progress(sheet_idx, total_sheets, sheet_name)
+                except Exception:
+                    pass
             
             # 导入前：获取目标表的记录数（如果有table_config）
             table_name = None
@@ -189,7 +215,10 @@ def unified_import(
                 action = dispatch_result.get("action")
                 parser_type = dispatch_result.get("parser")
                 sheet_config = dispatch_result.get("sheet_config")
-                
+                # #region agent log
+                _debug_log("unified_ingestor.py:sheet_dispatch", "dispatch_result", {"sheet_name": sheet_name, "action": action, "parser": parser_type, "has_sheet_config": bool(sheet_config)}, "H4")
+                # #endregion
+
                 # 如果上面已经获取了table_name和count_before，这里重用
                 if sheet_config and not table_name:
                     table_config = sheet_config.get("table_config")
@@ -278,7 +307,10 @@ def unified_import(
                     )
                     
                     print(f"     └─ 解析得到观测值: {len(observations)} 条", flush=True)
-                    
+                    # #region agent log
+                    _debug_log("unified_ingestor.py:parser", "observations_parsed", {"sheet_name": sheet_name, "parser": parser_type, "obs_count": len(observations), "sample_obs_date": observations[0].get("obs_date") if observations else None}, "H5")
+                    # #endregion
+
                     # 5.4 验证数据
                     validator = ObservationValidator(error_collector)
                     # 对于新架构（有table_config），跳过metric_key和dedup_key检查
@@ -296,6 +328,9 @@ def unified_import(
                     )
                     
                     print(f"     └─ 验证后有效观测值: {len(valid_observations)} 条", flush=True)
+                    # #region agent log
+                    _debug_log("unified_ingestor.py:validator", "validation_result", {"sheet_name": sheet_name, "obs_before": len(observations), "valid_after": len(valid_observations), "rejected": len(observations) - len(valid_observations)}, "H5")
+                    # #endregion
                     if len(valid_observations) == 0 and len(observations) > 0:
                         # 调试：查看第一个失败的原因
                         is_valid, error_msg = validator.validate_observation(
@@ -562,6 +597,9 @@ def unified_import(
         error_msg = str(e)
         if len(error_msg) > 500:
             error_msg = error_msg[:497] + "..."
+        # #region agent log
+        _debug_log("unified_ingestor.py", "import_exception", {"error": error_msg[:300], "dataset_type": dataset_type}, "H3")
+        # #endregion
         return {
             "success": False,
             "batch_id": batch_id if 'batch_id' in locals() else None,

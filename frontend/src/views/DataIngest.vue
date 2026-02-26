@@ -11,8 +11,11 @@
         drag
         :auto-upload="false"
         :on-change="handleFileChange"
+        :on-remove="handleFileRemove"
         :file-list="fileList"
-        accept=".xlsx,.xls"
+        :limit="50"
+        multiple
+        accept=".xlsx,.xls,.zip"
       >
         <el-icon class="el-icon--upload"><upload-filled /></el-icon>
         <div class="el-upload__text">
@@ -20,56 +23,58 @@
         </div>
         <template #tip>
           <div class="el-upload__tip">
-            支持 .xlsx, .xls 格式的Excel文件
+            支持 .xlsx、.xls、.zip（zip 将解压并导入其中的 Excel），可多选
           </div>
         </template>
       </el-upload>
 
-      <!-- 预览区域 -->
-      <div v-if="previewData" style="margin-top: 20px">
+      <!-- 已选文件与执行 -->
+      <div v-if="fileList.length > 0" style="margin-top: 20px">
         <el-card>
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span>导入预览</span>
+              <span>已选 {{ fileList.length }} 个文件</span>
               <div>
-                <el-button type="primary" @click="executeImport" :loading="importing" :disabled="!currentFile">
-                  执行导入
+                <el-button type="primary" @click="submitImport" :loading="importing" :disabled="importing">
+                  提交导入
                 </el-button>
-                <el-button @click="handleCancel">取消</el-button>
+                <el-button @click="handleCancel" :disabled="importing">清空</el-button>
               </div>
             </div>
           </template>
-
-          <div>
-            <el-descriptions :column="2" border>
-              <el-descriptions-item label="模板类型">
-                <el-tag>{{ previewData.template_type }}</el-tag>
-              </el-descriptions-item>
-              <el-descriptions-item label="日期范围">
-                {{ previewData.date_range?.start }} 至 {{ previewData.date_range?.end }}
-              </el-descriptions-item>
-            </el-descriptions>
-
-            <el-divider>Sheet列表</el-divider>
-            <el-table :data="previewData.sheets" style="width: 100%">
-              <el-table-column prop="name" label="Sheet名称" />
-              <el-table-column prop="rows" label="行数" />
-              <el-table-column prop="columns" label="列数">
-                <template #default="{ row }">
-                  {{ row.columns?.length || 0 }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作">
-                <template #default="{ row }">
-                  <el-button size="small" @click="viewSheetSample(row)">
-                    查看样本
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
+          <el-table :data="fileList" size="small" max-height="200">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column label="文件名">
+              <template #default="{ row }">{{ row.name }}</template>
+            </el-table-column>
+            <el-table-column label="大小" width="100">
+              <template #default="{ row }">
+                {{ formatSize(row.raw?.size ?? row.size) }}
+              </template>
+            </el-table-column>
+          </el-table>
         </el-card>
       </div>
+
+      <!-- 导入进度 -->
+      <el-card v-if="progress.visible" style="margin-top: 20px">
+        <template #header>
+          <span>导入进度</span>
+        </template>
+        <div>
+          <el-progress
+            :percentage="progress.percent"
+            :status="progress.status"
+            :stroke-width="12"
+          />
+          <div style="margin-top: 12px; color: var(--el-text-color-regular)">
+            {{ progress.message }}
+          </div>
+          <div v-if="progress.currentFile > 0" style="margin-top: 8px; font-size: 12px; color: var(--el-text-color-secondary)">
+            第 {{ progress.currentFile }} / {{ progress.totalFiles }} 个文件
+          </div>
+        </div>
+      </el-card>
 
       <!-- 批次列表 -->
       <el-card style="margin-top: 20px">
@@ -137,18 +142,6 @@
           </el-table>
         </div>
       </el-dialog>
-
-      <!-- Sheet样本对话框 -->
-      <el-dialog v-model="sampleDialogVisible" title="Sheet样本数据" width="80%">
-        <el-table :data="sampleData" style="width: 100%">
-          <el-table-column
-            v-for="col in sampleColumns"
-            :key="col"
-            :prop="col"
-            :label="col"
-          />
-        </el-table>
-      </el-dialog>
     </el-card>
   </div>
 </template>
@@ -160,81 +153,107 @@ import { UploadFilled } from '@element-plus/icons-vue'
 import { ingestApi } from '../api/ingest'
 
 const fileList = ref<any[]>([])
-const previewData = ref<any>(null)
-const currentFile = ref<File | null>(null) // 保存当前选择的文件对象
 const importing = ref(false)
 const batches = ref<any[]>([])
 const batchDetail = ref<any>(null)
 const detailDialogVisible = ref(false)
-const sampleDialogVisible = ref(false)
-const sampleData = ref<any[]>([])
-const sampleColumns = ref<string[]>([])
 
-const handleFileChange = async (file: any) => {
-  try {
-    // 保存文件对象
-    currentFile.value = file.raw
-    
-    const formData = new FormData()
-    formData.append('file', file.raw)
-    
-    const preview = await ingestApi.previewImport(formData)
-    previewData.value = preview
-    ElMessage.success('预览成功')
-  } catch (error) {
-    ElMessage.error('预览失败')
-    console.error(error)
-    currentFile.value = null
-  }
+const progress = ref({
+  visible: false,
+  percent: 0,
+  message: '',
+  currentFile: 0,
+  totalFiles: 0,
+  status: '' as '' | 'success' | 'exception',
+})
+
+const handleFileChange = (_file: any, uploadFiles: any[]) => {
+  fileList.value = uploadFiles
 }
 
-const executeImport = async () => {
-  if (!previewData.value) {
-    ElMessage.warning('请先预览文件')
-    return
-  }
-  
-  if (!currentFile.value) {
+const handleFileRemove = (_file: any, uploadFiles: any[]) => {
+  fileList.value = uploadFiles
+}
+
+const formatSize = (bytes: number) => {
+  if (!bytes) return '-'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+const submitImport = async () => {
+  if (fileList.value.length === 0) {
     ElMessage.warning('请先选择文件')
     return
   }
-  
+
   importing.value = true
-  
-  // 显示长时间导入提示
-  const loadingMessage = ElMessage({
-    message: '正在导入数据，大文件可能需要几分钟时间，请耐心等待...',
-    type: 'info',
-    duration: 0, // 不自动关闭
-    showClose: false
-  })
-  
-  try {
-    const formData = new FormData()
-    formData.append('file', currentFile.value)
-    
-    // 直接执行导入（上传+导入一步完成）
-    await ingestApi.executeImport(formData, previewData.value.template_type)
-    
-    loadingMessage.close()
-    ElMessage.success('导入成功')
-    previewData.value = null
-    currentFile.value = null
-    fileList.value = []
-    loadBatches()
-  } catch (error: any) {
-    loadingMessage.close()
-    
-    // 处理超时错误
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-      ElMessage.error('导入超时，文件可能过大。请检查导入批次状态或稍后重试。')
-    } else {
-      ElMessage.error(`导入失败: ${error.response?.data?.detail || error.message || '未知错误'}`)
+    progress.value = {
+      visible: true,
+      percent: 0,
+      message: '正在提交...',
+      currentFile: 0,
+      totalFiles: fileList.value.length,
+      status: '',
     }
-    console.error(error)
-  } finally {
+
+  let eventSource: EventSource | null = null
+  const filesToSend = fileList.value.map((f) => f.raw).filter((r): r is File => r instanceof File)
+
+  try {
+    const res = await ingestApi.submitImport(filesToSend)
+    progress.value.message = '任务已提交，等待处理...'
+    progress.value.totalFiles = res.total_files
+
+    eventSource = ingestApi.createSSEStream(res.task_id)
+    eventSource.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data)
+        const total = data.total_files || 1
+        const current = data.current_file || 0
+        progress.value = {
+          visible: true,
+          percent: total > 0 ? Math.round((current / total) * 100) : 0,
+          message: data.message || progress.value.message,
+          currentFile: current,
+          totalFiles: total,
+          status: data.status === 'done' ? (data.success ? 'success' : 'exception') : '',
+        }
+        if (data.status === 'done') {
+          eventSource?.close()
+          eventSource = null
+          importing.value = false
+          fileList.value = []
+          loadBatches()
+          if (data.success) {
+            ElMessage.success('导入完成')
+          } else {
+            ElMessage.error(data.error || '导入失败')
+          }
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+    eventSource.onerror = () => {
+      if (importing.value && progress.value.status !== 'success' && progress.value.status !== 'exception') {
+        progress.value.message = '连接中断，请刷新批次列表查看结果'
+        importing.value = false
+      }
+      eventSource?.close()
+    }
+  } catch (error: any) {
     importing.value = false
+    progress.value.visible = false
+    ElMessage.error(
+      error.response?.data?.detail || error.message || '提交失败'
+    )
   }
+}
+
+const handleCancel = () => {
+  fileList.value = []
 }
 
 const loadBatches = async () => {
@@ -256,27 +275,12 @@ const viewBatchDetail = async (batchId: number) => {
   }
 }
 
-const viewSheetSample = (sheet: any) => {
-  if (sheet.sample_data && sheet.sample_data.length > 0) {
-    sampleData.value = sheet.sample_data
-    sampleColumns.value = Object.keys(sheet.sample_data[0] || {})
-    sampleDialogVisible.value = true
-  } else {
-    ElMessage.warning('该Sheet没有样本数据')
-  }
-}
-
-const handleCancel = () => {
-  previewData.value = null
-  currentFile.value = null
-  fileList.value = []
-}
-
 const getStatusType = (status: string) => {
   switch (status) {
     case 'success':
       return 'success'
     case 'failed':
+    case 'partial':
       return 'danger'
     case 'processing':
       return 'warning'

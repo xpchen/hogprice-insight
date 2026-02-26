@@ -1,5 +1,5 @@
 """Raw-only 导入器：仅保存到 raw_file/raw_sheet/raw_table，不解析到 fact_observation"""
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Callable
 from sqlalchemy.orm import Session
 from openpyxl import load_workbook
 from io import BytesIO
@@ -20,7 +20,8 @@ def import_raw_only(
     file_content: bytes,
     filename: str,
     batch_id: int,
-    source_code: str
+    source_code: str,
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """
     仅导入到 raw 层（raw_file + raw_sheet + raw_table），不解析到 fact_observation。
@@ -37,9 +38,14 @@ def import_raw_only(
         { success: True, batch_id, inserted: 0, updated: sheet_count, errors: [] }
     """
     try:
+        if on_progress:
+            try:
+                on_progress(f"正在写入 raw 层: {filename}")
+            except Exception:
+                pass
         workbook = load_workbook(BytesIO(file_content), data_only=True)
         max_rows = RAW_ONLY_MAX_ROWS.get(source_code, 200)
-        
+
         raw_file = save_raw_file(
             db=db,
             batch_id=batch_id,

@@ -202,48 +202,8 @@ def upsert_observations(
             ).first()
             
             if existing:
-                # 更新现有记录
-                existing.batch_id = batch_id
-                existing.metric_id = metric_id
-                existing.obs_date = obs.get("obs_date")
-                existing.period_type = obs.get("period_type")
-                existing.period_start = obs.get("period_start")
-                existing.period_end = obs.get("period_end")
-                existing.value = obs.get("value")
-                existing.raw_value = obs.get("raw_value")
-                existing.geo_id = geo_id
-                existing.tags_json = obs.get("tags", {})
-                
-                # 删除旧tags（先删除，避免重复）
-                db.query(FactObservationTag).filter(
-                    FactObservationTag.observation_id == existing.id
-                ).delete()
-                
-                # 写入新tags
-                tags = obs.get("tags", {})
-                for tag_key, tag_value in tags.items():
-                    if tag_value is not None:  # 跳过None值
-                        tag = FactObservationTag(
-                            observation_id=existing.id,
-                            tag_key=str(tag_key),
-                            tag_value=str(tag_value)
-                        )
-                        db.add(tag)
-                
-                # 立即flush，检查是否有错误
-                try:
-                    db.flush()
-                    updated_count += 1
-                except Exception as flush_error:
-                    # flush失败，回滚并记录错误
-                    db.rollback()
-                    error_count += 1
-                    if error_count <= 10:
-                        print(f"      ⚠️  错误 #{error_count}: 更新记录时flush失败 - {type(flush_error).__name__}: {str(flush_error)[:300]}", flush=True)
-                        print(f"         metric_key={metric_key}, geo_code={geo_code}, obs_date={obs.get('obs_date')}", flush=True)
-                        import traceback
-                        print(f"         详细堆栈: {traceback.format_exc()[:500]}", flush=True)
-                    continue
+                # 插入优先模式：有重复则跳过，不做更新
+                continue
             else:
                 # 创建新记录
                 new_obs = FactObservation(
@@ -266,57 +226,9 @@ def upsert_observations(
                 try:
                     db.flush()  # 获取id
                 except IntegrityError as flush_error:
-                    # 可能是dedup_key冲突，尝试查找现有记录
+                    # 插入优先模式：dedup_key冲突视为重复，跳过不更新
                     db.rollback()
-                    existing_by_dedup = db.query(FactObservation).filter(
-                        FactObservation.dedup_key == dedup_key
-                    ).first()
-                    if existing_by_dedup:
-                        # 如果找到了，走更新流程
-                        existing_by_dedup.batch_id = batch_id
-                        existing_by_dedup.metric_id = metric_id
-                        existing_by_dedup.obs_date = obs.get("obs_date")
-                        existing_by_dedup.period_type = obs.get("period_type")
-                        existing_by_dedup.period_start = obs.get("period_start")
-                        existing_by_dedup.period_end = obs.get("period_end")
-                        existing_by_dedup.value = obs.get("value")
-                        existing_by_dedup.raw_value = obs.get("raw_value")
-                        existing_by_dedup.geo_id = geo_id
-                        existing_by_dedup.tags_json = obs.get("tags", {})
-                        
-                        # 删除旧tags
-                        db.query(FactObservationTag).filter(
-                            FactObservationTag.observation_id == existing_by_dedup.id
-                        ).delete()
-                        
-                        # 写入新tags
-                        tags = obs.get("tags", {})
-                        for tag_key, tag_value in tags.items():
-                            if tag_value is not None:
-                                tag = FactObservationTag(
-                                    observation_id=existing_by_dedup.id,
-                                    tag_key=str(tag_key),
-                                    tag_value=str(tag_value)
-                                )
-                                db.add(tag)
-                        
-                        try:
-                            db.flush()
-                            updated_count += 1
-                        except Exception as e2:
-                            db.rollback()
-                            error_count += 1
-                            if error_count <= 10:
-                                print(f"      ⚠️  错误 #{error_count}: 更新记录时flush失败 - {type(e2).__name__}: {str(e2)[:300]}", flush=True)
-                                print(f"         metric_key={metric_key}, geo_code={geo_code}, dedup_key={dedup_key[:50] if dedup_key else None}", flush=True)
-                            continue
-                    else:
-                        # 真正的错误
-                        error_count += 1
-                        if error_count <= 10:
-                            print(f"      ⚠️  错误 #{error_count}: 插入记录时IntegrityError - {str(flush_error)[:300]}", flush=True)
-                            print(f"         metric_key={metric_key}, geo_code={geo_code}, dedup_key={dedup_key[:50] if dedup_key else None}", flush=True)
-                        continue
+                    continue
                 except Exception as flush_error:
                     db.rollback()
                     error_count += 1
@@ -411,34 +323,8 @@ def upsert_observations(
                 ).first()
                 
                 if existing:
-                    # 更新
-                    existing.batch_id = batch_id
-                    existing.metric_id = metric_id
-                    existing.obs_date = obs.get("obs_date")
-                    existing.period_type = obs.get("period_type")
-                    existing.period_start = obs.get("period_start")
-                    existing.period_end = obs.get("period_end")
-                    existing.value = obs.get("value")
-                    existing.raw_value = obs.get("raw_value")
-                    existing.geo_id = geo_id
-                    existing.tags_json = obs.get("tags", {})
-                    
-                    db.query(FactObservationTag).filter(
-                        FactObservationTag.observation_id == existing.id
-                    ).delete()
-                    
-                    tags = obs.get("tags", {})
-                    for tag_key, tag_value in tags.items():
-                        if tag_value is not None:
-                            tag = FactObservationTag(
-                                observation_id=existing.id,
-                                tag_key=str(tag_key),
-                                tag_value=str(tag_value)
-                            )
-                            db.add(tag)
-                    
-                    db.flush()
-                    updated_count += 1
+                    # 插入优先模式：有重复则跳过
+                    continue
                 else:
                     # 插入
                     new_obs = FactObservation(
