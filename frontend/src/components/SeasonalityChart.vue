@@ -35,7 +35,7 @@
     </div>
   </el-card>
   <div v-else class="seasonality-chart-bare">
-    <h3 class="chart-title">{{ title || '季节性图表' }}</h3>
+    <h3 v-if="!hideTitle" class="chart-title">{{ title || '季节性图表' }}</h3>
     <div class="chart-content">
       <div ref="chartRef" class="chart-area" v-loading="loading"></div>
       <div v-if="changeInfo || sourceName || updateDate" class="chart-footer">
@@ -92,6 +92,7 @@ const props = defineProps<{
   loading?: boolean
   title?: string
   bare?: boolean  // 无卡片模式：不渲染 el-card，用于嵌入 chart-row 内并排显示
+  hideTitle?: boolean  // bare 模式下隐藏标题（由父级 card-header 提供）
   lunarAlignment?: boolean  // 是否支持农历对齐
   changeInfo?: {
     period_change: number | null

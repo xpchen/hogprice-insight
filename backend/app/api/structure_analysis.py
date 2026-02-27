@@ -317,18 +317,13 @@ def _get_yongyi_month_on_month(db: Session) -> List[StructureDataPoint]:
         if not date_obj:
             continue
         
-        # 处理环比值
+        # 处理环比值（原样输出，不做 *100 转换）
         if mom_val is not None:
             try:
                 mom_float = float(mom_val)
                 # 检查是否为NaN
                 if math.isnan(mom_float):
                     continue
-                
-                # 如果值小于1，认为是小数形式（如0.05），需要乘以100转换为百分比
-                # 如果值大于1，认为已经是百分比形式（如5）
-                if abs(mom_float) < 1:
-                    mom_float = mom_float * 100
                 
                 # 再次检查计算结果是否为NaN或Inf
                 if not math.isnan(mom_float) and not math.isinf(mom_float):
@@ -466,16 +461,11 @@ def _get_ministry_agriculture_month_on_month(db: Session, scale_type: str = "全
         if not date_obj:
             continue
         
-        # 解析环比值
+        # 解析环比值（原样输出，不做 *100 转换）
         try:
             value_float = float(value_val)
             if math.isnan(value_float) or math.isinf(value_float):
                 continue
-            
-            # 如果值小于1，认为是小数形式（如0.05），需要乘以100转换为百分比
-            # 如果值大于1，认为已经是百分比形式（如5）
-            if abs(value_float) < 1:
-                value_float = value_float * 100
             
             result.append(StructureDataPoint(
                 date=date_obj.isoformat(),
@@ -540,16 +530,11 @@ def _get_slaughter_month_on_month(db: Session) -> List[StructureDataPoint]:
         if not date_obj:
             continue
         
-        # 解析环比值
+        # 解析环比值（原样输出，不做 *100 转换）
         try:
             mom_float = float(mom_val)
             if math.isnan(mom_float) or math.isinf(mom_float):
                 continue
-            
-            # 如果值小于1，认为是小数形式（如0.05），需要乘以100转换为百分比
-            # 如果值大于1，认为已经是百分比形式（如5）
-            if abs(mom_float) < 1:
-                mom_float = mom_float * 100
             
             result.append(StructureDataPoint(
                 date=date_obj.isoformat(),

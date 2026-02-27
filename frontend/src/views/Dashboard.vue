@@ -2,119 +2,154 @@
   <div class="dashboard">
     <header class="dashboard-header">
       <div class="header-left">
-        <h1 class="dashboard-title">生猪市场全景监控</h1>
+        <h1 class="dashboard-title">生猪重点数据汇总</h1>
         <span class="dashboard-subtitle">核心指标一览</span>
       </div>
-      <el-button type="primary" :loading="exportLoading" @click="exportToWord" class="export-btn">
+      <el-button type="primary" :loading="exportLoading" @click="exportToImage" class="export-btn">
         <el-icon><Download /></el-icon>
-        导出到 Word
+        导出图片
       </el-button>
     </header>
 
-    <div class="charts-grid">
-      <!-- 1. 全国猪价 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">全国猪价</h3>
+    <div ref="exportTargetRef" class="charts-container">
+      <!-- 第一行：A1区域 全国猪价、标肥价差 【季节性图】 -->
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">全国猪价</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartPriceRef"
+              :data="nationalPriceSeasonalityData"
+              :loading="loadingA1"
+              bare
+              hide-title
+            />
+          </div>
         </div>
-        <div class="card-body">
-          <ChartPanel ref="chart1Ref" :data="cardNationalPriceData" :loading="loadingPriceDisplay" />
-        </div>
-      </div>
-
-      <!-- 2. 标肥价差 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">标肥价差</h3>
-        </div>
-        <div class="card-body">
-          <ChartPanel ref="chart2Ref" :data="cardStdFatSpreadData" :loading="loadingPriceDisplay" />
-        </div>
-      </div>
-
-      <!-- 3. 猪价&标肥价差 -->
-      <div class="chart-card chart-card-wide">
-        <div class="card-header">
-          <h3 class="card-title">猪价&标肥价差</h3>
-        </div>
-        <div class="card-body">
-          <DualAxisChart ref="chart3Ref" :data="card1Data" :loading="loadingPriceDisplay" axis1="left" axis2="right" />
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">标肥价差</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartSpreadRef"
+              :data="fatStdSpreadSeasonalityData"
+              :loading="loadingA1"
+              bare
+              hide-title
+            />
+          </div>
         </div>
       </div>
 
-      <!-- 4. 日度屠宰量（农历） -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">日度屠宰量（农历）</h3>
+      <!-- 第二行：A3+A2区域 日度屠宰量(农历)、出栏均重 -->
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">日度屠宰量（农历）</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartSlaughterRef"
+              :data="slaughterLunarData"
+              :loading="loadingA3"
+              :lunar-alignment="true"
+              bare
+              hide-title
+            />
+          </div>
         </div>
-        <div class="card-body">
-          <SeasonalityChart
-            ref="chart4Ref"
-            :data="card2Data"
-            :loading="loadingPriceDisplay"
-            :lunar-alignment="true"
-            :show-year-filter="false"
-          />
-        </div>
-      </div>
-
-      <!-- 5. 屠宰量&价格 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">屠宰量&价格</h3>
-        </div>
-        <div class="card-body">
-          <ChartPanel ref="chart5Ref" :data="card3Data" :loading="loadingPriceDisplay" />
-        </div>
-      </div>
-
-      <!-- 6. 标肥价差（分省区） -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">标肥价差（分省区）</h3>
-        </div>
-        <div class="card-body">
-          <ChartPanel ref="chart6Ref" :data="provinceSpreadChartData" :loading="loadingProvinceSpread" />
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">出栏均重</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartWeightRef"
+              :data="outWeightData"
+              :loading="loadingA2"
+              bare
+              hide-title
+            />
+          </div>
         </div>
       </div>
 
-      <!-- 7. 毛白价差比率&生猪价格 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">毛白价差比率&生猪价格</h3>
+      <!-- 第三行：A8区域 仔猪价格、淘汰母猪折扣率 -->
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">仔猪价格</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartPigletRef"
+              :data="pigletPriceData"
+              :loading="loadingA8"
+              bare
+              hide-title
+            />
+          </div>
         </div>
-        <div class="card-body">
-          <DualAxisChart ref="chart7Ref" :data="liveWhiteLeftData" :loading="loadingLiveWhite" axis1="left" axis2="right" />
-        </div>
-      </div>
-
-      <!-- 8. 毛白价差&比率 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">毛白价差&比率</h3>
-        </div>
-        <div class="card-body">
-          <DualAxisChart ref="chart8Ref" :data="liveWhiteRightData" :loading="loadingLiveWhite" axis1="left" axis2="right" />
-        </div>
-      </div>
-
-      <!-- 9. 升贴水 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">升贴水</h3>
-        </div>
-        <div class="card-body">
-          <DashboardLineChart ref="chart9Ref" :data="premiumChartData" :loading="futuresLoading" />
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">淘汰母猪折扣率</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartCullDiscountRef"
+              :data="cullDiscountData"
+              :loading="loadingA8"
+              bare
+              hide-title
+            />
+          </div>
         </div>
       </div>
 
-      <!-- 10. 供求曲线 -->
-      <div class="chart-card">
-        <div class="card-header">
-          <h3 class="card-title">供求曲线</h3>
+      <!-- 第四行：A8区域 屠宰利润、自养利润 -->
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">屠宰利润</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartSlaughterProfitRef"
+              :data="slaughterProfitData"
+              :loading="loadingA8"
+              bare
+              hide-title
+            />
+          </div>
         </div>
-        <div class="card-body">
-          <div ref="chart10Ref" class="supply-demand-chart" v-loading="loadingSupplyDemand"></div>
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">自养利润</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartSelfProfitRef"
+              :data="selfProfitData"
+              :loading="loadingA8"
+              bare
+              hide-title
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- 第五行：A5区域 区域价差:广东-贵州、区域价差:广东-河南 -->
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">区域价差：广东-贵州</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartRegionGZRef"
+              :data="regionSpreadGZData"
+              :loading="loadingA5"
+              bare
+              hide-title
+            />
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="card-header"><h3 class="card-title">区域价差：广东-河南</h3></div>
+          <div class="card-body">
+            <SeasonalityChart
+              ref="chartRegionHNRef"
+              :data="regionSpreadHNData"
+              :loading="loadingA5"
+              bare
+              hide-title
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -122,383 +157,249 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
-import { Document, Packer, Paragraph, ImageRun, TextRun } from 'docx'
+import html2canvas from 'html2canvas'
 import { saveAs } from 'file-saver'
-import DualAxisChart from '../components/DualAxisChart.vue'
 import SeasonalityChart from '../components/SeasonalityChart.vue'
-import ChartPanel from '../components/ChartPanel.vue'
-import DashboardLineChart from '../components/DashboardLineChart.vue'
-import { futuresApi } from '../api/futures'
 import {
-  getLiveWhiteSpreadDualAxis,
-  getPriceAndSpread,
+  getNationalPriceSeasonality,
+  getFatStdSpreadSeasonality,
   getSlaughterLunar,
-  getSlaughterPriceTrendSolar
+  getIndustryChainSeasonality,
+  getRegionSpreadSeasonality,
+  getProvinceIndicatorsSeasonality
 } from '../api/price-display'
-import { getFatStdSpreadProvinces, getFatStdSpreadProvinceSeasonality } from '../api/price-display'
-import { getSupplyDemandCurve } from '../api/supply-demand'
-import * as echarts from 'echarts'
-import { yAxisHideMinMaxLabel } from '@/utils/chart-style'
-import type { DualAxisData } from '../components/DualAxisChart.vue'
 import type { SeasonalityData } from '../components/SeasonalityChart.vue'
-import type { ChartData } from '../components/ChartPanel.vue'
+import type { SeasonalityResponse } from '../api/price-display'
 
-const chart1Ref = ref<InstanceType<typeof ChartPanel> | null>(null)
-const chart2Ref = ref<InstanceType<typeof ChartPanel> | null>(null)
-const chart3Ref = ref<InstanceType<typeof DualAxisChart> | null>(null)
-const chart4Ref = ref<InstanceType<typeof SeasonalityChart> | null>(null)
-const chart5Ref = ref<InstanceType<typeof ChartPanel> | null>(null)
-const chart6Ref = ref<InstanceType<typeof ChartPanel> | null>(null)
-const chart7Ref = ref<InstanceType<typeof DualAxisChart> | null>(null)
-const chart8Ref = ref<InstanceType<typeof DualAxisChart> | null>(null)
-const chart9Ref = ref<InstanceType<typeof DashboardLineChart> | null>(null)
-const chart10Ref = ref<HTMLDivElement | null>(null)
+const exportTargetRef = ref<HTMLElement | null>(null)
 const exportLoading = ref(false)
-let chart10Instance: echarts.ECharts | null = null
 
-const loadingPriceDisplay = ref(false)
-const futuresLoading = ref(false)
-const loadingLiveWhite = ref(false)
-const loadingProvinceSpread = ref(false)
-const loadingSupplyDemand = ref(false)
-const priceSpreadData = ref<any>(null)
-const slaughterLunarData = ref<any>(null)
-const slaughterPriceTrendData = ref<any>(null)
-const premiumData = ref<any>(null)
-const liveWhiteData = ref<{
-  spread_data?: Array<{ date: string; value: number | null }>
-  ratio_data?: Array<{ date: string; value: number | null }>
-  spread_unit?: string
-  ratio_unit?: string
-} | null>(null)
-const provinceSpreadData = ref<ChartData | null>(null)
-const supplyDemandData = ref<any>(null)
+const chartPriceRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartSpreadRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartSlaughterRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartWeightRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartPigletRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartCullDiscountRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartSlaughterProfitRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartSelfProfitRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartRegionGZRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
+const chartRegionHNRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
 
-// 图表 1：全国猪价（来自 price-display）
-const cardNationalPriceData = computed<ChartData | null>(() => {
-  const pd = priceSpreadData.value?.price_data
-  if (!pd?.length) return null
-  const categories = pd.map((d: any) => d.date).filter(Boolean)
-  return {
-    categories,
-    series: [{ name: '全国猪价', data: pd.map((d: any) => [d.date, d.value]), unit: '元/公斤' }]
-  }
-})
+const loadingA1 = ref(false)
+const loadingA3 = ref(false)
+const loadingA2 = ref(false)
+const loadingA8 = ref(false)
+const loadingA5 = ref(false)
 
-// 图表 2：标肥价差（来自 price-display）
-const cardStdFatSpreadData = computed<ChartData | null>(() => {
-  const sd = priceSpreadData.value?.spread_data
-  if (!sd?.length) return null
-  const categories = sd.map((d: any) => d.date).filter(Boolean)
-  return {
-    categories,
-    series: [{ name: '标肥价差', data: sd.map((d: any) => [d.date, d.value]), unit: '元/公斤' }]
-  }
-})
+const nationalPriceSeasonalityData = ref<SeasonalityData | null>(null)
+const fatStdSpreadSeasonalityData = ref<SeasonalityData | null>(null)
+const slaughterLunarData = ref<SeasonalityData | null>(null)
+const outWeightData = ref<SeasonalityData | null>(null)
+const pigletPriceData = ref<SeasonalityData | null>(null)
+const cullDiscountData = ref<SeasonalityData | null>(null)
+const slaughterProfitData = ref<SeasonalityData | null>(null)
+const selfProfitData = ref<SeasonalityData | null>(null)
+const regionSpreadGZData = ref<SeasonalityData | null>(null)
+const regionSpreadHNData = ref<SeasonalityData | null>(null)
 
-// 图表 3：猪价&标肥价差 双轴
-const card1Data = computed<DualAxisData | null>(() => {
-  const pd = priceSpreadData.value?.price_data || []
-  const sd = priceSpreadData.value?.spread_data || []
-  if (!pd.length && !sd.length) return null
-  return {
-    series1: { name: '全国猪价', data: pd.map((d: any) => ({ date: d.date, value: d.value })), unit: '元/公斤' },
-    series2: { name: '标肥价差', data: sd.map((d: any) => ({ date: d.date, value: d.value })), unit: '元/公斤' }
-  }
-})
+/** 周度数据（week 1-52，后端按周序返回）→ SeasonalityData */
+function toSeasonalityDataWeek(res: SeasonalityResponse | null): SeasonalityData | null {
+  if (!res?.series?.length) return null
+  const xValues: number[] = []
+  for (let i = 1; i <= 52; i++) xValues.push(i)
+  const series = res.series.map((s: any) => {
+    const arr = s.data || []
+    const values = xValues.map((_, i) => (arr[i]?.value != null ? arr[i].value : null))
+    return { year: s.year, values }
+  })
+  return { x_values: xValues, series, meta: { unit: res.unit || '', freq: 'W', metric_name: res.metric_name || '' } }
+}
 
-// 图表 4：日度屠宰量（农历）（来自 price-display）
-const card2Data = computed<SeasonalityData | null>(() => {
-  const raw = slaughterLunarData.value?.series
-  if (!raw?.length) return null
+/** 日度数据（month_day 如 01-15）→ SeasonalityData */
+function toSeasonalityDataMonthDay(res: SeasonalityResponse | null): SeasonalityData | null {
+  if (!res?.series?.length) return null
   const allMonthDays = new Set<string>()
-  raw.forEach((s: any) => {
+  res.series.forEach((s: any) => {
     (s.data || []).forEach((d: any) => { if (d.month_day) allMonthDays.add(d.month_day) })
   })
-  const x_values = Array.from(allMonthDays).sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0))
-  const series = raw.map((s: any) => {
+  const x_values = Array.from(allMonthDays).sort((a, b) => {
+    const [am, ad] = a.split('-').map(Number)
+    const [bm, bd] = b.split('-').map(Number)
+    return am !== bm ? am - bm : ad - bd
+  })
+  const series = res.series.map((s: any) => {
     const valueMap = new Map<string, number | null>()
     ;(s.data || []).forEach((d: any) => { if (d.month_day) valueMap.set(d.month_day, d.value ?? null) })
     return { year: s.year, values: x_values.map(md => valueMap.get(md) ?? null) }
   })
+  return { x_values, series, meta: { unit: res.unit || '', freq: 'D', metric_name: res.metric_name || '' } }
+}
+
+/** 日度屠宰量（农历，lunar_day_index 或 month_day）→ SeasonalityData */
+function toSeasonalityDataLunar(res: SeasonalityResponse | null): SeasonalityData | null {
+  if (!res?.series?.length) return null
+  const allKeys = new Set<string>()
+  res.series.forEach((s: any) => {
+    (s.data || []).forEach((d: any) => {
+      const k = d.month_day ?? (d.lunar_day_index != null ? String(d.lunar_day_index) : '')
+      if (k) allKeys.add(k)
+    })
+  })
+  const x_values = Array.from(allKeys).sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
+  const series = res.series.map((s: any) => {
+    const valueMap = new Map<string, number | null>()
+    ;(s.data || []).forEach((d: any) => {
+      const k = d.month_day ?? (d.lunar_day_index != null ? String(d.lunar_day_index) : '')
+      if (k) valueMap.set(k, d.value ?? null)
+    })
+    return { year: s.year, values: x_values.map(k => valueMap.get(k) ?? null) }
+  })
   return {
     x_values,
     series,
-    meta: { unit: slaughterLunarData.value?.unit || '头', freq: 'D', metric_name: '日度屠宰量' }
-  } as SeasonalityData
-})
-
-// 图表 5：屠宰量&价格（来自 price-display）
-const card3Data = computed<ChartData | null>(() => {
-  const slaughter = slaughterPriceTrendData.value?.slaughter_data || []
-  const price = slaughterPriceTrendData.value?.price_data || []
-  if (!slaughter.length && !price.length) return null
-  const allDates = new Set<string>()
-  slaughter.forEach((d: any) => allDates.add(d.date))
-  price.forEach((d: any) => allDates.add(d.date))
-  const categories = Array.from(allDates).sort()
-  const slaughterMap = new Map(slaughter.map((d: any) => [d.date, d.value]))
-  const priceMap = new Map(price.map((d: any) => [d.date, d.value]))
-  const series: any[] = []
-  if (slaughter.some((d: any) => d.value != null)) {
-    series.push({ name: '屠宰量', data: categories.map(d => [d, slaughterMap.get(d) ?? null]), unit: '头' })
+    meta: { unit: res.unit || '头', freq: 'D', metric_name: res.metric_name || '日度屠宰量' }
   }
-  if (price.some((d: any) => d.value != null)) {
-    series.push({ name: '价格', data: categories.map(d => [d, priceMap.get(d) ?? null]), unit: '元/公斤' })
-  }
-  if (!series.length) return null
-  return { categories, series }
-})
-
-// 图表 6：标肥价差（分省区）— 使用 provinceSpreadData
-const provinceSpreadChartData = computed<ChartData | null>(() => provinceSpreadData.value)
-
-// 图表 7-8：毛白价差
-const liveWhiteLeftData = computed<DualAxisData | null>(() => {
-  if (!liveWhiteData.value) return null
-  return {
-    series1: {
-      name: '价差比率',
-      data: liveWhiteData.value.ratio_data?.map((item: any) => ({ date: item.date, value: item.value })) || [],
-      unit: liveWhiteData.value.ratio_unit || ''
-    },
-    series2: {
-      name: '生猪价格',
-      data: [],
-      unit: '元/公斤'
-    }
-  }
-})
-const liveWhiteRightData = computed<DualAxisData | null>(() => {
-  if (!liveWhiteData.value) return null
-  return {
-    series1: {
-      name: '毛白价差',
-      data: liveWhiteData.value.spread_data?.map((item: any) => ({ date: item.date, value: item.value })) || [],
-      unit: liveWhiteData.value.spread_unit || ''
-    },
-    series2: {
-      name: '价差比率',
-      data: liveWhiteData.value.ratio_data?.map((item: any) => ({ date: item.date, value: item.value })) || [],
-      unit: liveWhiteData.value.ratio_unit || ''
-    }
-  }
-})
-
-// 图表 9：升贴水（03合约）
-const premiumChartData = computed(() => {
-  const s = premiumData.value?.series?.find((x: any) => x.contract_month === 3)
-  if (!s?.data?.length) return null
-  const categories = s.data.map((d: any) => d.date)
-  const premium = s.data.map((d: any) => d.premium_ratio ?? d.premium)
-  return {
-    categories,
-    series: [{ name: '升贴水比率(%)', data: premium }]
-  }
-})
-
-const chartItems = [
-  { ref: () => chart1Ref.value, title: '全国猪价' },
-  { ref: () => chart2Ref.value, title: '标肥价差' },
-  { ref: () => chart3Ref.value, title: '猪价&标肥价差' },
-  { ref: () => chart4Ref.value, title: '日度屠宰量（农历）' },
-  { ref: () => chart5Ref.value, title: '屠宰量&价格' },
-  { ref: () => chart6Ref.value, title: '标肥价差（分省区）' },
-  { ref: () => chart7Ref.value, title: '毛白价差比率&生猪价格' },
-  { ref: () => chart8Ref.value, title: '毛白价差&比率' },
-  { ref: () => chart9Ref.value, title: '升贴水' },
-  { ref: () => ({ getChartImage: () => chart10Instance?.getDataURL('png') }), title: '供求曲线' }
-]
-
-const base64ToUint8Array = (dataUrl: string): Uint8Array => {
-  const base64 = dataUrl.split(',')[1] || dataUrl
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
 }
 
-const exportToWord = async () => {
+function toSeasonalityDataRegion(res: SeasonalityResponse | null): SeasonalityData | null {
+  if (!res?.series?.length) return null
+  const allMonthDays = new Set<string>()
+  res.series.forEach((s: any) => {
+    (s.data || []).forEach((d: any) => { if (d.month_day) allMonthDays.add(d.month_day) })
+  })
+  const x_values = Array.from(allMonthDays).sort((a, b) => {
+    const [am, ad] = a.split('-').map(Number)
+    const [bm, bd] = b.split('-').map(Number)
+    return am !== bm ? am - bm : ad - bd
+  })
+  const series = res.series.map((s: any) => {
+    const valueMap = new Map<string, number | null>()
+    ;(s.data || []).forEach((d: any) => { if (d.month_day) valueMap.set(d.month_day, d.value ?? null) })
+    return { year: s.year, values: x_values.map(md => valueMap.get(md) ?? null) }
+  })
+  return { x_values, series, meta: { unit: res.unit || '元/公斤', freq: 'D', metric_name: res.metric_name || '' } }
+}
+
+const loadA1 = async () => {
+  loadingA1.value = true
+  try {
+    const year = new Date().getFullYear()
+    const [priceRes, spreadRes] = await Promise.all([
+      getNationalPriceSeasonality(year - 4, year),
+      getFatStdSpreadSeasonality(year - 4, year)
+    ])
+    nationalPriceSeasonalityData.value = toSeasonalityDataMonthDay(priceRes as any)
+    fatStdSpreadSeasonalityData.value = toSeasonalityDataMonthDay(spreadRes as any)
+  } catch (e) {
+    console.error('加载A1失败:', e)
+  } finally {
+    loadingA1.value = false
+  }
+}
+
+const loadA3 = async () => {
+  loadingA3.value = true
+  try {
+    const year = new Date().getFullYear()
+    const res = await getSlaughterLunar(year - 4, year)
+    slaughterLunarData.value = toSeasonalityDataLunar(res as any)
+  } catch (e) {
+    console.error('加载A3失败:', e)
+  } finally {
+    loadingA3.value = false
+  }
+}
+
+const loadA2 = async () => {
+  loadingA2.value = true
+  try {
+    const year = new Date().getFullYear()
+    const res = await getProvinceIndicatorsSeasonality('广东', year - 4, year)
+    const ind = res?.indicators?.['周度 出栏均重']
+    outWeightData.value = toSeasonalityDataWeek(ind as any)
+  } catch (e) {
+    console.error('加载A2失败:', e)
+  } finally {
+    loadingA2.value = false
+  }
+}
+
+const loadA8 = async () => {
+  loadingA8.value = true
+  try {
+    const [piglet, cull, slaughter, self] = await Promise.all([
+      getIndustryChainSeasonality('仔猪价格'),
+      getIndustryChainSeasonality('淘汰母猪折扣率'),
+      getIndustryChainSeasonality('屠宰利润'),
+      getIndustryChainSeasonality('自养利润')
+    ])
+    pigletPriceData.value = toSeasonalityDataWeek(piglet as any)
+    cullDiscountData.value = toSeasonalityDataWeek(cull as any)
+    slaughterProfitData.value = toSeasonalityDataWeek(slaughter as any)
+    selfProfitData.value = toSeasonalityDataWeek(self as any)
+  } catch (e) {
+    console.error('加载A8失败:', e)
+  } finally {
+    loadingA8.value = false
+  }
+}
+
+const loadA5 = async () => {
+  loadingA5.value = true
+  try {
+    const year = new Date().getFullYear()
+    const [gz, hn] = await Promise.all([
+      getRegionSpreadSeasonality('广东-贵州', year - 4, year),
+      getRegionSpreadSeasonality('广东-河南', year - 4, year)
+    ])
+    regionSpreadGZData.value = toSeasonalityDataRegion(gz as any)
+    regionSpreadHNData.value = toSeasonalityDataRegion(hn as any)
+  } catch (e) {
+    console.error('加载A5失败:', e)
+  } finally {
+    loadingA5.value = false
+  }
+}
+
+const exportToImage = async () => {
+  if (!exportTargetRef.value) {
+    ElMessage.warning('暂无内容可导出')
+    return
+  }
   exportLoading.value = true
   try {
-    const children: Paragraph[] = []
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: '生猪市场全景监控', bold: true })],
-        spacing: { after: 400 }
-      })
-    )
-    for (const item of chartItems) {
-      const comp = item.ref()
-      const img = comp?.getChartImage?.()
-      if (img) {
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: item.title, bold: true })],
-            spacing: { before: 300, after: 100 }
-          }),
-          new Paragraph({
-            children: [
-              new ImageRun({
-                type: 'png',
-                data: base64ToUint8Array(img),
-                transformation: { width: 500, height: 350 }
-              })
-            ],
-            spacing: { after: 300 }
-          })
-        )
+    const canvas = await html2canvas(exportTargetRef.value, {
+      useCORS: true,
+      allowTaint: true,
+      scale: 2,
+      backgroundColor: '#f8fafc',
+      logging: false
+    })
+    canvas.toBlob((blob) => {
+      if (blob) {
+        saveAs(blob, `生猪重点数据汇总_${new Date().toISOString().slice(0, 10)}.png`)
+        ElMessage.success('已导出图片')
+      } else {
+        ElMessage.error('导出失败')
       }
-    }
-    if (children.length <= 1) {
-      ElMessage.warning('暂无图表可导出，请先加载数据')
-      return
-    }
-    const doc = new Document({ sections: [{ children }] })
-    const blob = await Packer.toBlob(doc)
-    saveAs(blob, `生猪市场全景监控_${new Date().toISOString().slice(0, 10)}.docx`)
-    ElMessage.success('已导出到 Word')
+    }, 'image/png')
   } catch (e) {
-    ElMessage.error('导出失败')
     console.error(e)
+    ElMessage.error('导出失败')
   } finally {
     exportLoading.value = false
   }
 }
 
-const loadPriceDisplay = async () => {
-  loadingPriceDisplay.value = true
-  try {
-    const [priceSpread, slaughterLunar, slaughterTrend] = await Promise.all([
-      getPriceAndSpread(),
-      getSlaughterLunar(),
-      getSlaughterPriceTrendSolar()
-    ])
-    priceSpreadData.value = priceSpread
-    slaughterLunarData.value = slaughterLunar
-    slaughterPriceTrendData.value = slaughterTrend
-  } catch (e) {
-    console.error('加载价格/屠宰数据失败:', e)
-  } finally {
-    loadingPriceDisplay.value = false
-  }
-}
-
-const loadFuturesData = async () => {
-  futuresLoading.value = true
-  try {
-    const p = await futuresApi.getPremiumV2({ contract_month: 3, region: '全国均价', view_type: '季节性' })
-    premiumData.value = p
-  } catch (e) {
-    console.error('加载期货数据失败:', e)
-  } finally {
-    futuresLoading.value = false
-  }
-}
-
-const loadLiveWhite = async () => {
-  loadingLiveWhite.value = true
-  try {
-    const res = await getLiveWhiteSpreadDualAxis()
-    liveWhiteData.value = res
-  } catch (e) {
-    console.error('加载毛白价差失败:', e)
-  } finally {
-    loadingLiveWhite.value = false
-  }
-}
-
-const loadProvinceSpread = async () => {
-  loadingProvinceSpread.value = true
-  try {
-    const { provinces } = await getFatStdSpreadProvinces()
-    const year = new Date().getFullYear()
-    const topProvinces = provinces.slice(0, 5).map(p => p.province_name)
-    const results = await Promise.all(
-      topProvinces.map(name =>
-        getFatStdSpreadProvinceSeasonality(name, year, year).catch(() => null)
-      )
-    )
-    const allDates = new Set<string>()
-    const seriesList: { name: string; data: Array<[string, number | null]> }[] = []
-    results.forEach((res, i) => {
-      if (!res?.series?.length) return
-      const prov = topProvinces[i]
-      const firstSeries = res.series[0]
-      const points = (firstSeries.data || []).map((p: any) => {
-        const dateStr = p.month_day ? `${year}-${p.month_day}` : ''
-        if (dateStr) allDates.add(dateStr)
-        return [dateStr, p.value ?? null] as [string, number | null]
-      })
-      seriesList.push({ name: prov, data: points })
-    })
-    const categories = Array.from(allDates).sort()
-    if (categories.length && seriesList.length) {
-      provinceSpreadData.value = {
-        categories,
-        series: seriesList.map(s => ({
-          name: s.name,
-          data: categories.map(d => {
-            const found = s.data.find(([dt]) => dt === d)
-            return [d, found != null ? found[1] : null] as [string, number | null]
-          })
-        }))
-      }
-    } else {
-      provinceSpreadData.value = null
-    }
-  } catch (e) {
-    console.error('加载标肥价差分省区失败:', e)
-    provinceSpreadData.value = null
-  } finally {
-    loadingProvinceSpread.value = false
-  }
-}
-
-function updateSupplyDemandChart() {
-  if (!chart10Ref.value || !supplyDemandData.value?.data?.length) return
-  if (!chart10Instance) {
-    chart10Instance = echarts.init(chart10Ref.value)
-  }
-  const data = supplyDemandData.value.data
-  chart10Instance.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    legend: { data: ['定点屠宰系数', '猪价系数'], bottom: 10 },
-    grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: data.map((d: any) => d.month) },
-    yAxis: { type: 'value', name: '系数', ...yAxisHideMinMaxLabel },
-    series: [
-      { name: '定点屠宰系数', type: 'line', smooth: true, data: data.map((d: any) => d.slaughter_coefficient ?? null), itemStyle: { color: '#5470c6' } },
-      { name: '猪价系数', type: 'line', smooth: true, data: data.map((d: any) => d.price_coefficient ?? null), itemStyle: { color: '#91cc75' } }
-    ]
-  })
-}
-
-const loadSupplyDemand = async () => {
-  loadingSupplyDemand.value = true
-  try {
-    const res = await getSupplyDemandCurve()
-    supplyDemandData.value = res
-  } catch (e) {
-    console.error('加载供求曲线失败:', e)
-  } finally {
-    loadingSupplyDemand.value = false
-  }
-}
-
-watch(supplyDemandData, () => {
-  nextTick(() => updateSupplyDemandChart())
-}, { deep: true })
-
 onMounted(() => {
-  loadPriceDisplay()
-  loadFuturesData()
-  loadLiveWhite()
-  loadProvinceSpread()
-  loadSupplyDemand()
+  loadA1()
+  loadA3()
+  loadA2()
+  loadA8()
+  loadA5()
 })
 </script>
 
@@ -540,7 +441,13 @@ onMounted(() => {
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
 
-.charts-grid {
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.chart-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 20px;
@@ -551,67 +458,30 @@ onMounted(() => {
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   overflow: hidden;
-  transition: box-shadow 0.2s;
 
-  &:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  .card-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid #f1f5f9;
+    .card-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #334155;
+    }
   }
 
-  &.chart-card-wide {
-    grid-column: 1 / -1;
-  }
-}
-
-.card-header {
-  padding: 14px 20px;
-  border-bottom: 1px solid #f1f5f9;
-  background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
-
-  .card-title {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: #334155;
-  }
-}
-
-.card-body {
-  padding: 16px 20px;
-
-  :deep(.el-card) {
-    box-shadow: none;
-    border: none;
-    border-radius: 0;
-  }
-  :deep(.el-card__header) {
-    display: none;
-  }
-  :deep(.el-card__body) {
-    padding: 0;
-  }
-  :deep(.dual-axis-chart-panel),
-  :deep(.seasonality-chart-panel),
-  :deep(.chart-panel) {
-    margin-bottom: 0;
-  }
-  :deep(.dual-axis-chart-panel .el-card__body > div),
-  :deep(.seasonality-chart-panel .chart-content > div:first-child),
-  :deep(.chart-panel .el-card__body > div) {
-    height: 320px !important;
-    min-height: 280px;
-  }
-  :deep(.dashboard-line-chart),
-  :deep(.dashboard-bar-chart) {
-    min-height: 280px;
-  }
-  .supply-demand-chart {
-    width: 100%;
-    min-height: 280px;
+  .card-body {
+    padding: 16px 20px;
+    :deep(.seasonality-chart-panel .el-card__body > div),
+    :deep(.seasonality-chart-bare .chart-content > div:first-child) {
+      height: 320px !important;
+      min-height: 280px;
+    }
   }
 }
 
 @media (max-width: 1200px) {
-  .charts-grid {
+  .chart-row {
     grid-template-columns: 1fr;
   }
 }

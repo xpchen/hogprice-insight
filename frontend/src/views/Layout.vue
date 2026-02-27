@@ -3,8 +3,8 @@
     <el-aside :width="isCollapse ? '64px' : '220px'" class="sidebar">
       <div class="logo">
         <img src="@/assets/logo.png" alt="HOGPRICE" class="logo-img" />
-        <span v-if="!isCollapse" class="logo-text">猪价智盘</span>
-        <span v-else class="logo-text-collapsed">智盘</span>
+        <span v-if="!isCollapse" class="logo-text">农产品数据库</span>
+        <span v-else class="logo-text-collapsed">农产品</span>
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -13,10 +13,10 @@
         :collapse="isCollapse"
         :collapse-transition="false"
       >
-        <!-- 1. 总览Dashboard（默认首页） -->
+        <!-- 1. 生猪总览Dashboard（默认首页） -->
         <el-menu-item index="/dashboard">
           <el-icon><House /></el-icon>
-          <template #title>总览</template>
+          <template #title>生猪总览</template>
         </el-menu-item>
 
         <!-- A. 全国重点数据 -->
