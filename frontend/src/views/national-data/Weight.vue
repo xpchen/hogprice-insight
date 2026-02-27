@@ -474,12 +474,6 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     }
   })
   
-  // 计算Y轴范围（自动调整）
-  const allValues = series.flatMap(s => s.data).filter(v => v !== null && v !== undefined) as number[]
-  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
-  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
-  const yPadding = (yMax - yMin) * 0.1 // 10% padding
-  
   const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
@@ -536,8 +530,8 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
       name: '',
       nameLocation: 'end',
       nameGap: 20,
-      min: yMin - yPadding,
-      max: yMax + yPadding,
+      min: 'dataMin',
+      max: 'dataMax',
       scale: false,
       axisLabel: {
         ...axisLabelHideMinMax,

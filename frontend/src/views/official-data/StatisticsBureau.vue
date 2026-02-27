@@ -505,14 +505,10 @@ const updateChart2 = () => {
       const other = Math.max(0, total - c1v - c2v)
       return toWanTon(other)
     })
-    // 使用最新月份的前两名国家作为图例（每月前两名可能不同）
-    const lastPoint = data[data.length - 1]
-    const c1Name = lastPoint?.top_countries?.[0]?.country ?? '进口量第1'
-    const c2Name = lastPoint?.top_countries?.[1]?.country ?? '进口量第2'
     series.push(
       { name: '其他', type: 'bar', stack: 'total', data: otherData, itemStyle: { color: '#e0e0e0' } },
-      { name: c1Name, type: 'bar', stack: 'total', data: c1Data, itemStyle: { color: countryColors[0] } },
-      { name: c2Name, type: 'bar', stack: 'total', data: c2Data, itemStyle: { color: countryColors[1] } }
+      { name: '第一进口国', type: 'bar', stack: 'total', data: c1Data, itemStyle: { color: countryColors[0] } },
+      { name: '第二进口国', type: 'bar', stack: 'total', data: c2Data, itemStyle: { color: countryColors[1] } }
     )
   } else {
     series.push({

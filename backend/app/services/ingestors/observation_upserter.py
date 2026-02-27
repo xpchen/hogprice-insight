@@ -18,7 +18,8 @@ def get_or_create_metric(
     metric_name: str,
     sheet_name: str,
     unit: Optional[str] = None,
-    freq: str = "D"
+    freq: str = "D",
+    source_updated_at: Optional[str] = None,
 ) -> DimMetric:
     """
     根据metric_key获取或创建DimMetric
@@ -30,6 +31,7 @@ def get_or_create_metric(
         sheet_name: sheet名称
         unit: 单位
         freq: 频率（D/W）
+        source_updated_at: 原表"更新时间"行字符串（如 Excel 第4行）
     
     Returns:
         DimMetric对象
@@ -65,6 +67,10 @@ def get_or_create_metric(
         # 如果metric_key为空但parse_json中也没有metric_key，记录警告
         elif not metric_key and not metric.parse_json.get("metric_key"):
             print(f"      ⚠️  警告: metric_key为空，无法设置到parse_json！metric_name={metric_name}, sheet_name={sheet_name}", flush=True)
+        # 若有 Excel 更新时间，则覆盖（每次导入用最新 Excel 更新时间）
+        if source_updated_at:
+            metric.source_updated_at = source_updated_at
+            db.flush()
         return metric
     
     # 创建新metric
@@ -95,7 +101,8 @@ def get_or_create_metric(
         freq=freq,
         raw_header=raw_header_value,  # 使用metric_name（可能是raw_header）
         sheet_name=sheet_name,
-        parse_json=parse_json if parse_json else None
+        parse_json=parse_json if parse_json else None,
+        source_updated_at=source_updated_at,
     )
     
     db.add(metric)
@@ -166,8 +173,8 @@ def upsert_observations(
             metric_key = obs.get("metric_key", "")
             metric_name = obs.get("metric_name", metric_key)
             
-            # 如果metric_key为空，使用metric_name作为缓存key
-            cache_key = metric_key if metric_key else f"{sheet_name}::{metric_name}"
+            # 使用 (sheet_name, metric_name) 作为缓存 key：metric 按 raw_header(metric_name)+sheet 唯一，分省区等每列独立 metric
+            cache_key = f"{sheet_name}::{metric_name}"
             
             # 获取或创建metric
             if cache_key not in metric_cache:
@@ -177,7 +184,8 @@ def upsert_observations(
                     metric_name=metric_name,
                     sheet_name=sheet_name,
                     unit=obs.get("unit"),
-                    freq=obs.get("period_type", "day")[0].upper()  # D/W
+                    freq=obs.get("period_type", "day")[0].upper(),  # D/W
+                    source_updated_at=obs.get("meta", {}).get("update_time_row") or obs.get("tags", {}).get("updated_at_time") or obs.get("tags", {}).get("update_time_row"),
                 )
                 metric_cache[cache_key] = metric.id
             metric_id = metric_cache[cache_key]
@@ -291,7 +299,7 @@ def upsert_observations(
             try:
                 metric_key = obs.get("metric_key", "")
                 metric_name = obs.get("metric_name", metric_key)
-                cache_key = metric_key if metric_key else f"{sheet_name}::{metric_name}"
+                cache_key = f"{sheet_name}::{metric_name}"
                 
                 if cache_key not in metric_cache:
                     metric = get_or_create_metric(
@@ -300,7 +308,8 @@ def upsert_observations(
                         metric_name=metric_name,
                         sheet_name=sheet_name,
                         unit=obs.get("unit"),
-                        freq=obs.get("period_type", "day")[0].upper()
+                        freq=obs.get("period_type", "day")[0].upper(),
+                        source_updated_at=obs.get("meta", {}).get("update_time_row") or obs.get("tags", {}).get("updated_at_time") or obs.get("tags", {}).get("update_time_row"),
                     )
                     metric_cache[cache_key] = metric.id
                 metric_id = metric_cache[cache_key]

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.sys_user import SysUser
+from app.utils.price_display_utils import resolve_update_time
 from app.models.fact_observation import FactObservation
 from app.models.dim_metric import DimMetric
 from app.services.lunar_alignment_service import solar_to_lunar, get_lunar_year_date_range_la_ba, get_leap_month_info
@@ -110,7 +111,7 @@ async def get_national_price_seasonality(
         series.append(SeasonalitySeries(year=year, data=data_points))
 
     latest_obs = observations[-1]
-    update_time = latest_obs.obs_date.isoformat()
+    update_time = resolve_update_time(metric, latest_obs) or latest_obs.obs_date.isoformat()
     return SeasonalityResponse(
         metric_name=metric.metric_name,
         unit=metric.unit or "元/公斤",
@@ -180,7 +181,7 @@ async def get_fat_std_spread_seasonality(
         series.append(SeasonalitySeries(year=year, data=data_points))
 
     latest_obs = observations[-1]
-    update_time = latest_obs.obs_date.isoformat()
+    update_time = resolve_update_time(metric, latest_obs) or latest_obs.obs_date.isoformat()
     return SeasonalityResponse(
         metric_name=metric.metric_name,
         unit=metric.unit or "元/公斤",
@@ -244,16 +245,27 @@ async def get_price_and_spread(
         {"date": o.obs_date.isoformat(), "year": o.obs_date.year, "value": float(o.value) if o.value else None}
         for o in spread_obs
     ]
-    latest_date = None
-    if price_obs:
-        latest_date = price_obs[-1].obs_date.isoformat()
-    elif spread_obs:
-        latest_date = spread_obs[-1].obs_date.isoformat()
+    # 优先使用 Excel 更新时间（source_updated_at），取价格/价差两者中较新的
+    candidates = []
+    if price_obs and price_metric:
+        ut = resolve_update_time(price_metric, price_obs[-1])
+        if ut:
+            candidates.append(ut)
+    if spread_obs and spread_metric:
+        ut = resolve_update_time(spread_metric, spread_obs[-1])
+        if ut:
+            candidates.append(ut)
+    update_time = max(candidates) if candidates else None
+    if update_time is None:
+        if price_obs:
+            update_time = price_obs[-1].obs_date.isoformat()
+        elif spread_obs:
+            update_time = spread_obs[-1].obs_date.isoformat()
     return PriceSpreadResponse(
         price_data=price_data,
         spread_data=spread_data,
         available_years=available_years,
-        update_time=latest_date,
+        update_time=update_time,
     )
 
 

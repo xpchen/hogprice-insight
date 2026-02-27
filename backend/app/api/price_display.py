@@ -31,6 +31,7 @@ from app.services.lunar_alignment_service import (
     get_leap_month_info,
     get_lunar_year_date_range
 )
+from app.utils.price_display_utils import resolve_update_time
 
 router = APIRouter(prefix="/api/v1/price-display", tags=["price-display"])
 
@@ -443,7 +444,9 @@ async def get_fat_std_spread_province_seasonality(
         ))
     
     latest_obs = observations[-1] if observations else None
-    update_time = latest_obs.obs_date.isoformat() if latest_obs else None
+    update_time = resolve_update_time(metric, latest_obs) if latest_obs else None
+    if not update_time and latest_obs:
+        update_time = latest_obs.obs_date.isoformat()
     
     return SeasonalityResponse(
         metric_name=f"{province_name}标肥价差",
@@ -607,7 +610,9 @@ async def get_region_spread_seasonality(
         ))
     
     latest_obs = observations[-1] if observations else None
-    update_time = latest_obs.obs_date.isoformat() if latest_obs else None
+    update_time = resolve_update_time(metric, latest_obs) if latest_obs else None
+    if not update_time and latest_obs:
+        update_time = latest_obs.obs_date.isoformat()
     
     return SeasonalityResponse(
         metric_name=metric.metric_name,
@@ -780,11 +785,15 @@ async def get_live_white_spread_dual_axis(
         for obs in ratio_obs
     ]
     
-    # 获取最新日期
+    # 获取最新日期（优先使用 Excel 更新时间 source_updated_at）
     latest_date = None
     if spread_obs:
+        latest_date = resolve_update_time(spread_metric, spread_obs[-1])
+    if not latest_date and ratio_obs:
+        latest_date = resolve_update_time(ratio_metric, ratio_obs[-1])
+    if not latest_date and spread_obs:
         latest_date = spread_obs[-1].obs_date.isoformat()
-    elif ratio_obs:
+    elif not latest_date and ratio_obs:
         latest_date = ratio_obs[-1].obs_date.isoformat()
     
     return LiveWhiteSpreadDualAxisResponse(

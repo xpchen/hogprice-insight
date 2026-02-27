@@ -209,13 +209,15 @@ class P7GanglianLegacyFormatParser(BaseParser):
                     # 如果没有模板，尝试根据sheet_name生成
                     if "肥标价差" in sheet_name or "标肥价差" in sheet_name:
                         metric_key_template = "GL_D_FAT_STD_SPREAD"
-                        metric_name_template = "标肥价差"
+                        # 每列独立 metric，raw_header 含省区名，供 API raw_header like "%中国%" 匹配
+                        metric_name_template = raw_header
                     elif "区域价差" in sheet_name:
                         metric_key_template = "GL_D_REGION_SPREAD"
                         metric_name_template = "区域价差"
                     elif "分省区猪价" in sheet_name:
                         metric_key_template = "GL_D_PRICE_PROVINCE"
-                        metric_name_template = "出栏均价"
+                        # 每列独立 metric，raw_header 含省区名（如 商品猪：出栏均价：中国（日）），供 API raw_header like "%中国%" 匹配
+                        metric_name_template = raw_header
                     else:
                         # 默认：根据sheet_name生成
                         metric_key_template = f"{source_code}_D_{sheet_name}".upper().replace(" ", "_").replace("（", "_").replace("）", "")
@@ -242,6 +244,9 @@ class P7GanglianLegacyFormatParser(BaseParser):
                 if province_name:
                     tags["province"] = province_name
                     geo_code = province_name  # 设置geo_code
+                    # 中国/全国数据需设置 scope:nation，供 price_national 等 API 过滤全国数据
+                    if province_name in ("中国", "全国"):
+                        tags["scope"] = "nation"
                 
                 # 生成dedup_key
                 dedup_key = self._generate_dedup_key(

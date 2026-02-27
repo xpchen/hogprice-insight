@@ -194,7 +194,11 @@ def _compute_mom_from_raw(by_month: Dict[str, float]) -> Dict[str, float]:
 
 def _extract_nyb_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]:
     """提取NYB数据（《生猪产业数据》-【NYB】）
-    底稿为原始值，需计算环比。C/D/F列=全国/规模场/散户（能繁、新生仔猪、生猪存栏各自对应块）
+    表中已是环比（百分比，如 -4.2 表示 -4.2%），直接使用，无需计算。
+    列映射（按Excel表头）：
+    - 能繁环比：C=全国，D=规模场，F=小散户
+    - 新生仔猪环比：G=全国，H=规模场，I=小散户
+    - 存栏环比：Q=全国，R=规模场，S=小散户
     """
     data = defaultdict(dict)
     table_data = _get_raw_table_data(db, "NYB", "2、【生猪产业数据】.xlsx")
@@ -202,68 +206,46 @@ def _extract_nyb_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]:
     if not table_data or len(table_data) < 3:
         return data
 
-    # 收集底稿原始值，再计算环比
-    breeding_raw = defaultdict(dict)  # month -> {nation, scale, small}
-    piglet_raw = defaultdict(dict)
-    hog_raw = defaultdict(dict)
-    hog_5month_raw = {}
-
     for row in table_data[2:]:
-        if len(row) < 17:
+        if len(row) < 19:
             continue
         date_val = _parse_excel_date(row[1])
         if not date_val:
             continue
         month_key = date_val.strftime("%Y-%m")
 
-        # 能繁：C(2)=全国，D(3)=规模场，F(5)=散户
-        for col_idx, key in [(2, 'nation'), (3, 'scale'), (5, 'small')]:
+        # 能繁环比：C(2)=全国，D(3)=规模场，F(5)=小散户
+        for col_idx, out_key in [(2, 'breeding_inventory_nyb_nation'), (3, 'breeding_inventory_nyb_scale'), (5, 'breeding_inventory_nyb_small')]:
             if len(row) > col_idx:
                 v = _safe_float(row[col_idx])
                 if v is not None:
-                    breeding_raw[month_key][key] = v
+                    data[month_key][out_key] = round(v, 2)
+                    if out_key == 'breeding_inventory_nyb_nation':
+                        data[month_key]['breeding_inventory_nyb'] = round(v, 2)
 
-        # 新生仔猪：G(6)=全国，H(7)=规模场，J(9)=散户（沿用类似结构）
-        for col_idx, key in [(6, 'nation'), (7, 'scale'), (9, 'small')]:
+        # 新生仔猪环比：G(6)=全国，H(7)=规模场，I(8)=小散户
+        for col_idx, out_key in [(6, 'piglet_inventory_nyb_nation'), (7, 'piglet_inventory_nyb_scale'), (8, 'piglet_inventory_nyb_small')]:
             if len(row) > col_idx:
                 v = _safe_float(row[col_idx])
                 if v is not None:
-                    piglet_raw[month_key][key] = v
+                    data[month_key][out_key] = round(v, 2)
+                    if out_key == 'piglet_inventory_nyb_nation':
+                        data[month_key]['piglet_inventory_nyb'] = round(v, 2)
 
-        # 生猪存栏：Q(16)=全国，R(17)=规模场，T(19)=散户
-        for col_idx, key in [(16, 'nation'), (17, 'scale'), (19, 'small')]:
+        # 存栏环比：Q(16)=全国，R(17)=规模场，S(18)=小散户（与能繁/新生仔猪结构一致，存栏块紧接中大猪块）
+        for col_idx, out_key in [(16, 'hog_inventory_nyb_nation'), (17, 'hog_inventory_nyb_scale'), (18, 'hog_inventory_nyb_small')]:
             if len(row) > col_idx:
                 v = _safe_float(row[col_idx])
                 if v is not None:
-                    hog_raw[month_key][key] = v
+                    data[month_key][out_key] = round(v, 2)
+                    if out_key == 'hog_inventory_nyb_nation':
+                        data[month_key]['hog_inventory_nyb'] = round(v, 2)
 
+        # K(10) 5月龄及以上大猪环比（如存在）
         if len(row) > 10:
-            v = _safe_float(row[10])  # K列 5月龄
+            v = _safe_float(row[10])
             if v is not None:
-                hog_5month_raw[month_key] = v
-
-    def _apply_mom(raw_dict: Dict, key: str, out_key: str) -> None:
-        by_month = {m: d[key] for m, d in raw_dict.items() if key in d}
-        moms = _compute_mom_from_raw(by_month)
-        for m, val in moms.items():
-            data[m][out_key] = val
-
-    _apply_mom(breeding_raw, 'nation', 'breeding_inventory_nyb')
-    _apply_mom(breeding_raw, 'nation', 'breeding_inventory_nyb_nation')
-    _apply_mom(breeding_raw, 'scale', 'breeding_inventory_nyb_scale')
-    _apply_mom(breeding_raw, 'small', 'breeding_inventory_nyb_small')
-    _apply_mom(piglet_raw, 'nation', 'piglet_inventory_nyb')
-    _apply_mom(piglet_raw, 'nation', 'piglet_inventory_nyb_nation')
-    _apply_mom(piglet_raw, 'scale', 'piglet_inventory_nyb_scale')
-    _apply_mom(piglet_raw, 'small', 'piglet_inventory_nyb_small')
-    _apply_mom(hog_raw, 'nation', 'hog_inventory_nyb')
-    _apply_mom(hog_raw, 'nation', 'hog_inventory_nyb_nation')
-    _apply_mom(hog_raw, 'scale', 'hog_inventory_nyb_scale')
-    _apply_mom(hog_raw, 'small', 'hog_inventory_nyb_small')
-
-    hog_5month_moms = _compute_mom_from_raw(hog_5month_raw)
-    for m, val in hog_5month_moms.items():
-        data[m]['hog_inventory_nyb_5month'] = val
+                data[month_key]['hog_inventory_nyb_5month'] = round(v, 2)
 
     return data
 
