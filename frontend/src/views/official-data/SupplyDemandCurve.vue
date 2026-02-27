@@ -127,14 +127,21 @@ const loadChart3Data = async () => {
   }
 }
 
-// 将数据按年份分组，每年一条线：横轴屠宰系数，纵轴价格系数，按月份顺序
+// 格式化月份为 "YYYY年M月"
+function formatMonthLabel(monthStr: string): string {
+  const [y, m] = monthStr.split('-')
+  const ym = parseInt(m || '0', 10)
+  return `${y}年${ym}月`
+}
+
+// 将数据按年份分组，每年一条线：横轴屠宰系数，纵轴价格系数，按月份顺序，data 含 month 供 tooltip
 function buildSupplyDemandSeries(data: { month: string; slaughter_coefficient?: number | null; price_coefficient?: number | null }[]) {
   const byYear = new Map<number, Array<{ price: number; slaughter: number; month: string }>>()
   for (const d of data) {
     const price = d.price_coefficient
     const slaughter = d.slaughter_coefficient
     if (price == null || slaughter == null || isNaN(price) || isNaN(slaughter)) continue
-    const [yStr, mStr] = d.month.split('-')
+    const [yStr] = d.month.split('-')
     const year = parseInt(yStr, 10)
     if (isNaN(year)) continue
     if (!byYear.has(year)) byYear.set(year, [])
@@ -143,10 +150,17 @@ function buildSupplyDemandSeries(data: { month: string; slaughter_coefficient?: 
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452']
   const series: echarts.SeriesOption[] = []
   const years = Array.from(byYear.keys()).sort((a, b) => a - b)
+  let slaughterMin = Infinity
+  let slaughterMax = -Infinity
   years.forEach((year, i) => {
     const pts = byYear.get(year)!
     pts.sort((a, b) => a.month.localeCompare(b.month))
-    const lineData = pts.map(p => [p.slaughter, p.price])  // [x屠宰系数, y价格系数]
+    for (const p of pts) {
+      slaughterMin = Math.min(slaughterMin, p.slaughter)
+      slaughterMax = Math.max(slaughterMax, p.slaughter)
+    }
+    // [x屠宰系数, y价格系数, month] 第三项供 tooltip 显示年月
+    const lineData = pts.map(p => [p.slaughter, p.price, p.month] as [number, number, string])
     series.push({
       name: `${year}年`,
       type: 'line',
@@ -158,7 +172,11 @@ function buildSupplyDemandSeries(data: { month: string; slaughter_coefficient?: 
       lineStyle: { width: 2 }
     })
   })
-  return { series, years }
+  const slaughterRange = slaughterMax - slaughterMin
+  const pad = Math.max(0.02, slaughterRange * 0.05)
+  const xMin = slaughterMin === Infinity ? 0 : Math.max(0, slaughterMin - pad)
+  const xMax = slaughterMax === -Infinity ? 1 : slaughterMax + pad
+  return { series, years, xMin, xMax }
 }
 
 // 更新图表1：供需曲线（横轴价格系数，纵轴屠宰系数，每年一条线）
@@ -169,7 +187,7 @@ const updateChart1 = () => {
     chart1Instance = echarts.init(chart1Ref.value)
   }
 
-  const { series, years } = buildSupplyDemandSeries(chart1Data.value.data)
+  const { series, years, xMin, xMax } = buildSupplyDemandSeries(chart1Data.value.data)
   if (series.length === 0) {
     chart1Instance.setOption({
       graphic: {
@@ -187,8 +205,12 @@ const updateChart1 = () => {
       trigger: 'item',
       formatter: (params: any) => {
         if (!params?.data) return ''
-        const [slaughter, price] = params.data
-        return `${params.seriesName}<br/>屠宰系数: ${Number(slaughter).toFixed(2)}<br/>价格系数: ${Number(price).toFixed(2)}`
+        const arr = params.data
+        const slaughter = arr[0]
+        const price = arr[1]
+        const month = arr[2]
+        const monthLabel = month ? formatMonthLabel(month) : params.seriesName
+        return `${monthLabel}<br/>屠宰系数: ${Number(slaughter).toFixed(2)}<br/>价格系数: ${Number(price).toFixed(2)}`
       }
     },
     legend: {
@@ -211,6 +233,8 @@ const updateChart1 = () => {
     xAxis: {
       type: 'value',
       name: '屠宰系数',
+      min: xMin,
+      max: xMax,
       interval: 0.2,
       minInterval: 0.2,
       ...yAxisHideMinMaxLabel,

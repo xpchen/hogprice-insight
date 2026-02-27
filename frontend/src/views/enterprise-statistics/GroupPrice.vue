@@ -37,9 +37,9 @@
             style="width: 100%"
             max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="date" label="日期" width="88" fixed="left" align="center">
+            <el-table-column prop="date" label="日期" min-width="110" fixed="left" align="center">
               <template #default="{ row }">
-                {{ formatDate(row.date) }}
+                <span class="date-cell">{{ formatDate(row.date) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -71,7 +71,7 @@
                 header-align="center"
               >
                 <template #default="{ row }">
-                  <span v-if="getCompanyPrice(row, region) !== null">{{ formatPrice(getCompanyPrice(row, region)) }}</span>
+                  <span v-if="getCompanyPrice(row, region) !== null">{{ formatPrice(getCompanyPrice(row, region), region) }}</span>
                   <span v-else>-</span>
                 </template>
               </el-table-column>
@@ -168,6 +168,9 @@ const rangeChangeResult = ref<number | null>(null)
 
 // 牧原白条多表头：来源于 3.3、白条市场跟踪.xlsx 华宝和牧原白条 sheet，一级「牧原白条」，二级为以下区域
 const MUYUAN_WHITE_STRIP_REGIONS = ['华东', '河南山东', '湖北陕西', '京津冀', '东北']
+
+// 以下列显示整数（无小数点）：华宝白条、牧原白条下属区域
+const INTEGER_DISPLAY_COLUMNS = ['华宝白条', ...MUYUAN_WHITE_STRIP_REGIONS]
 
 // 表格1 平铺列（不含牧原白条及下属华东等 5 列，该部分用多表头展示）
 const table1FlatColumns = computed(() => {
@@ -317,13 +320,13 @@ const formatDate = (dateStr: string) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-const formatPrice = (price: number | null | undefined) => {
+const formatPrice = (price: number | null | undefined, column?: string) => {
   if (price === null || price === undefined) return '-'
-  return price.toFixed(2)
+  return INTEGER_DISPLAY_COLUMNS.includes(column || '') ? String(Math.round(price)) : price.toFixed(2)
 }
 
-const formatCompanyPrice = (_company: string, value: number) => {
-  return value.toFixed(2)
+const formatCompanyPrice = (company: string, value: number) => {
+  return INTEGER_DISPLAY_COLUMNS.includes(company) ? String(Math.round(value)) : value.toFixed(2)
 }
 
 const formatValue = (value: number | null | undefined) => {
@@ -407,5 +410,6 @@ onMounted(() => {
   :deep(.el-table) { font-size: 11px; }
   :deep(.el-table th) { padding: 2px 4px; font-weight: 600; background-color: #f5f7fa; }
   :deep(.el-table td) { padding: 1px 4px; }
+  .date-cell { white-space: nowrap; }
 }
 </style>

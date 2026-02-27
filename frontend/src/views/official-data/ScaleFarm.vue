@@ -32,7 +32,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(row, ri) in tableData.rows" :key="'r-' + ri">
+              <tr v-for="(row, ri) in displayRows" :key="'r-' + ri">
                 <td
                   v-for="(cell, ci) in row"
                   :key="'c-' + ri + '-' + ci"
@@ -44,7 +44,7 @@
             </tbody>
           </table>
         </div>
-        <div v-if="!loading && (!tableData || (!tableData.rows?.length && !tableData.header_row_0?.length)) && !errorMessage" class="empty-hint">
+        <div v-if="!loading && (!tableData || (!displayRows.length && !tableData.header_row_0?.length)) && !errorMessage" class="empty-hint">
           <el-empty description="暂无数据，请先导入 2、【生猪产业数据】.xlsx 并确保包含 A1供给预测 sheet" />
         </div>
         <div v-if="errorMessage" class="error-hint">
@@ -52,26 +52,34 @@
         </div>
       </div>
 
-      <!-- 母猪效能、压栏系数 并列显示（季节性，数据源：A1 表 F 列、N 列） -->
+      <!-- 母猪效能、压栏系数 左右并排（季节性，数据源：A1 表 F 列、N 列），与全国猪价页面同一 card 内并排 -->
       <div class="chart-section charts-row">
-        <el-row :gutter="20">
-          <el-col :xs="24" :sm="24" :md="12" :lg="12">
-            <SeasonalityChart
-              :data="sowEfficiencySeasonality"
-              :loading="loadingSeasonality"
-              title="母猪效能"
-              source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
-            />
-          </el-col>
-          <el-col :xs="24" :sm="24" :md="12" :lg="12">
-            <SeasonalityChart
-              :data="pressureCoefficientSeasonality"
-              :loading="loadingSeasonality"
-              title="压栏系数"
-              source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
-            />
-          </el-col>
-        </el-row>
+        <div class="chart-row">
+          <div class="chart-wrapper">
+            <div class="chart-box">
+              <SeasonalityChart
+                bare
+                :data="sowEfficiencySeasonality"
+                :loading="loadingSeasonality"
+                title="母猪效能"
+                source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
+                :update-date="chartLatestDate"
+              />
+            </div>
+          </div>
+          <div class="chart-wrapper">
+            <div class="chart-box">
+              <SeasonalityChart
+                bare
+                :data="pressureCoefficientSeasonality"
+                :loading="loadingSeasonality"
+                title="压栏系数"
+                source-name="A1供给预测（2、【生猪产业数据】.xlsx）"
+                :update-date="chartLatestDate"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 涌益生产指标：五指标筛选 + 季节性图表（数据源：月度-生产指标2 F:J 列） -->
@@ -130,6 +138,24 @@ const yongyiProductionSeasonalityData = computed((): SeasonalityData | null => {
 const yongyiChartTitle = computed(() => {
   const ind = selectedProductionIndicator.value === '全部' ? '窝均健仔数' : selectedProductionIndicator.value
   return ind
+})
+
+/** 第一列是否为规范格式（YYYY-MM-DD 日期），用于检测主体数据与其它格式的分界 */
+function isStandardDateCell(val: unknown): boolean {
+  if (val == null || val === '') return false
+  const s = String(val).trim()
+  return !!s && /^\d{4}-\d{2}-\d{2}/.test(s)
+}
+
+/** 规范数据行：遇到格式不同的行（如 能繁-仔猪、大猪、出栏 等）则切断，后面全部不显示；时间倒序 */
+const displayRows = computed(() => {
+  const rows = tableData.value?.rows ?? []
+  const kept: (string | number | null)[][] = []
+  for (const row of rows) {
+    if (!isStandardDateCell(row?.[0])) break
+    kept.push(row)
+  }
+  return kept.sort((a, b) => String(b?.[0] || '').localeCompare(String(a?.[0] || '')))
 })
 
 /** 根据 merged_cells 和表头构建带合并信息的表头网格，用于渲染 */
@@ -319,8 +345,8 @@ onMounted(() => {
 
 .raw-table-wrap {
   overflow-x: auto;
-  max-height: 520px;
   overflow-y: auto;
+  max-height: 520px;
 }
 
 .raw-excel-table {
@@ -334,10 +360,19 @@ onMounted(() => {
   padding: 6px 10px;
   text-align: center;
 }
-.raw-excel-table thead th {
+/* 日期列（第一列）：不换行、宽度加大 */
+.raw-excel-table th:first-child,
+.raw-excel-table td:first-child {
+  white-space: nowrap;
+  min-width: 110px;
+}
+/* 固定表头：整个 thead 作为一块粘性定位，滚动时无空隙 */
+.raw-excel-table thead {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 10;
+}
+.raw-excel-table thead th {
   background-color: #f5f7fa;
   font-weight: 600;
   white-space: nowrap;
@@ -385,9 +420,28 @@ onMounted(() => {
   margin-bottom: 24px;
 }
 
-/* 母猪效能、压栏系数：与下方涌益季节性图表大小一致（350px） */
+/* 母猪效能、压栏系数：与全国猪价页面同一 card 内并排布局 */
+.chart-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  padding: 4px;
+  background: #fff;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+}
+
+.chart-wrapper {
+  padding: 0;
+}
+
+.chart-box {
+  margin-bottom: 6px;
+}
+
 .charts-row :deep(.chart-area) {
-  height: 350px;
+  height: 400px;
 }
 
 .chart-title {
@@ -412,5 +466,11 @@ onMounted(() => {
 
 .chart-container {
   margin-bottom: 8px;
+}
+
+@media (max-width: 1200px) {
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

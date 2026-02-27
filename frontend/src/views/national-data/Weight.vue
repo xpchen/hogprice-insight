@@ -218,7 +218,7 @@ import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import { getWeightData } from '@/api/national-data'
 import { useRouter } from 'vue-router'
-import { getYearColor, axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
+import { getYearColor, axisLabelDecimalFormatter, axisLabelHideMinMax } from '@/utils/chart-style'
 
 const router = useRouter()
 const loading = ref(false)
@@ -539,8 +539,10 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
       min: yMin - yPadding,
       max: yMax + yPadding,
       scale: false,
-      ...yAxisHideMinMaxLabel,
-      axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+      axisLabel: {
+        ...axisLabelHideMinMax,
+        formatter: (v: number) => axisLabelDecimalFormatter(v)
+      }
     },
     series: series,
     // 只保留内部缩放，删除日期筛选进度条

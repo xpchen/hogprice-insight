@@ -100,10 +100,22 @@
                   </template>
                 </el-table-column>
               </el-table-column>
-              <el-table-column prop="breeding_inventory_nyb" label="NYB" width="100" align="right">
-                <template #default="{ row }">
-                  {{ formatPercent(row.breeding_inventory_nyb) }}
-                </template>
+              <el-table-column label="NYB" align="center">
+                <el-table-column prop="breeding_inventory_nyb_nation" label="全国" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.breeding_inventory_nyb_nation ?? row.breeding_inventory_nyb) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="breeding_inventory_nyb_scale" label="规模场" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.breeding_inventory_nyb_scale) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="breeding_inventory_nyb_small" label="散户" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.breeding_inventory_nyb_small) }}
+                  </template>
+                </el-table-column>
               </el-table-column>
             </el-table-column>
             <el-table-column label="能繁母猪饲料环比" align="center">
@@ -164,10 +176,22 @@
                   </template>
                 </el-table-column>
               </el-table-column>
-              <el-table-column prop="piglet_inventory_nyb" label="NYB" width="100" align="right">
-                <template #default="{ row }">
-                  {{ formatPercent(row.piglet_inventory_nyb) }}
-                </template>
+              <el-table-column label="NYB" align="center">
+                <el-table-column prop="piglet_inventory_nyb_nation" label="全国" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.piglet_inventory_nyb_nation ?? row.piglet_inventory_nyb) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="piglet_inventory_nyb_scale" label="规模场" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.piglet_inventory_nyb_scale) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="piglet_inventory_nyb_small" label="散户" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.piglet_inventory_nyb_small) }}
+                  </template>
+                </el-table-column>
               </el-table-column>
             </el-table-column>
             <el-table-column label="仔猪饲料环比" align="center">
@@ -229,14 +253,19 @@
                 </el-table-column>
               </el-table-column>
               <el-table-column label="NYB" align="center">
-                <el-table-column prop="hog_inventory_nyb" label="NYB" width="100" align="right">
+                <el-table-column prop="hog_inventory_nyb_nation" label="全国" width="90" align="right">
                   <template #default="{ row }">
-                    {{ formatPercent(row.hog_inventory_nyb) }}
+                    {{ formatPercent(row.hog_inventory_nyb_nation ?? row.hog_inventory_nyb) }}
                   </template>
                 </el-table-column>
-                <el-table-column prop="hog_inventory_nyb_5month" label="5月龄" width="100" align="right">
+                <el-table-column prop="hog_inventory_nyb_scale" label="规模场" width="90" align="right">
                   <template #default="{ row }">
-                    {{ formatPercent(row.hog_inventory_nyb_5month) }}
+                    {{ formatPercent(row.hog_inventory_nyb_scale) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="hog_inventory_nyb_small" label="散户" width="90" align="right">
+                  <template #default="{ row }">
+                    {{ formatPercent(row.hog_inventory_nyb_small) }}
                   </template>
                 </el-table-column>
               </el-table-column>

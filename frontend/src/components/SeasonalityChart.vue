@@ -1,5 +1,5 @@
 <template>
-  <el-card class="seasonality-chart-panel">
+  <el-card v-if="!bare" class="seasonality-chart-panel">
     <template #header>
       <span>{{ title || '季节性图表' }}</span>
     </template>
@@ -34,6 +34,39 @@
       </div>
     </div>
   </el-card>
+  <div v-else class="seasonality-chart-bare">
+    <h3 class="chart-title">{{ title || '季节性图表' }}</h3>
+    <div class="chart-content">
+      <div ref="chartRef" class="chart-area" v-loading="loading"></div>
+      <div v-if="changeInfo || sourceName || updateDate" class="chart-footer">
+        <div v-if="changeInfo" class="change-info">
+          <span v-if="changeInfo.period_change !== null" class="change-item">
+            本期涨跌：
+            <span :class="getChangeClass(changeInfo.period_change)">
+              {{ formatChange(changeInfo.period_change) }}
+            </span>
+          </span>
+          <span v-if="changeInfo.day10_change != null" class="change-item">
+            过去10日涨跌：
+            <span :class="getChangeClass(changeInfo.day10_change)">
+              {{ formatChange(changeInfo.day10_change) }}
+            </span>
+          </span>
+          <span v-if="changeInfo.yoy_change != null" class="change-item">
+            较去年同期涨跌：
+            <span :class="getChangeClass(changeInfo.yoy_change)">
+              {{ formatChange(changeInfo.yoy_change) }}
+            </span>
+          </span>
+        </div>
+        <div v-if="sourceName || updateDate" class="data-source-info">
+          <span v-if="sourceName">数据来源：{{ sourceName }}</span>
+          <span v-if="sourceName && updateDate" class="separator"> </span>
+          <span v-if="updateDate">更新日期：{{ updateDate }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -58,6 +91,7 @@ const props = defineProps<{
   data: SeasonalityData | null
   loading?: boolean
   title?: string
+  bare?: boolean  // 无卡片模式：不渲染 el-card，用于嵌入 chart-row 内并排显示
   lunarAlignment?: boolean  // 是否支持农历对齐
   changeInfo?: {
     period_change: number | null
@@ -367,6 +401,19 @@ const getChangeClass = (value: number | null): string => {
 <style scoped>
 .seasonality-chart-panel {
   margin-bottom: 8px;
+}
+
+.seasonality-chart-bare {
+  padding: 0;
+}
+
+.seasonality-chart-bare .chart-title {
+  margin: 0 0 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.5;
+  text-align: left;
 }
 
 .chart-content {

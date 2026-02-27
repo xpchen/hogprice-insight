@@ -4,6 +4,7 @@ D3. 销售计划API
 """
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func, extract, text
@@ -17,6 +18,7 @@ from app.models.fact_observation import FactObservation
 from app.models.dim_metric import DimMetric
 from app.models.raw_sheet import RawSheet
 from app.models.raw_table import RawTable
+from app.models.raw_file import RawFile
 
 router = APIRouter(prefix="/api/v1/sales-plan", tags=["sales-plan"])
 
@@ -33,8 +35,8 @@ class SalesPlanDataPoint(BaseModel):
     source: str  # 数据来源
     actual_output: Optional[float] = None  # 当月出栏量
     plan_output: Optional[float] = None  # 当月计划
-    month_on_month: Optional[float] = None  # 当月环比（当月出栏/上月出栏）
-    plan_on_plan: Optional[float] = None  # 计划环比（当月计划/上月实际出栏）
+    month_on_month: Optional[float] = None  # 当月环比（当月出栏/上月出栏 - 1，即增长率）
+    plan_on_plan: Optional[float] = None  # 计划环比（当月计划/上月实际出栏 - 1，即增长率）
     plan_completion_rate: Optional[float] = None  # 计划达成率（当月出栏/当月计划）
 
 
@@ -212,10 +214,10 @@ def _get_enterprise_data(db: Session, regions: List[str]) -> List[SalesPlanDataP
                 prev_actual = prev_data.get('actual')
                 
                 if actual and prev_actual:
-                    month_on_month = actual / prev_actual if prev_actual != 0 else None
+                    month_on_month = (actual / prev_actual - 1) if prev_actual != 0 else None
                 
                 if plan and prev_actual:
-                    plan_on_plan = plan / prev_actual if prev_actual != 0 else None
+                    plan_on_plan = (plan / prev_actual - 1) if prev_actual != 0 else None
             
             data_points.append(SalesPlanDataPoint(
                 date=date_str,
@@ -232,12 +234,19 @@ def _get_enterprise_data(db: Session, regions: List[str]) -> List[SalesPlanDataP
 
 
 def _get_yongyi_data(db: Session) -> List[SalesPlanDataPoint]:
-    """从涌益月度计划出栏量sheet获取数据"""
+    """从涌益咨询周度数据-月度计划出栏量sheet获取数据
+    
+    数据来源：《涌益咨询 周度数据》- sheet《月度计划出栏量》
+    Q列=上月销售量 → 涌益-当月出栏量（需往前推一月，即作为上一月的当月出栏量）
+    R列=当月销售计划 → 涌益-当月计划
+    """
     data_points: List[SalesPlanDataPoint] = []
     
-    # 查找最新的raw_sheet
-    raw_sheet = db.query(RawSheet).filter(
-        RawSheet.sheet_name == "月度计划出栏量"
+    # 限定来自涌益周度文件
+    raw_sheet = db.query(RawSheet).join(RawFile).filter(
+        RawSheet.sheet_name == "月度计划出栏量",
+        RawFile.filename.like("%涌益%"),
+        RawFile.filename.like("%周度%")
     ).order_by(RawSheet.created_at.desc()).first()
     
     if not raw_sheet:
@@ -300,7 +309,23 @@ def _get_yongyi_data(db: Session) -> List[SalesPlanDataPoint]:
     
     # 第1行（索引0）：标题行，Q列（索引16）是"上月样本企业合计销售"，R列（索引17）是"本月计划销售"
     # 第2行（索引1）：表头行
-    # 第3行开始（索引2+）：数据行，第1列（索引0）是日期，Q列（索引16）是上月出栏（需要修正为当月出栏），R列（索引17）是当月计划
+    # 第3行开始（索引2+）：数据行
+    # Q列=上月销售量 → 作为(行日期-1月)的当月出栏量；R列=当月计划 → 作为行日期的当月计划
+    
+    def clean_value(val):
+        if val is None or val == '***' or val == '':
+            return None
+        try:
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, str):
+                val = val.strip()
+                if val == '***' or val == '':
+                    return None
+                return float(val)
+            return None
+        except:
+            return None
     
     date_data: Dict[str, Dict[str, float]] = {}
     
@@ -317,7 +342,6 @@ def _get_yongyi_data(db: Session) -> List[SalesPlanDataPoint]:
         # 解析日期
         try:
             if isinstance(date_val, str):
-                # 处理ISO格式日期字符串
                 if 'T' in date_val:
                     date_val = date_val.split('T')[0]
                 date_obj = datetime.strptime(date_val, "%Y-%m-%d").date()
@@ -329,38 +353,24 @@ def _get_yongyi_data(db: Session) -> List[SalesPlanDataPoint]:
             continue
         
         date_str = _normalize_to_month_start(date_obj)
+        prev_date_obj = date_obj - relativedelta(months=1)
+        prev_date_str = _normalize_to_month_start(prev_date_obj)
         
-        # Q列（索引16）：上月样本企业合计销售（但用户说原数据是上月出栏，需要修正为当月出栏）
-        # 注意：用户说Q列原数据是上月出栏，但需要修正为当月出栏，这意味着我们需要将Q列的值作为当月出栏
         q_value = row[16] if len(row) > 16 else None
-        
-        # R列（索引17）：本月计划销售（当月计划）
         r_value = row[17] if len(row) > 17 else None
         
-        # 清理数值
-        def clean_value(val):
-            if val is None or val == '***' or val == '':
-                return None
-            try:
-                if isinstance(val, (int, float)):
-                    return float(val)
-                if isinstance(val, str):
-                    val = val.strip()
-                    if val == '***' or val == '':
-                        return None
-                    return float(val)
-                return None
-            except:
-                return None
+        # Q列=上月销售量 → 作为上一月的当月出栏量
+        actual_output = clean_value(q_value)
+        # R列=当月计划 → 作为当前行日期的当月计划
+        plan_output = clean_value(r_value)
         
-        actual_output = clean_value(q_value)  # Q列作为当月出栏
-        plan_output = clean_value(r_value)  # R列作为当月计划
-        
+        if prev_date_str not in date_data:
+            date_data[prev_date_str] = {}
         if date_str not in date_data:
             date_data[date_str] = {}
         
         if actual_output is not None:
-            date_data[date_str]['actual'] = actual_output
+            date_data[prev_date_str]['actual'] = actual_output
         if plan_output is not None:
             date_data[date_str]['plan'] = plan_output
     
@@ -386,10 +396,10 @@ def _get_yongyi_data(db: Session) -> List[SalesPlanDataPoint]:
             prev_actual = prev_data.get('actual')
             
             if actual and prev_actual:
-                month_on_month = actual / prev_actual if prev_actual != 0 else None
+                month_on_month = (actual / prev_actual - 1) if prev_actual != 0 else None
             
             if plan and prev_actual:
-                plan_on_plan = plan / prev_actual if prev_actual != 0 else None
+                plan_on_plan = (plan / prev_actual - 1) if prev_actual != 0 else None
         
         data_points.append(SalesPlanDataPoint(
             date=date_str,
@@ -480,10 +490,10 @@ def _get_ganglian_data(db: Session) -> List[SalesPlanDataPoint]:
             prev_actual = prev_data.get('actual')
             
             if actual and prev_actual:
-                month_on_month = actual / prev_actual if prev_actual != 0 else None
+                month_on_month = (actual / prev_actual - 1) if prev_actual != 0 else None
             
             if plan and prev_actual:
-                plan_on_plan = plan / prev_actual if prev_actual != 0 else None
+                plan_on_plan = (plan / prev_actual - 1) if prev_actual != 0 else None
         
         data_points.append(SalesPlanDataPoint(
             date=date_str,

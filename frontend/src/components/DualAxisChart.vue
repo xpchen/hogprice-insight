@@ -3,7 +3,7 @@
     <template #header>
       <div style="display: flex; justify-content: space-between; align-items: center">
         <span>{{ title || '双轴图表' }}</span>
-        <el-button size="small" @click="handleSaveAsPng" :disabled="!data">
+        <el-button v-if="showSaveButton" size="small" @click="handleSaveAsPng" :disabled="!data">
           <el-icon><Download /></el-icon>
           保存为PNG
         </el-button>
@@ -18,7 +18,7 @@ import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { axisLabelDecimalFormatter, yAxisHideMinMaxLabel } from '@/utils/chart-style'
+import { axisLabelDecimalFormatter, axisLabelHideMinMax } from '@/utils/chart-style'
 
 export interface DualAxisData {
   series1: {
@@ -33,13 +33,18 @@ export interface DualAxisData {
   }
 }
 
-const props = defineProps<{
-  data: DualAxisData | null
-  loading?: boolean
-  title?: string
-  axis1?: 'left' | 'right'
-  axis2?: 'left' | 'right'
-}>()
+const props = withDefaults(
+  defineProps<{
+    data: DualAxisData | null
+    loading?: boolean
+    title?: string
+    axis1?: 'left' | 'right'
+    axis2?: 'left' | 'right'
+    showSaveButton?: boolean
+    showDataZoom?: boolean
+  }>(),
+  { showSaveButton: true, showDataZoom: false }
+)
 
 const chartRef = ref<HTMLDivElement>()
 let chartInstance: echarts.ECharts | null = null
@@ -78,7 +83,7 @@ const updateChart = () => {
   const y2Max = values2.length > 0 ? Math.max(...values2) : 100
   const y2Padding = (y2Max - y2Min) * 0.1
 
-  const option: echarts.EChartsOption = {
+  const baseOption: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
       axisPointer: {
@@ -97,7 +102,7 @@ const updateChart = () => {
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '3%',
+      bottom: props.showDataZoom ? 50 : '3%',
       containLabel: true
     },
     xAxis: {
@@ -124,8 +129,10 @@ const updateChart = () => {
         min: y1Min - y1Padding,
         max: y1Max + y1Padding,
         scale: false,
-        ...yAxisHideMinMaxLabel,
-        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+        axisLabel: {
+          ...axisLabelHideMinMax,
+          formatter: (v: number) => axisLabelDecimalFormatter(v)
+        }
       },
       {
         type: 'value',
@@ -134,8 +141,10 @@ const updateChart = () => {
         min: y2Min - y2Padding,
         max: y2Max + y2Padding,
         scale: false,
-        ...yAxisHideMinMaxLabel,
-        axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+        axisLabel: {
+          ...axisLabelHideMinMax,
+          formatter: (v: number) => axisLabelDecimalFormatter(v)
+        }
       }
     ],
     series: [
@@ -168,6 +177,18 @@ const updateChart = () => {
         }
       }
     ]
+  }
+
+  const option: echarts.EChartsOption = {
+    ...baseOption,
+    ...(props.showDataZoom
+      ? {
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 }
+          ]
+        }
+      : {})
   }
 
   chartInstance.setOption(option, true)

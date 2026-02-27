@@ -36,7 +36,10 @@ class MultiSourceDataPoint(BaseModel):
     breeding_inventory_ganglian_nation: Optional[float] = None  # 能繁母猪存栏环比-钢联-全国
     breeding_inventory_ganglian_scale: Optional[float] = None  # 能繁母猪存栏环比-钢联-规模场
     breeding_inventory_ganglian_small: Optional[float] = None  # 能繁母猪存栏环比-钢联-中小散户
-    breeding_inventory_nyb: Optional[float] = None  # 能繁母猪存栏环比-NYB
+    breeding_inventory_nyb: Optional[float] = None  # 能繁母猪存栏环比-NYB（全国，兼容旧字段）
+    breeding_inventory_nyb_nation: Optional[float] = None  # 能繁-NYB-全国
+    breeding_inventory_nyb_scale: Optional[float] = None  # 能繁-NYB-规模场
+    breeding_inventory_nyb_small: Optional[float] = None  # 能繁-NYB-散户
     breeding_feed_yongyi: Optional[float] = None  # 能繁母猪饲料环比-涌益
     breeding_feed_ganglian: Optional[float] = None  # 能繁母猪饲料环比-钢联
     breeding_feed_association: Optional[float] = None  # 能繁母猪饲料环比-协会
@@ -44,7 +47,10 @@ class MultiSourceDataPoint(BaseModel):
     piglet_inventory_ganglian_nation: Optional[float] = None  # 新生仔猪存栏环比-钢联-全国
     piglet_inventory_ganglian_scale: Optional[float] = None  # 新生仔猪存栏环比-钢联-规模场
     piglet_inventory_ganglian_small: Optional[float] = None  # 新生仔猪存栏环比-钢联-中小散户
-    piglet_inventory_nyb: Optional[float] = None  # 新生仔猪存栏环比-NYB
+    piglet_inventory_nyb: Optional[float] = None  # 新生仔猪存栏环比-NYB（全国，兼容）
+    piglet_inventory_nyb_nation: Optional[float] = None  # 新生仔猪-NYB-全国
+    piglet_inventory_nyb_scale: Optional[float] = None  # 新生仔猪-NYB-规模场
+    piglet_inventory_nyb_small: Optional[float] = None  # 新生仔猪-NYB-散户
     piglet_feed_yongyi: Optional[float] = None  # 仔猪饲料环比-涌益
     piglet_feed_ganglian: Optional[float] = None  # 仔猪饲料环比-钢联
     piglet_feed_association: Optional[float] = None  # 仔猪饲料环比-协会
@@ -52,7 +58,10 @@ class MultiSourceDataPoint(BaseModel):
     hog_inventory_ganglian_nation: Optional[float] = None  # 生猪存栏环比-钢联-全国
     hog_inventory_ganglian_scale: Optional[float] = None  # 生猪存栏环比-钢联-规模场
     hog_inventory_ganglian_small: Optional[float] = None  # 生猪存栏环比-钢联-中小散户
-    hog_inventory_nyb: Optional[float] = None  # 生猪存栏环比-NYB
+    hog_inventory_nyb: Optional[float] = None  # 生猪存栏环比-NYB（全国，兼容）
+    hog_inventory_nyb_nation: Optional[float] = None  # 生猪存栏-NYB-全国
+    hog_inventory_nyb_scale: Optional[float] = None  # 生猪存栏-NYB-规模场
+    hog_inventory_nyb_small: Optional[float] = None  # 生猪存栏-NYB-散户
     hog_inventory_nyb_5month: Optional[float] = None  # 生猪存栏环比-NYB-5月龄
     hog_feed_yongyi: Optional[float] = None  # 育肥猪饲料环比-涌益
     hog_feed_ganglian: Optional[float] = None  # 育肥猪饲料环比-钢联
@@ -149,50 +158,96 @@ def _safe_float(value: any) -> Optional[float]:
         return None
 
 
+def _compute_mom_from_raw(by_month: Dict[str, float]) -> Dict[str, float]:
+    """从底稿原始值计算环比：(当月-上月)/上月*100"""
+    result = {}
+    sorted_months = sorted(by_month.keys())
+    for i in range(1, len(sorted_months)):
+        prev_month = sorted_months[i - 1]
+        curr_month = sorted_months[i]
+        prev_val = by_month[prev_month]
+        curr_val = by_month[curr_month]
+        if prev_val is not None and curr_val is not None and prev_val != 0:
+            if not math.isnan(prev_val) and not math.isnan(curr_val) and not math.isinf(prev_val) and not math.isinf(curr_val):
+                mom = (curr_val - prev_val) / prev_val * 100
+                if not math.isnan(mom) and not math.isinf(mom):
+                    result[curr_month] = round(mom, 2)
+    return result
+
+
 def _extract_nyb_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]:
-    """提取NYB数据
-    Sheet结构：
-    - 第2行是表头：B列是"月度"，C列是"全国"（能繁环比），G列是"全国"（新生仔猪环比），Q列是"全国"（存栏环比），K列是"全国环比"（5月龄及以上大猪环比）
-    - 数据从第3行开始（索引2）
+    """提取NYB数据（《生猪产业数据》-【NYB】）
+    底稿为原始值，需计算环比。C/D/F列=全国/规模场/散户（能繁、新生仔猪、生猪存栏各自对应块）
     """
     data = defaultdict(dict)
     table_data = _get_raw_table_data(db, "NYB", "2、【生猪产业数据】.xlsx")
-    
+
     if not table_data or len(table_data) < 3:
         return data
-    
-    # 数据从第3行开始（索引2），B列是日期（索引1），C列是能繁环比-全国（索引2），G列是新生仔猪环比-全国（索引6），Q列是存栏环比（索引16），K列是5月龄及以上大猪环比（索引10）
-    for row in table_data[2:]:  # 跳过表头
+
+    # 收集底稿原始值，再计算环比
+    breeding_raw = defaultdict(dict)  # month -> {nation, scale, small}
+    piglet_raw = defaultdict(dict)
+    hog_raw = defaultdict(dict)
+    hog_5month_raw = {}
+
+    for row in table_data[2:]:
         if len(row) < 17:
             continue
-        
-        date_val = _parse_excel_date(row[1])  # B列
+        date_val = _parse_excel_date(row[1])
         if not date_val:
             continue
-        
         month_key = date_val.strftime("%Y-%m")
-        
-        # C列：能繁环比-全国（索引2）
-        breeding_val = _safe_float(row[2])
-        if breeding_val is not None:
-            data[month_key]['breeding_inventory_nyb'] = breeding_val
-        
-        # G列：新生仔猪环比-全国（索引6）
-        piglet_val = _safe_float(row[6])
-        if piglet_val is not None:
-            data[month_key]['piglet_inventory_nyb'] = piglet_val
-        
-        # Q列：存栏环比（索引16）
-        hog_val = _safe_float(row[16])
-        if hog_val is not None:
-            data[month_key]['hog_inventory_nyb'] = hog_val
-        
-        # J列：5月龄及以上大猪环比（索引9；分析文档为 J 列）
-        if len(row) > 9:
-            hog_5month_val = _safe_float(row[9])
-            if hog_5month_val is not None:
-                data[month_key]['hog_inventory_nyb_5month'] = hog_5month_val
-    
+
+        # 能繁：C(2)=全国，D(3)=规模场，F(5)=散户
+        for col_idx, key in [(2, 'nation'), (3, 'scale'), (5, 'small')]:
+            if len(row) > col_idx:
+                v = _safe_float(row[col_idx])
+                if v is not None:
+                    breeding_raw[month_key][key] = v
+
+        # 新生仔猪：G(6)=全国，H(7)=规模场，J(9)=散户（沿用类似结构）
+        for col_idx, key in [(6, 'nation'), (7, 'scale'), (9, 'small')]:
+            if len(row) > col_idx:
+                v = _safe_float(row[col_idx])
+                if v is not None:
+                    piglet_raw[month_key][key] = v
+
+        # 生猪存栏：Q(16)=全国，R(17)=规模场，T(19)=散户
+        for col_idx, key in [(16, 'nation'), (17, 'scale'), (19, 'small')]:
+            if len(row) > col_idx:
+                v = _safe_float(row[col_idx])
+                if v is not None:
+                    hog_raw[month_key][key] = v
+
+        if len(row) > 10:
+            v = _safe_float(row[10])  # K列 5月龄
+            if v is not None:
+                hog_5month_raw[month_key] = v
+
+    def _apply_mom(raw_dict: Dict, key: str, out_key: str) -> None:
+        by_month = {m: d[key] for m, d in raw_dict.items() if key in d}
+        moms = _compute_mom_from_raw(by_month)
+        for m, val in moms.items():
+            data[m][out_key] = val
+
+    _apply_mom(breeding_raw, 'nation', 'breeding_inventory_nyb')
+    _apply_mom(breeding_raw, 'nation', 'breeding_inventory_nyb_nation')
+    _apply_mom(breeding_raw, 'scale', 'breeding_inventory_nyb_scale')
+    _apply_mom(breeding_raw, 'small', 'breeding_inventory_nyb_small')
+    _apply_mom(piglet_raw, 'nation', 'piglet_inventory_nyb')
+    _apply_mom(piglet_raw, 'nation', 'piglet_inventory_nyb_nation')
+    _apply_mom(piglet_raw, 'scale', 'piglet_inventory_nyb_scale')
+    _apply_mom(piglet_raw, 'small', 'piglet_inventory_nyb_small')
+    _apply_mom(hog_raw, 'nation', 'hog_inventory_nyb')
+    _apply_mom(hog_raw, 'nation', 'hog_inventory_nyb_nation')
+    _apply_mom(hog_raw, 'scale', 'hog_inventory_nyb_scale')
+    _apply_mom(hog_raw, 'small', 'hog_inventory_nyb_small')
+
+    hog_5month_moms = _compute_mom_from_raw(hog_5month_raw)
+    for m, val in hog_5month_moms.items():
+        data[m]['hog_inventory_nyb_5month'] = val
+
     return data
 
 
@@ -239,56 +294,49 @@ def _extract_association_feed_data(db: Session) -> Dict[str, Dict[str, Optional[
 
 
 def _extract_yongyi_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]:
-    """提取涌益数据（从4.2涌益底稿sheet）
-    Sheet结构：
-    - 第1行是表头：G列是"能繁母猪-2020年2月*"（全国），B列是"大猪存栏-2020年5月*"（全国），P列是"饲料销量环比"（猪料销量）
-    - 第2行是子表头：G列是"全国"（能繁母猪），B列是"全国"（大猪存栏），P列是"猪料销量"
-    - 数据从第3行开始（索引2）
+    """提取涌益数据（4.2涌益底稿）
+    G列能繁、B列大猪存栏为底稿原始值，需计算环比；P/Q/S 饲料列为环比，直接使用。
     """
     data = defaultdict(dict)
     table_data = _get_raw_table_data(db, "4.2涌益底稿", "2、【生猪产业数据】.xlsx")
-    
+
     if not table_data or len(table_data) < 3:
         return data
-    
-    # 数据从第3行开始（索引2）。A=日期(0)，B=大猪存栏-全国(1)，G=能繁母猪-全国(6)，P=猪料销量(15)，Q=后备母猪料(16) 作能繁母猪饲料环比
-    for row in table_data[2:]:  # 跳过表头
+
+    breeding_raw, hog_raw = {}, {}
+    for row in table_data[2:]:
         if len(row) < 17:
             continue
-        
-        date_val = _parse_excel_date(row[0])  # A列
+        date_val = _parse_excel_date(row[0])
         if not date_val:
             continue
-        
         month_key = date_val.strftime("%Y-%m")
-        
-        # G列：能繁母猪环比-全国（索引6）
-        breeding_val = _safe_float(row[6])
-        if breeding_val is not None:
-            data[month_key]['breeding_inventory_yongyi'] = breeding_val
-        
-        # B列：大猪存栏环比-全国（索引1）
-        hog_val = _safe_float(row[1])
-        if hog_val is not None:
-            data[month_key]['hog_inventory_yongyi'] = hog_val
-        
-        # P列：猪料销量环比（索引15）→ 育肥猪饲料环比
+        v = _safe_float(row[6])
+        if v is not None:
+            breeding_raw[month_key] = v
+        v = _safe_float(row[1])
+        if v is not None:
+            hog_raw[month_key] = v
+
+        # 饲料环比（已是环比）
         feed_val = _safe_float(row[15])
         if feed_val is not None:
             data[month_key]['hog_feed_yongyi'] = feed_val
-        
-        # Q列：后备母猪料（索引16）→ 能繁母猪饲料环比-涌益
         breeding_feed_val = _safe_float(row[16])
         if breeding_feed_val is not None:
             data[month_key]['breeding_feed_yongyi'] = breeding_feed_val
-        # S列：教保料（索引18）→ 仔猪饲料环比-涌益
         if len(row) > 18:
             piglet_feed_val = _safe_float(row[18])
             if piglet_feed_val is not None:
                 if 0 < abs(piglet_feed_val) <= 1.5:
                     piglet_feed_val = piglet_feed_val * 100
                 data[month_key]['piglet_feed_yongyi'] = round(piglet_feed_val, 2)
-    
+
+    for m, val in _compute_mom_from_raw(breeding_raw).items():
+        data[m]['breeding_inventory_yongyi'] = val
+    for m, val in _compute_mom_from_raw(hog_raw).items():
+        data[m]['hog_inventory_yongyi'] = val
+
     return data
 
 
@@ -328,17 +376,17 @@ def _extract_yongyi_weekly_data(db: Session) -> Dict[str, Dict[str, Optional[flo
     # 月度-大猪存栏（2020年5月新增）→ hog_inventory_yongyi（表头在第3行）
     _parse_monthly_sheet("月度-大猪存栏（2020年5月新增）", "hog_inventory_yongyi", header_row=3)
 
-    # 月度-猪料销量：月份(0)、教保料(4)→ 仔猪饲料环比
+    # 月度-猪料销量：仔猪饲料环比改为F列(5)（用户要求B列→F列）
     table = _get_raw_table_data_prefer_filenames(db, "月度-猪料销量", preferred)
     if table and len(table) >= 2:
         for row in table[2:]:
-            if len(row) < 5:
+            if len(row) < 6:
                 continue
             date_val = _parse_excel_date(row[0])
             if not date_val:
                 continue
             month_key = date_val.strftime("%Y-%m")
-            val = _safe_float(row[4])
+            val = _safe_float(row[5])  # F列（用户要求从B改为F）
             if val is not None:
                 if 0 < abs(val) <= 1.5:
                     val = val * 100
@@ -364,11 +412,8 @@ def _find_col_by_header(header_row: List, *keywords: str) -> Optional[int]:
 
 
 def _extract_ganglian_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]:
-    """提取钢联数据（仅来自钢联自动更新模板，不使用 4.1.钢联数据）
-    数据来源：1、价格：钢联自动更新模板.xlsx → sheet「月度数据」
-    - 第2行是指标名称，数据从第5行开始（索引4）
-    - 固定列：A=日期，H-J=生猪存栏，K=仔猪(全国)，M-O=能繁
-    - 按表头匹配：新生仔猪-全国「仔猪：出生数环比：中国」、规模场「规模化养殖场：存栏数：中国」、中小散户「中小散：存栏数：中国」；仔猪饲料「仔猪饲料：销量环比：中国」；育肥猪饲料「育肥猪饲料：销量环比：中国」；母猪饲料「母猪饲料：销量环比：中国」
+    """提取钢联数据（钢联自动更新模板 → 月度数据）
+    能繁、新生仔猪、生猪存栏的 H-J,K,M-O 列为底稿原始值，需计算环比；饲料环比列已是环比，直接使用。
     """
     data = defaultdict(dict)
     table_data = _get_raw_table_data(db, "月度数据", "1、价格：钢联自动更新模板.xlsx")
@@ -377,14 +422,18 @@ def _extract_ganglian_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]
     if not table_data or len(table_data) < 5:
         return data
 
-    header_row = table_data[1] if len(table_data) > 1 else []  # 第2行表头
-    # 新生仔猪存栏环比：全国/规模场/中小散户；仔猪/育肥猪/母猪饲料环比
+    header_row = table_data[1] if len(table_data) > 1 else []
     col_piglet_nation = _find_col_by_header(header_row, "仔猪", "出生数环比", "中国")
     col_piglet_scale = _find_col_by_header(header_row, "规模化养殖场", "存栏数", "中国")
     col_piglet_small = _find_col_by_header(header_row, "中小散", "存栏数", "中国")
     col_piglet_feed = _find_col_by_header(header_row, "仔猪饲料", "销量环比", "中国")
     col_hog_feed = _find_col_by_header(header_row, "育肥猪饲料", "销量环比", "中国")
     col_breeding_feed = _find_col_by_header(header_row, "母猪饲料", "销量环比", "中国")
+
+    # 收集底稿原始值（能繁 M-O、新生仔猪 K/表头列、生猪存栏 H-J）
+    hog_raw = defaultdict(dict)
+    piglet_raw = defaultdict(dict)
+    breeding_raw = defaultdict(dict)
 
     for row in table_data[4:]:
         if len(row) < 15:
@@ -394,63 +443,57 @@ def _extract_ganglian_data(db: Session) -> Dict[str, Dict[str, Optional[float]]]
             continue
         month_key = date_val.strftime("%Y-%m")
 
-        # 生猪存栏：H(7)=全国，I(8)=规模场，J(9)=中小散户
-        hog_nation_val = _safe_float(row[7])
-        if hog_nation_val is not None:
-            data[month_key]['hog_inventory_ganglian_nation'] = hog_nation_val
-        hog_scale_val = _safe_float(row[8]) if len(row) > 8 else None
-        if hog_scale_val is not None:
-            data[month_key]['hog_inventory_ganglian_scale'] = hog_scale_val
-        hog_small_val = _safe_float(row[9]) if len(row) > 9 else None
-        if hog_small_val is not None:
-            data[month_key]['hog_inventory_ganglian_small'] = hog_small_val
+        # 生猪存栏：H(7)=全国，I(8)=规模场，J(9)=中小散户（底稿原始值）
+        for i, k in [(7, 'nation'), (8, 'scale'), (9, 'small')]:
+            if len(row) > i:
+                v = _safe_float(row[i])
+                if v is not None:
+                    hog_raw[month_key][k] = v
 
-        # 新生仔猪存栏环比：优先按表头匹配列，否则退回到 K(10) 仅全国
-        if col_piglet_nation is not None and len(row) > col_piglet_nation:
-            piglet_val = _safe_float(row[col_piglet_nation])
-            if piglet_val is not None:
-                data[month_key]['piglet_inventory_ganglian_nation'] = piglet_val
-        else:
-            piglet_val = _safe_float(row[10])
-            if piglet_val is not None:
-                data[month_key]['piglet_inventory_ganglian_nation'] = piglet_val
-        if col_piglet_scale is not None and len(row) > col_piglet_scale:
-            v = _safe_float(row[col_piglet_scale])
+        # 新生仔猪：表头匹配或 K(10)
+        piglet_nation_col = col_piglet_nation if col_piglet_nation is not None else 10
+        if len(row) > piglet_nation_col:
+            v = _safe_float(row[piglet_nation_col])
             if v is not None:
-                data[month_key]['piglet_inventory_ganglian_scale'] = v
-        if col_piglet_small is not None and len(row) > col_piglet_small:
-            v = _safe_float(row[col_piglet_small])
-            if v is not None:
-                data[month_key]['piglet_inventory_ganglian_small'] = v
+                piglet_raw[month_key]['nation'] = v
+        for col_var, k in [(col_piglet_scale, 'scale'), (col_piglet_small, 'small')]:
+            if col_var is not None and len(row) > col_var:
+                v = _safe_float(row[col_var])
+                if v is not None:
+                    piglet_raw[month_key][k] = v
 
-        # 仔猪饲料环比
+        # 能繁：M(12)=全国，N(13)=规模场，O(14)=中小散户（底稿原始值）
+        for i, k in [(12, 'nation'), (13, 'scale'), (14, 'small')]:
+            if len(row) > i:
+                v = _safe_float(row[i])
+                if v is not None:
+                    breeding_raw[month_key][k] = v
+
+        # 饲料环比（已是环比，直接写入）
         if col_piglet_feed is not None and len(row) > col_piglet_feed:
             v = _safe_float(row[col_piglet_feed])
             if v is not None:
                 data[month_key]['piglet_feed_ganglian'] = v
-
-        # 育肥猪饲料环比（表格3）
         if col_hog_feed is not None and len(row) > col_hog_feed:
             v = _safe_float(row[col_hog_feed])
             if v is not None:
                 data[month_key]['hog_feed_ganglian'] = v
-
-        # 能繁母猪：M(12)=全国，N(13)=规模场，O(14)=中小散户
-        breeding_val = _safe_float(row[12]) if len(row) > 12 else None
-        if breeding_val is not None:
-            data[month_key]['breeding_inventory_ganglian_nation'] = breeding_val
-        breeding_scale_val = _safe_float(row[13]) if len(row) > 13 else None
-        if breeding_scale_val is not None:
-            data[month_key]['breeding_inventory_ganglian_scale'] = breeding_scale_val
-        breeding_small_val = _safe_float(row[14]) if len(row) > 14 else None
-        if breeding_small_val is not None:
-            data[month_key]['breeding_inventory_ganglian_small'] = breeding_small_val
-
-        # 能繁母猪饲料环比（表格1）
         if col_breeding_feed is not None and len(row) > col_breeding_feed:
             v = _safe_float(row[col_breeding_feed])
             if v is not None:
                 data[month_key]['breeding_feed_ganglian'] = v
+
+    # 从底稿计算环比
+    for raw_d, prefixes in [
+        (breeding_raw, ['breeding_inventory_ganglian_nation', 'breeding_inventory_ganglian_scale', 'breeding_inventory_ganglian_small']),
+        (piglet_raw, ['piglet_inventory_ganglian_nation', 'piglet_inventory_ganglian_scale', 'piglet_inventory_ganglian_small']),
+        (hog_raw, ['hog_inventory_ganglian_nation', 'hog_inventory_ganglian_scale', 'hog_inventory_ganglian_small']),
+    ]:
+        for key, prefix in [('nation', prefixes[0]), ('scale', prefixes[1]), ('small', prefixes[2])]:
+            by_month = {m: d[key] for m, d in raw_d.items() if key in d}
+            moms = _compute_mom_from_raw(by_month)
+            for m, val in moms.items():
+                data[m][prefix] = val
 
     return data
 
@@ -589,9 +632,18 @@ async def get_multi_source_data(
         
         # 合并各数据源
         if month in nyb_data:
-            point.breeding_inventory_nyb = nyb_data[month].get('breeding_inventory_nyb')
-            point.piglet_inventory_nyb = nyb_data[month].get('piglet_inventory_nyb')
-            point.hog_inventory_nyb = nyb_data[month].get('hog_inventory_nyb')
+            point.breeding_inventory_nyb = nyb_data[month].get('breeding_inventory_nyb') or nyb_data[month].get('breeding_inventory_nyb_nation')
+            point.breeding_inventory_nyb_nation = nyb_data[month].get('breeding_inventory_nyb_nation')
+            point.breeding_inventory_nyb_scale = nyb_data[month].get('breeding_inventory_nyb_scale')
+            point.breeding_inventory_nyb_small = nyb_data[month].get('breeding_inventory_nyb_small')
+            point.piglet_inventory_nyb = nyb_data[month].get('piglet_inventory_nyb') or nyb_data[month].get('piglet_inventory_nyb_nation')
+            point.piglet_inventory_nyb_nation = nyb_data[month].get('piglet_inventory_nyb_nation')
+            point.piglet_inventory_nyb_scale = nyb_data[month].get('piglet_inventory_nyb_scale')
+            point.piglet_inventory_nyb_small = nyb_data[month].get('piglet_inventory_nyb_small')
+            point.hog_inventory_nyb = nyb_data[month].get('hog_inventory_nyb') or nyb_data[month].get('hog_inventory_nyb_nation')
+            point.hog_inventory_nyb_nation = nyb_data[month].get('hog_inventory_nyb_nation')
+            point.hog_inventory_nyb_scale = nyb_data[month].get('hog_inventory_nyb_scale')
+            point.hog_inventory_nyb_small = nyb_data[month].get('hog_inventory_nyb_small')
             point.hog_inventory_nyb_5month = nyb_data[month].get('hog_inventory_nyb_5month')
         
         if month in association_data:

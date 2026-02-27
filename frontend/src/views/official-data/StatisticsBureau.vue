@@ -22,13 +22,13 @@
             class="raw-excel-table"
           >
             <thead>
-              <tr v-for="(row, r) in quarterlyHeaderGrid" :key="'hr-' + r">
+              <tr v-for="(row, r) in quarterlyHeaderGridNoFirstCol" :key="'hr-' + r">
                 <template v-for="(cell, c) in row" :key="'h' + r + '-' + c">
                   <th
                     v-if="cell"
                     :colspan="cell.colspan"
                     :rowspan="cell.rowspan"
-                    :class="getHeaderCellClass(r, c, cell)"
+                    :class="getHeaderCellClass(r, c + 1, cell)"
                   >
                     {{ formatCell(cell.value) }}
                   </th>
@@ -38,11 +38,11 @@
             <tbody>
               <tr v-for="(row, ri) in quarterlyTableData.rows" :key="'r-' + ri">
                 <td
-                  v-for="(cell, ci) in row"
+                  v-for="(cell, ci) in row.slice(1)"
                   :key="'c-' + ri + '-' + ci"
-                  :class="[getDataCellClass(ci, cell), ci <= 1 ? 'col-period' : '']"
+                  :class="getDataCellClass(ci + 1, cell)"
                 >
-                  {{ formatDataCell(ci, cell) }}
+                  {{ formatDataCell(ci + 1, cell) }}
                 </td>
               </tr>
             </tbody>
@@ -93,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import {
@@ -170,6 +170,12 @@ const quarterlyHeaderGrid = computed(() => {
     }
   }
   return grid
+})
+
+/** 去掉第一列（季度）后的表头网格 */
+const quarterlyHeaderGridNoFirstCol = computed(() => {
+  const grid = quarterlyHeaderGrid.value
+  return grid.map((row) => row.slice(1))
 })
 
 const filteredOutputSlaughterData = computed(() => {
@@ -299,12 +305,15 @@ const loadImportMeatData = async () => {
     if (response.latest_month && !latestMonth.value) {
       latestMonth.value = response.latest_month
     }
+    await nextTick()
     updateChart2()
   } catch (error: any) {
     console.error('加载猪肉进口数据失败:', error)
     ElMessage.error('加载猪肉进口数据失败: ' + (error.message || '未知错误'))
   } finally {
     loadingChart2.value = false
+    await nextTick()
+    chart2Instance?.resize()
   }
 }
 
@@ -471,6 +480,7 @@ const updateChart2 = () => {
         }
       }
     })
+    chart2Instance.resize()
     return
   }
 
@@ -561,6 +571,7 @@ const updateChart2 = () => {
   }
 
   chart2Instance.setOption(option)
+  chart2Instance.resize()
 }
 
 // 监听窗口大小变化
@@ -609,10 +620,11 @@ onBeforeUnmount(() => {
   margin: 0 0 12px 0;
 }
 
+/* 表格容器：固定高度约 16 行数据 + 表头，超出部分内部滚动 */
 .raw-table-wrap {
   overflow-x: auto;
-  max-height: 600px;
   overflow-y: auto;
+  max-height: 560px;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
 }
@@ -630,10 +642,18 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+/* 表头固定：滚动时表头不随内容消失 */
+.raw-excel-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
 .raw-excel-table thead th {
   background-color: #f5f7fa;
   font-weight: 600;
   white-space: nowrap;
+  box-shadow: 0 1px 0 #e4e7ed;
 }
 
 .raw-excel-table thead th.header-yellow {

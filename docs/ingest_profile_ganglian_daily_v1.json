@@ -280,6 +280,11 @@
       }
     },
     {
+      "sheet_name": "猪肉进口",
+      "parser": "RAW_TABLE_STORE_ONLY",
+      "note": "E4统计局数据汇总-图2数据源，仅存raw供API读取"
+    },
+    {
       "sheet_name": "养殖利润（周度）",
       "parser": "GANGLIAN_LEGACY_FORMAT",
       "table_name": "ganglian_weekly_farm_profit",

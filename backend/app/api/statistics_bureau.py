@@ -7,7 +7,7 @@ E4. 统计局数据汇总 API
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timedelta
 from pydantic import BaseModel
 from pathlib import Path
@@ -80,10 +80,76 @@ class ImportMeatResponse(BaseModel):
     latest_month: Optional[str] = None
 
 
+def _normalize_table_to_dense(table_data: Any) -> Optional[List[List]]:
+    """
+    将 raw_table 的 table_json 转为密集二维数组。
+    unified_ingestor 使用 sparse=True 保存，每行为 [{row,col,value},...] 格式。
+    """
+    if not table_data or not isinstance(table_data, list):
+        return None
+    if len(table_data) == 0:
+        return []
+    first = table_data[0]
+    if isinstance(first, list):
+        if len(first) > 0 and isinstance(first[0], dict):
+            max_col = 0
+            for row_list in table_data:
+                if isinstance(row_list, list):
+                    for item in row_list:
+                        if isinstance(item, dict):
+                            max_col = max(max_col, item.get('col', 0))
+            rows = []
+            for row_list in table_data:
+                if not isinstance(row_list, list):
+                    rows.append([None] * max_col)
+                    continue
+                row_array = [None] * max_col
+                for item in row_list:
+                    if isinstance(item, dict):
+                        col_idx = item.get('col', 1) - 1
+                        if 0 <= col_idx < max_col:
+                            row_array[col_idx] = item.get('value')
+                rows.append(row_array)
+            return rows
+        return table_data
+    if isinstance(first, dict):
+        max_row = max([item.get('row', 0) for item in table_data if isinstance(item, dict)], default=0)
+        max_col = max([item.get('col', 0) for item in table_data if isinstance(item, dict)], default=0)
+        rows = [[None] * max_col for _ in range(max_row)]
+        for item in table_data:
+            if isinstance(item, dict):
+                r, c = item.get('row', 1) - 1, item.get('col', 1) - 1
+                if 0 <= r < len(rows) and 0 <= c < len(rows[0]):
+                    rows[r][c] = item.get('value')
+        return rows
+    return table_data
+
+
 def _get_raw_table_data(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[List[List]]:
     """获取raw_table数据。filename_pattern 用于限定来源文件（如 钢联自动更新模板）"""
     result = _get_raw_table_with_meta(db, sheet_name, filename_pattern)
-    return result[0] if result else None
+    raw = result[0] if result else None
+    return _normalize_table_to_dense(raw) if raw else None
+
+
+def _get_raw_table_data_by_like(db: Session, sheet_pattern: str, filename_pattern: str = None) -> Optional[tuple]:
+    """
+    按 sheet 名称模糊匹配获取 raw_table 数据。
+    返回 (table_data, merged) 或 None。用于兼容带前缀的 sheet 名（如 04.猪肉进口）。
+    """
+    query = db.query(RawSheet).join(RawFile).filter(RawSheet.sheet_name.like(sheet_pattern))
+    if filename_pattern:
+        query = query.filter(RawFile.filename.like(f'%{filename_pattern}%'))
+    sheet = query.order_by(RawFile.id.desc()).first()
+    if not sheet:
+        return None
+    raw_table = db.query(RawTable).filter(RawTable.raw_sheet_id == sheet.id).first()
+    if not raw_table:
+        return None
+    table_data = raw_table.table_json
+    if isinstance(table_data, str):
+        table_data = json.loads(table_data)
+    return (_normalize_table_to_dense(table_data), [])
 
 
 def _get_raw_table_with_meta(db: Session, sheet_name: str, filename_pattern: str = None) -> Optional[tuple]:
@@ -414,10 +480,32 @@ def _parse_pork_import_from_sheet(table_data: List[List]) -> tuple:
                 return data_points, latest_month
 
     # 尝试格式2：进口肉（矩阵：行=月度，列=年份）
+    def _is_year_cell(s: str) -> bool:
+        if not s:
+            return False
+        if '年' in s and len(s) <= 6:
+            try:
+                y = int(s.replace('年', ''))
+                return 2010 <= y <= 2030
+            except ValueError:
+                pass
+        if s.isdigit() and len(s) == 4:
+            try:
+                return 2010 <= int(s) <= 2030
+            except ValueError:
+                pass
+        if s.replace('.', '').isdigit() and len(s) <= 6:  # 2016.0 from Excel
+            try:
+                y = int(float(s))
+                return 2010 <= y <= 2030
+            except ValueError:
+                pass
+        return False
+
     year_row_idx = -1
     for ri, row in enumerate(table_data[:5]):
         row_str = [str(c).strip() if c else '' for c in row]
-        if any('年' in s and s[:-1].isdigit() for s in row_str):
+        if any(_is_year_cell(s) for s in row_str):
             year_row_idx = ri
             break
     if year_row_idx >= 0:
@@ -429,6 +517,20 @@ def _parse_pork_import_from_sheet(table_data: List[List]) -> tuple:
                 try:
                     y = int(s.replace('年', ''))
                     if 2010 <= y <= 2030:
+                        year_cols.append((i, y))
+                except ValueError:
+                    pass
+            elif s.isdigit() and len(s) == 4:
+                try:
+                    y = int(s)
+                    if 2010 <= y <= 2030:
+                        year_cols.append((i, y))
+                except ValueError:
+                    pass
+            elif s.replace('.', '').isdigit():
+                try:
+                    y = int(float(s))
+                    if 2010 <= y <= 2030 and (i, y) not in [(ci, yy) for ci, yy in year_cols]:
                         year_cols.append((i, y))
                 except ValueError:
                     pass
@@ -470,6 +572,63 @@ def _parse_pork_import_from_sheet(table_data: List[List]) -> tuple:
             return data_points, latest_month
 
     return [], None
+
+
+def _parse_pork_import_from_quarterly_stats(db: Session) -> tuple:
+    """
+    从 03.统计局季度数据 Z列（猪肉进口）提取季度数据。
+    转为月度格式（用季度首月代表，如 2024Q1 -> 2024-01）供图2显示。
+    返回 (data_points, latest_month)
+    """
+    table_data = _get_raw_table_data(db, "03.统计局季度数据")
+    if not table_data or len(table_data) < 3:
+        return [], None
+    # Z列索引：A=0,B=1,...,Z=25
+    PORK_IMPORT_COL_IDX = 25
+    data_points = []
+    latest_month = None
+    for row in table_data[2:]:
+        if len(row) <= PORK_IMPORT_COL_IDX:
+            continue
+        period_str = row[1] if len(row) > 1 and row[1] else None
+        if not period_str:
+            continue
+        year, quarter = None, None
+        parsed = _parse_excel_date(period_str)
+        if parsed:
+            year = parsed.year
+            quarter = (parsed.month - 1) // 3 + 1
+        else:
+            q = _parse_quarter(str(period_str))
+            if q:
+                parts = q.upper().split("Q")
+                if len(parts) == 2:
+                    try:
+                        year = int(parts[0])
+                        quarter = int(parts[1])
+                    except ValueError:
+                        continue
+        if year is None or quarter is None:
+            continue
+        month_num = (quarter - 1) * 3 + 1
+        month_str = f"{year}-{month_num:02d}"
+        try:
+            val = row[PORK_IMPORT_COL_IDX]
+            total = float(val) if val not in (None, '') else None
+        except (ValueError, TypeError):
+            total = None
+        if total is None or (isinstance(total, float) and (math.isnan(total) or math.isinf(total) or total <= 0)):
+            continue
+        data_points.append(ImportMeatPoint(
+            month=month_str,
+            total=round(total, 2),
+            top_countries=[]
+        ))
+        if not latest_month or month_str > latest_month:
+            latest_month = month_str
+    if data_points:
+        data_points.sort(key=lambda x: x.month)
+    return data_points, latest_month
 
 
 # 本地 Excel 回退：当数据库无数据时，从 docs 下的钢联模板读取
@@ -549,16 +708,24 @@ def get_import_meat(
     优先从钢联自动更新模板读取猪肉进口 sheet
     返回：每月进口总量 + 进口量前2的国家（如有分国别数据）
     """
-    # 1. 优先从钢联自动更新模板读取猪肉进口
+    # 1. 优先从钢联自动更新模板读取猪肉进口（精确匹配）
     table_data = _get_raw_table_data(db, "猪肉进口", filename_pattern="钢联自动更新模板")
     if table_data:
         data_points, latest_month = _parse_pork_import_from_sheet(table_data)
         if data_points:
             return ImportMeatResponse(data=data_points, latest_month=latest_month)
-    # 2. 无 filename 限定，兼容其他来源（如 2、【生猪产业数据】.xlsx）
+    # 2. 精确匹配：猪肉进口、进口肉（不限文件，作为后备）
     for sheet_name in ("猪肉进口", "进口肉"):
         table_data = _get_raw_table_data(db, sheet_name)
         if table_data:
+            data_points, latest_month = _parse_pork_import_from_sheet(table_data)
+            if data_points:
+                return ImportMeatResponse(data=data_points, latest_month=latest_month)
+    # 2b. 模糊匹配：兼容带前缀/后缀的 sheet 名（如 04.猪肉进口、猪肉进口汇总）
+    for pattern in ("%猪肉%进口%", "%进口肉%"):
+        result = _get_raw_table_data_by_like(db, pattern)
+        if result:
+            table_data = result[0]
             data_points, latest_month = _parse_pork_import_from_sheet(table_data)
             if data_points:
                 return ImportMeatResponse(data=data_points, latest_month=latest_month)

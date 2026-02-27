@@ -56,6 +56,8 @@
               title=""
               axis1="left"
               axis2="right"
+              :show-save-button="false"
+              :show-data-zoom="true"
             />
           </div>
           <div class="info-box">
@@ -84,6 +86,8 @@
               title=""
               axis1="left"
               axis2="right"
+              :show-save-button="false"
+              :show-data-zoom="true"
             />
           </div>
           <div class="info-box">
@@ -110,7 +114,6 @@ import { getLiveWhiteSpreadDualAxis, type LiveWhiteSpreadDualAxisResponse } from
 // 数据状态
 const loading = ref(false)
 const apiData = ref<LiveWhiteSpreadDualAxisResponse | null>(null)
-const priceData = ref<any>(null) // 生猪价格数据
 const dateRange = ref<[string, string] | undefined>(undefined)
 const latestUpdateTime = ref<string | null>(null)
 
@@ -175,47 +178,89 @@ const handleCustomRangeChange = () => {
 }
 
 // 计算左图数据：毛白价差比率&生猪价格
+// 生猪价格由 价差/比率 推导（价差比率 = 毛白价差 / 生猪价格）
+// 过滤掉价差或比率为空的日期，仅保留两者皆有有效值的日期
 const leftChartData = computed<DualAxisData | null>(() => {
   if (!apiData.value) return null
-  
-  // 暂时使用价差比率作为左图的数据，后续需要添加生猪价格
-  // TODO: 需要从后端API获取生猪价格数据
+
+  const spreadMap = new Map(
+    apiData.value.spread_data.map(item => [item.date, item.value])
+  )
+  const ratioMap = new Map(
+    apiData.value.ratio_data.map(item => [item.date, item.value])
+  )
+
+  const validDates = new Set<string>()
+  spreadMap.forEach((spread, date) => {
+    const ratio = ratioMap.get(date)
+    if (spread != null && ratio != null && ratio !== 0) {
+      validDates.add(date)
+    }
+  })
+
+  const sortedDates = Array.from(validDates).sort()
+  const ratioData = sortedDates.map(date => ({
+    date,
+    value: ratioMap.get(date) as number
+  }))
+  const priceData = sortedDates.map(date => ({
+    date,
+    value: (spreadMap.get(date) as number) / (ratioMap.get(date) as number)
+  }))
+
   return {
     series1: {
       name: '价差比率',
-      data: apiData.value.ratio_data.map(item => ({
-        date: item.date,
-        value: item.value
-      })),
+      data: ratioData,
       unit: apiData.value.ratio_unit
     },
     series2: {
       name: '生猪价格',
-      data: [], // TODO: 需要从API获取生猪价格数据
+      data: priceData,
       unit: '元/公斤'
     }
   }
 })
 
 // 计算右图数据：毛白价差&比率
+// 过滤掉空值日期，仅保留两者皆有有效值的日期
 const rightChartData = computed<DualAxisData | null>(() => {
   if (!apiData.value) return null
+
+  const spreadMap = new Map(
+    apiData.value.spread_data.map(item => [item.date, item.value])
+  )
+  const ratioMap = new Map(
+    apiData.value.ratio_data.map(item => [item.date, item.value])
+  )
+
+  const validDates = new Set<string>()
+  spreadMap.forEach((spread, date) => {
+    const ratio = ratioMap.get(date)
+    if (spread != null && ratio != null) {
+      validDates.add(date)
+    }
+  })
+
+  const sortedDates = Array.from(validDates).sort()
+  const spreadData = sortedDates.map(date => ({
+    date,
+    value: spreadMap.get(date) as number
+  }))
+  const ratioData = sortedDates.map(date => ({
+    date,
+    value: ratioMap.get(date) as number
+  }))
 
   return {
     series1: {
       name: '毛白价差',
-      data: apiData.value.spread_data.map(item => ({
-        date: item.date,
-        value: item.value
-      })),
+      data: spreadData,
       unit: apiData.value.spread_unit
     },
     series2: {
       name: '价差比率',
-      data: apiData.value.ratio_data.map(item => ({
-        date: item.date,
-        value: item.value
-      })),
+      data: ratioData,
       unit: apiData.value.ratio_unit
     }
   }
@@ -245,9 +290,6 @@ const loadData = async () => {
     const response = await getLiveWhiteSpreadDualAxis(startDate, endDate)
     apiData.value = response
     latestUpdateTime.value = response.latest_date
-    
-    // TODO: 加载生猪价格数据（用于左图）
-    // 暂时不加载，等待后端API支持
   } catch (error: any) {
     console.error('加载数据失败:', error)
     ElMessage.error('加载数据失败: ' + (error.message || '未知错误'))

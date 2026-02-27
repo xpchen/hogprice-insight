@@ -147,8 +147,8 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- C. 分析与预警 -->
-        <el-sub-menu index="analysis-group">
+        <!-- C. 分析与预警（已隐藏） -->
+        <el-sub-menu v-if="false" index="analysis-group">
           <template #title>
             <el-icon><DataAnalysis /></el-icon>
             <span>分析与预警</span>
@@ -167,11 +167,11 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- 9. 数据导入与质量（管理员） -->
+        <!-- 9. 数据中心（管理员） -->
         <el-sub-menu v-if="isAdminOrOperator" index="data-quality-group">
           <template #title>
             <el-icon><Setting /></el-icon>
-            <span>数据导入与质量</span>
+            <span>数据中心</span>
           </template>
           <el-menu-item index="/data-ingest">
             <el-icon><Upload /></el-icon>
@@ -181,10 +181,14 @@
             <el-icon><Document /></el-icon>
             <template #title>原表查看器</template>
           </el-menu-item>
+          <el-menu-item index="/data-reconciliation">
+            <el-icon><DataAnalysis /></el-icon>
+            <template #title>入库对账</template>
+          </el-menu-item>
         </el-sub-menu>
 
-        <!-- E. 报表与导出 -->
-        <el-sub-menu index="reports-group">
+        <!-- E. 报表与导出（已隐藏） -->
+        <el-sub-menu v-if="false" index="reports-group">
           <template #title>
             <el-icon><Document /></el-icon>
             <span>报表与导出</span>
@@ -195,8 +199,8 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- F. 数据中心（仅管理员/运营可见） -->
-        <el-sub-menu v-if="isAdminOrOperator" index="data-center-group">
+        <!-- F. 数据中心-入库对账（已隐藏，并入上方数据中心） -->
+        <el-sub-menu v-if="false" index="data-center-group">
           <template #title>
             <el-icon><Setting /></el-icon>
             <span>数据中心</span>
@@ -211,8 +215,8 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- G. 系统管理（仅管理员可见） -->
-        <el-sub-menu v-if="isAdmin" index="system-group">
+        <!-- G. 系统管理（已隐藏） -->
+        <el-sub-menu v-if="false" index="system-group">
           <template #title>
             <el-icon><Setting /></el-icon>
             <span>系统管理</span>

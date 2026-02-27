@@ -12,6 +12,9 @@ export interface MultiSourceDataPoint {
   breeding_inventory_ganglian_scale?: number | null
   breeding_inventory_ganglian_small?: number | null
   breeding_inventory_nyb?: number | null
+  breeding_inventory_nyb_nation?: number | null
+  breeding_inventory_nyb_scale?: number | null
+  breeding_inventory_nyb_small?: number | null
   breeding_feed_yongyi?: number | null
   breeding_feed_ganglian?: number | null
   breeding_feed_association?: number | null
@@ -20,6 +23,9 @@ export interface MultiSourceDataPoint {
   piglet_inventory_ganglian_scale?: number | null
   piglet_inventory_ganglian_small?: number | null
   piglet_inventory_nyb?: number | null
+  piglet_inventory_nyb_nation?: number | null
+  piglet_inventory_nyb_scale?: number | null
+  piglet_inventory_nyb_small?: number | null
   piglet_feed_yongyi?: number | null
   piglet_feed_ganglian?: number | null
   piglet_feed_association?: number | null
@@ -28,6 +34,9 @@ export interface MultiSourceDataPoint {
   hog_inventory_ganglian_scale?: number | null
   hog_inventory_ganglian_small?: number | null
   hog_inventory_nyb?: number | null
+  hog_inventory_nyb_nation?: number | null
+  hog_inventory_nyb_scale?: number | null
+  hog_inventory_nyb_small?: number | null
   hog_inventory_nyb_5month?: number | null
   hog_feed_yongyi?: number | null
   hog_feed_ganglian?: number | null
