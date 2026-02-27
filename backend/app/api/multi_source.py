@@ -145,6 +145,23 @@ def _get_raw_table_data_prefer_filenames(
     return _get_raw_table_data(db, sheet_name, None)
 
 
+def _row_cell(row: List, col_idx: int) -> any:
+    """从行中获取单元格值。支持密集格式 row[col_idx] 和稀疏格式 row=[{col,value},...]（col 从 1 起）"""
+    if not row:
+        return None
+    first = row[0] if row else None
+    if isinstance(first, dict):
+        # 稀疏格式：col 从 1 起，col_idx 0->col 1, 1->col 2
+        target_col = col_idx + 1
+        for cell in row:
+            if isinstance(cell, dict) and cell.get("col") == target_col:
+                return cell.get("value")
+        return None
+    if col_idx < len(row):
+        return row[col_idx]
+    return None
+
+
 def _safe_float(value: any) -> Optional[float]:
     """安全转换为float"""
     if value is None or value == "":
@@ -570,17 +587,20 @@ def _extract_cull_slaughter_data(db: Session) -> Dict[str, Dict[str, Optional[fl
             _compute_mom_from_by_month(by_month)
 
     # 钢联：sheet「淘汰母猪屠宰」（如 1、价格：钢联自动更新模板.xlsx），第4行起 col0=日期、col1=屠宰量
-    table_data_gl = _get_raw_table_data(db, "淘汰母猪屠宰", None)
+    # 支持稀疏格式（raw_table 可能为 [{col,row,value},...]）
+    table_data_gl = _get_raw_table_data_prefer_filenames(
+        db, "淘汰母猪屠宰", ["1、价格：钢联自动更新模板.xlsx", "钢联自动更新模板.xlsx"]
+    ) or _get_raw_table_data(db, "淘汰母猪屠宰", None)
     if table_data_gl and len(table_data_gl) >= 5:
         by_month_gl = {}
         for row in table_data_gl[4:]:
-            if len(row) < 2:
+            if len(row) < 1:
                 continue
-            date_val = _parse_excel_date(row[0])
+            date_val = _parse_excel_date(_row_cell(row, 0))
             if not date_val:
                 continue
             month_key = date_val.strftime("%Y-%m")
-            raw_val = _safe_float(row[1])
+            raw_val = _safe_float(_row_cell(row, 1))
             if raw_val is not None:
                 by_month_gl[month_key] = raw_val
         if by_month_gl:
