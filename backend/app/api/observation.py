@@ -1,25 +1,24 @@
-"""Observation查询API - 支持按tags、geo、time筛选"""
+"""
+Observation 兼容层 API - 将旧的 FactObservation 查询映射到 hogprice_v3 fact 表
+
+保留原有接口路径 /api/v1/observation 和响应格式，
+底层查询改为直接访问 fact_price_daily / fact_weekly_indicator 等结构化表。
+"""
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
+from sqlalchemy import text
 from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.sys_user import SysUser
-from app.models.fact_observation import FactObservation
-from app.models.fact_observation_tag import FactObservationTag
-from app.models.raw_sheet import RawSheet
-from app.models.raw_table import RawTable
-from app.models.raw_file import RawFile
 
 router = APIRouter(prefix="/api/v1/observation", tags=["observation"])
 
 
 class ObservationResponse(BaseModel):
-    """Observation响应模型"""
     id: int
     metric_name: str
     obs_date: Optional[date]
@@ -31,309 +30,224 @@ class ObservationResponse(BaseModel):
     geo_code: Optional[str]
     tags: Dict[str, Any]
     unit: Optional[str]
-    
+
     class Config:
         from_attributes = True
 
 
 class TagInfo(BaseModel):
-    """Tag信息模型"""
     tag_key: str
     tag_value: str
     count: int
 
 
+# ── metric_key → (table, date_col, filter_col, filter_val, region_mode) ──
+# region_mode:
+#   "region"       = filter by region_code (NATION or province)
+#   "fixed_nation" = always use NATION
+#   "avg_provinces" = compute AVG across provinces (no NATION row exists)
+_METRIC_ROUTING: Dict[str, tuple] = {
+    # 涌益日度价格
+    "YY_D_PRICE_NATION_AVG": ("fact_price_daily", "trade_date", "price_type", "标猪均价", "region"),
+    "YY_D_SLAUGHTER_TOTAL_1": ("fact_slaughter_daily", "trade_date", None, None, "region"),
+    "YY_D_SLAUGHTER_TOTAL_2": ("fact_slaughter_daily", "trade_date", None, None, "region"),
+    # 涌益周度
+    "YY_W_OUT_PRICE": ("fact_weekly_indicator", "week_end", "indicator_code", "hog_price_out", "region"),
+    "YY_W_FROZEN_RATE": ("fact_weekly_indicator", "week_end", "indicator_code", "frozen_rate", "region"),
+    "YY_W_PIGLET_PRICE": ("fact_weekly_indicator", "week_end", "indicator_code", "piglet_price_15kg", "region"),
+    "YY_W_SOW_PRICE": ("fact_weekly_indicator", "week_end", "indicator_code", "sow_price_50kg", "region"),
+    # 涌益均重 - 集团/散户
+    "YY_W_WEIGHT_GROUP": ("fact_weekly_indicator", "week_end", "indicator_code", "weight_group", "fixed_nation"),
+    "YY_W_WEIGHT_SCATTER": ("fact_weekly_indicator", "week_end", "indicator_code", "weight_scatter", "fixed_nation"),
+    # 涌益宰前均重 - province-level only, compute average
+    "YY_W_SLAUGHTER_PRELIVE_WEIGHT": ("fact_weekly_indicator", "week_end", "indicator_code", "weight_slaughter", "avg_provinces"),
+    # 涌益标肥价差
+    "YY_D_STD_FAT_SPREAD": ("fact_spread_daily", "trade_date", "spread_type", "std_fat_spread", "region"),
+    # 钢联
+    "GL_D_HOG_PRICE": ("fact_price_daily", "trade_date", "price_type", "hog_price", "region"),
+    "GL_W_PROFIT": ("fact_weekly_indicator", "week_end", "indicator_code", "profit_breeding_10000", "fixed_nation"),
+}
+
+# YY_W_OUT_WEIGHT 根据 indicator 参数路由到不同的 indicator_code
+_OUT_WEIGHT_SUBROUTE: Dict[Optional[str], tuple] = {
+    "均重":         ("weight_avg", "公斤", "region"),
+    "90Kg出栏占比":  ("weight_pct_under90", "", "avg_provinces"),
+    "150Kg出栏占重": ("weight_pct_over150", "", "avg_provinces"),
+    None:           ("weight_avg", "公斤", "region"),  # default
+}
+
+
 @router.get("/query", response_model=List[ObservationResponse])
 async def query_observations(
     source_code: Optional[str] = Query(None, description="数据源代码"),
-    metric_key: Optional[str] = Query(None, description="指标键（支持通配符）"),
+    metric_key: Optional[str] = Query(None, description="指标键"),
     start_date: Optional[date] = Query(None, description="开始日期"),
     end_date: Optional[date] = Query(None, description="结束日期"),
-    period_type: Optional[str] = Query(None, description="周期类型（day/week/month）"),
+    period_type: Optional[str] = Query(None, description="周期类型"),
     geo_code: Optional[str] = Query(None, description="地理位置代码"),
     tag_key: Optional[str] = Query(None, description="Tag键"),
     tag_value: Optional[str] = Query(None, description="Tag值"),
-    indicator: Optional[str] = Query(None, description="指标名称（用于周度-体重等表的行维度筛选）"),
-    nation_col: Optional[str] = Query(None, description="全国列名（用于筛选特定全国列，如'全国1'、'全国2'）"),
+    indicator: Optional[str] = Query(None, description="指标名称"),
+    nation_col: Optional[str] = Query(None, description="全国列名"),
     limit: int = Query(1000, description="返回数量限制"),
     offset: int = Query(0, description="偏移量"),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user)
 ):
-    """
-    查询observation数据（支持tags筛选）
-    
-    支持按数据源、指标、时间范围、周期类型、地理位置、tags筛选
-    支持通过indicator参数筛选行维度指标（如"全国2"、"90Kg出栏占比"等）
-    """
-    # 构建查询，join metric以便后续使用
-    from app.models.dim_metric import DimMetric
-    from app.models.import_batch import ImportBatch
-    from app.models.raw_file import RawFile
-    query = db.query(FactObservation).join(DimMetric, FactObservation.metric_id == DimMetric.id)
-    
-    # 数据源代码筛选（通过metric_key前缀判断：YY=涌益, GL=钢联, DCE=大商所）
-    if source_code:
-        # 构建source_code到metric_key前缀的映射
-        source_prefix_map = {
-            "YONGYI": "YY",
-            "GANGLIAN": "GL",
-            "DCE": "DCE"
-        }
-        prefix = source_prefix_map.get(source_code, source_code[:2])
-        # 通过 parse_json.metric_key 前缀筛选；涌益时兼容「价格+宰量」sheet（可能无 parse_json）
-        if prefix == "YY":
-            query = query.filter(
-                or_(
-                    func.json_unquote(
-                        func.json_extract(DimMetric.parse_json, "$.metric_key")
-                    ).like("YY_%"),
-                    DimMetric.sheet_name == "价格+宰量",
-                )
+    """兼容旧 observation 查询接口"""
+    results: list[ObservationResponse] = []
+
+    # ── 特殊处理 YY_W_OUT_WEIGHT：根据 indicator 参数路由到不同指标 ──
+    if metric_key == "YY_W_OUT_WEIGHT":
+        sub = _OUT_WEIGHT_SUBROUTE.get(indicator, _OUT_WEIGHT_SUBROUTE[None])
+        filter_val, unit_override, sub_region_mode = sub
+        table = "fact_weekly_indicator"
+        date_col = "week_end"
+        filter_col = "indicator_code"
+        region_mode = sub_region_mode
+    else:
+        # 尝试路由到新表
+        routing = _METRIC_ROUTING.get(metric_key) if metric_key else None
+        if routing:
+            table, date_col, filter_col, filter_val, region_mode = routing
+            unit_override = None
+        else:
+            table = None
+
+    if table:
+        region = "NATION"
+        if region_mode == "region" and geo_code and geo_code != "NATION":
+            region = geo_code
+
+        # fact_slaughter_daily 特殊处理：用 volume 列, 无 filter 列
+        is_slaughter = (table == "fact_slaughter_daily")
+        value_col = "volume" if is_slaughter else "value"
+        unit_literal = "'头'" if is_slaughter else "unit"
+
+        if region_mode == "avg_provinces":
+            # 聚合查询：计算各省平均值作为全国数据
+            sql = (
+                f"SELECT `{date_col}`, ROUND(AVG({value_col}), 2) as value, "
+                f"MIN({unit_literal}) as unit, 'NATION' as region_code "
+                f"FROM `{table}` WHERE 1=1 "
+                f"AND region_code != 'NATION'"
             )
         else:
-            query = query.filter(
-                func.json_unquote(
-                    func.json_extract(DimMetric.parse_json, '$.metric_key')
-                ).like(f"{prefix}_%")
-            )
-    
-    # 指标键筛选
-    if metric_key:
-        # 通过raw_header、metric_name或parse_json中的metric_key匹配
-        # 兼容「价格+宰量」sheet 下由 extract 脚本创建的指标（parse_json 为空）：按 sheet_name + 列名匹配
-        conditions = [
-            DimMetric.raw_header == metric_key,
-            DimMetric.metric_name.like(f"%{metric_key}%"),
-            DimMetric.raw_header.like(f"%{metric_key}%"),
-            func.json_unquote(func.json_extract(DimMetric.parse_json, "$.metric_key")) == metric_key,
-        ]
-        if metric_key == "YY_D_SLAUGHTER_TOTAL_1":
-            conditions.append(
-                and_(
-                    DimMetric.sheet_name == "价格+宰量",
-                    or_(
-                        DimMetric.raw_header.like("%日屠宰量合计1%"),
-                        DimMetric.metric_name.like("%日屠宰量合计1%"),
-                    ),
-                )
-            )
-        elif metric_key == "YY_D_SLAUGHTER_TOTAL_2":
-            conditions.append(
-                and_(
-                    DimMetric.sheet_name == "价格+宰量",
-                    or_(
-                        DimMetric.raw_header.like("%日度屠宰量合计2%"),
-                        DimMetric.metric_name.like("%日度屠宰量合计2%"),
-                    ),
-                )
-            )
-        elif metric_key == "YY_D_PRICE_NATION_AVG":
-            conditions.append(
-                and_(
-                    DimMetric.sheet_name == "价格+宰量",
-                    or_(
-                        DimMetric.raw_header.like("%全国均价%"),
-                        DimMetric.raw_header.like("%全国%"),
-                        DimMetric.metric_name.like("%全国均价%"),
-                    ),
-                )
-            )
-        query = query.filter(or_(*conditions))
-    
-    # 时间范围筛选
-    if start_date:
-        query = query.filter(FactObservation.obs_date >= start_date)
-    if end_date:
-        query = query.filter(FactObservation.obs_date <= end_date)
-    
-    # 周期类型筛选
-    if period_type:
-        query = query.filter(FactObservation.period_type == period_type)
-    
-    # 地理位置筛选
-    if geo_code:
-        if geo_code == "NATION":
-            # NATION表示全国数据，geo_id应该为NULL
-            query = query.filter(FactObservation.geo_id.is_(None))
-        else:
-            # 其他省份，需要join geo表
-            from app.models.dim_geo import DimGeo
-            query = query.join(DimGeo, FactObservation.geo_id == DimGeo.id).filter(
-                DimGeo.province == geo_code
-            )
-    
-    # Tags筛选
-    if tag_key and tag_value:
-        query = query.join(FactObservationTag).filter(
-            and_(
-                FactObservationTag.tag_key == tag_key,
-                FactObservationTag.tag_value == tag_value
-            )
-        )
-    elif tag_key:
-        query = query.join(FactObservationTag).filter(
-            FactObservationTag.tag_key == tag_key
-        )
-    
-    # Indicator筛选（通过tags_json中的indicator字段）
-    # 出栏均重：库中可能为 indicator='均重'（原始）或 indicator='全国2'（修复后），兼容两种
-    # 90Kg出栏占比：兼容 indicator='90kg以下'（原始）
-    # 150Kg出栏占重：兼容 indicator='150kg以上'（原始）
-    if indicator:
-        if (
-            metric_key == "YY_W_OUT_WEIGHT"
-            and geo_code == "NATION"
-            and indicator == "均重"
-        ):
-            query = query.filter(
-                or_(
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, "$.indicator")
-                    )
-                    == "均重",
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, "$.indicator")
-                    )
-                    == "全国2",
-                )
-            )
-        elif (
-            metric_key == "YY_W_OUT_WEIGHT"
-            and indicator == "90Kg出栏占比"
-        ):
-            query = query.filter(FactObservation.geo_id.is_(None)).filter(
-                or_(
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, "$.indicator")
-                    )
-                    == "90Kg出栏占比",
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, "$.indicator")
-                    )
-                    == "90kg以下",
-                )
-            )
-        elif (
-            metric_key == "YY_W_OUT_WEIGHT"
-            and indicator == "150Kg出栏占重"
-        ):
-            query = query.filter(FactObservation.geo_id.is_(None)).filter(
-                or_(
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, "$.indicator")
-                    )
-                    == "150Kg出栏占重",
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, "$.indicator")
-                    )
-                    == "150kg以上",
-                )
-            )
-        else:
-            query = query.filter(
-                func.json_unquote(
-                    func.json_extract(FactObservation.tags_json, "$.indicator")
-                )
-                == indicator
-            )
-    
-    # Nation_col筛选（通过tags_json中的nation_col字段）
-    if nation_col:
-        query = query.filter(
-            func.json_unquote(
-                func.json_extract(FactObservation.tags_json, '$.nation_col')
-            ) == nation_col
-        )
-    
-    # 排序和分页；仅加载返回所需列，减轻大结果集开销
-    from sqlalchemy.orm import load_only
-    query = query.options(
-        load_only(
-            FactObservation.id,
-            FactObservation.metric_id,
-            FactObservation.obs_date,
-            FactObservation.period_type,
-            FactObservation.period_start,
-            FactObservation.period_end,
-            FactObservation.value,
-            FactObservation.raw_value,
-            FactObservation.geo_id,
-            FactObservation.tags_json,
-        )
-    )
-    query = query.order_by(FactObservation.obs_date.desc())
-    query = query.offset(offset).limit(limit)
-    
-    observations = query.all()
-    
-    # 转换为响应模型
-    results = []
-    for obs in observations:
-        # 获取tags
-        tags = obs.tags_json or {}
-        
-        # 获取geo_code
-        geo_code_val = obs.geo.province if obs.geo else None
-        
-        # 获取metric信息
-        metric_name = obs.metric.metric_name if obs.metric else ""
-        unit = obs.metric.unit if obs.metric else None
-        
-        results.append(ObservationResponse(
-            id=obs.id,
-            metric_name=metric_name,
-            obs_date=obs.obs_date,
-            period_type=obs.period_type,
-            period_start=obs.period_start,
-            period_end=obs.period_end,
-            value=float(obs.value) if obs.value else None,
-            raw_value=obs.raw_value,
-            geo_code=geo_code_val,
-            tags=tags,
-            unit=unit
-        ))
-    
+            sql = f"SELECT `{date_col}`, {value_col}, {unit_literal}, region_code FROM `{table}` WHERE 1=1"
+
+        params: dict = {}
+        if filter_col and filter_val:
+            sql += f" AND `{filter_col}` = :fval"
+            params["fval"] = filter_val
+
+        if region_mode == "region":
+            sql += " AND region_code = :region"
+            params["region"] = region
+        elif region_mode == "fixed_nation":
+            sql += " AND region_code = 'NATION'"
+
+        if start_date:
+            sql += f" AND `{date_col}` >= :start"
+            params["start"] = start_date
+        if end_date:
+            sql += f" AND `{date_col}` <= :end"
+            params["end"] = end_date
+
+        # source filter
+        if source_code:
+            src_map = {"YONGYI": "YONGYI", "GANGLIAN": "GANGLIAN", "DCE": "DCE"}
+            mapped = src_map.get(source_code, source_code)
+            sql += " AND source = :src"
+            params["src"] = mapped
+
+        if region_mode == "avg_provinces":
+            sql += f" GROUP BY `{date_col}`"
+
+        sql += f" ORDER BY `{date_col}` DESC LIMIT :lim OFFSET :off"
+        params["lim"] = limit
+        params["off"] = offset
+
+        rows = db.execute(text(sql), params).fetchall()
+
+        for i, r in enumerate(rows):
+            period = "day"
+            if "weekly" in table:
+                period = "week"
+            elif "monthly" in table:
+                period = "month"
+
+            results.append(ObservationResponse(
+                id=i + 1,
+                metric_name=metric_key or filter_val,
+                obs_date=r[0],
+                period_type=period,
+                period_start=r[0],
+                period_end=r[0],
+                value=float(r[1]) if r[1] is not None else None,
+                raw_value=str(r[1]) if r[1] is not None else None,
+                geo_code=r[3] if r[3] else None,
+                tags={"source": source_code or "", "indicator": indicator or ""},
+                unit=r[2]
+            ))
+
+    else:
+        # 无路由匹配：尝试在 fact_weekly_indicator 按 indicator_code 搜索
+        if metric_key:
+            sql = "SELECT week_end, value, unit, region_code FROM fact_weekly_indicator WHERE indicator_code = :code"
+            params = {"code": metric_key}
+            if geo_code and geo_code != "NATION":
+                sql += " AND region_code = :region"
+                params["region"] = geo_code
+            if start_date:
+                sql += " AND week_end >= :start"
+                params["start"] = start_date
+            if end_date:
+                sql += " AND week_end <= :end"
+                params["end"] = end_date
+            sql += " ORDER BY week_end DESC LIMIT :lim OFFSET :off"
+            params["lim"] = limit
+            params["off"] = offset
+            rows = db.execute(text(sql), params).fetchall()
+            for i, r in enumerate(rows):
+                results.append(ObservationResponse(
+                    id=i + 1, metric_name=metric_key, obs_date=r[0],
+                    period_type="week", period_start=r[0], period_end=r[0],
+                    value=float(r[1]) if r[1] is not None else None,
+                    raw_value=str(r[1]) if r[1] is not None else None,
+                    geo_code=r[3], tags={}, unit=r[2]
+                ))
+
     return results
 
 
 @router.get("/tags", response_model=List[TagInfo])
 async def get_available_tags(
-    tag_key: Optional[str] = Query(None, description="Tag键（如果提供，返回该键的所有值）"),
+    tag_key: Optional[str] = Query(None, description="Tag键"),
     source_code: Optional[str] = Query(None, description="数据源代码"),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user)
 ):
-    """
-    获取可用的tag键值对（支持动态筛选器）
-    
-    如果提供tag_key，返回该键的所有值及其计数
-    如果不提供，返回所有tag键及其计数
-    """
-    if tag_key:
-        # 返回指定tag_key的所有值
-        results = db.query(
-            FactObservationTag.tag_value,
-            func.count(FactObservationTag.observation_id).label('count')
-        ).filter(
-            FactObservationTag.tag_key == tag_key
-        ).group_by(FactObservationTag.tag_value).all()
-        
-        return [
-            TagInfo(tag_key=tag_key, tag_value=row[0], count=row[1])
-            for row in results
-        ]
+    """返回可用的标签（从新表动态提取）"""
+    tags: list[TagInfo] = []
+
+    if tag_key == "source":
+        for src in ["YONGYI", "GANGLIAN", "NBS"]:
+            tags.append(TagInfo(tag_key="source", tag_value=src, count=0))
+    elif tag_key == "region":
+        rows = db.execute(text("SELECT region_code, region_name FROM dim_region ORDER BY region_code")).fetchall()
+        for r in rows:
+            tags.append(TagInfo(tag_key="region", tag_value=r[0], count=0))
+    elif tag_key == "indicator":
+        rows = db.execute(text(
+            "SELECT DISTINCT indicator_code FROM fact_weekly_indicator ORDER BY indicator_code LIMIT 100"
+        )).fetchall()
+        for r in rows:
+            tags.append(TagInfo(tag_key="indicator", tag_value=r[0], count=0))
     else:
-        # 返回所有tag_key及其计数
-        results = db.query(
-            FactObservationTag.tag_key,
-            func.count(func.distinct(FactObservationTag.tag_value)).label('count')
-        ).group_by(FactObservationTag.tag_key).all()
-        
-        return [
-            TagInfo(tag_key=row[0], tag_value="", count=row[1])
-            for row in results
-        ]
+        for k in ["source", "region", "indicator"]:
+            tags.append(TagInfo(tag_key=k, tag_value="", count=0))
+
+    return tags
 
 
 @router.get("/raw/sheets")
@@ -344,55 +258,43 @@ async def get_raw_sheets(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user)
 ):
-    """
-    获取raw_sheet列表
-    """
-    query = db.query(RawSheet)
-    
-    if batch_id:
-        query = query.join(RawFile).filter(RawFile.batch_id == batch_id)
-    
-    if raw_file_id:
-        query = query.filter(RawSheet.raw_file_id == raw_file_id)
-    
-    if parse_status:
-        query = query.filter(RawSheet.parse_status == parse_status)
-    
-    sheets = query.all()
-    
+    """获取导入批次信息（兼容旧接口）"""
+    rows = db.execute(text(
+        "SELECT id, batch_mode, source_dir, started_at, finished_at, total_rows, file_count "
+        "FROM import_batch ORDER BY id DESC LIMIT 50"
+    )).fetchall()
     return [
         {
-            "id": sheet.id,
-            "raw_file_id": sheet.raw_file_id,
-            "sheet_name": sheet.sheet_name,
-            "row_count": sheet.row_count,
-            "col_count": sheet.col_count,
-            "parse_status": sheet.parse_status,
-            "parser_type": sheet.parser_type,
-            "error_count": sheet.error_count,
-            "observation_count": sheet.observation_count
+            "id": r[0],
+            "raw_file_id": r[0],
+            "sheet_name": r[1] or "bulk",
+            "row_count": r[5],
+            "col_count": r[6],
+            "parse_status": "done" if r[4] else "pending",
+            "parser_type": "import_tool",
+            "error_count": 0,
+            "observation_count": r[5] or 0
         }
-        for sheet in sheets
+        for r in rows
     ]
 
 
 @router.get("/raw/table")
 async def get_raw_table(
-    raw_sheet_id: int = Query(..., description="Raw sheet ID"),
+    raw_sheet_id: int = Query(..., description="批次 ID"),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user)
 ):
-    """
-    获取raw_table JSON数据
-    """
-    raw_table = db.query(RawTable).filter(RawTable.raw_sheet_id == raw_sheet_id).first()
-    
-    if not raw_table:
-        raise HTTPException(status_code=404, detail="Raw table not found")
-    
+    """获取批次详情（兼容旧接口）"""
+    row = db.execute(text(
+        "SELECT id, batch_mode, source_dir, started_at, finished_at, total_rows "
+        "FROM import_batch WHERE id = :bid"
+    ), {"bid": raw_sheet_id}).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Batch not found")
     return {
-        "raw_sheet_id": raw_table.raw_sheet_id,
-        "table_json": raw_table.table_json,
-        "merged_cells_json": raw_table.merged_cells_json,
-        "created_at": raw_table.created_at
+        "raw_sheet_id": row[0],
+        "table_json": {"batch_mode": row[1], "source_dir": row[2], "total_rows": row[5]},
+        "merged_cells_json": None,
+        "created_at": row[3].isoformat() if row[3] else None
     }

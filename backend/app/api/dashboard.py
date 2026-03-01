@@ -1,7 +1,8 @@
 """默认首页聚合接口"""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from typing import Dict, List
+from sqlalchemy import text
+from typing import List
 from datetime import date, timedelta
 from pydantic import BaseModel
 
@@ -9,7 +10,6 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.config import settings
 from app.models.sys_user import SysUser
-from app.services.indicator_query_service import query_indicator_ts, query_indicator_metrics
 
 router = APIRouter(prefix=f"{settings.API_V1_STR}/dashboard", tags=["dashboard"])
 
@@ -28,288 +28,186 @@ class DashboardResponse(BaseModel):
     global_filters: dict
 
 
+def _query_daily_series(db: Session, table: str, filter_col: str, filter_val: str,
+                        region: str = "NATION", start: date = None, end: date = None,
+                        source: str = None) -> dict:
+    """通用日度时序查询"""
+    # fact_slaughter_daily 没有 indicator_code/value 列，用 volume
+    if table == "fact_slaughter_daily":
+        val_col = "volume"
+    else:
+        val_col = "value"
+
+    sql = f"SELECT trade_date, {val_col} FROM {table} WHERE region_code = :region"
+    params = {"region": region}
+    if filter_col and filter_val:
+        sql += f" AND `{filter_col}` = :fval"
+        params["fval"] = filter_val
+    if start:
+        sql += " AND trade_date >= :start"
+        params["start"] = start
+    if end:
+        sql += " AND trade_date <= :end"
+        params["end"] = end
+    if source:
+        sql += " AND source = :source"
+        params["source"] = source
+    sql += " ORDER BY trade_date"
+    rows = db.execute(text(sql), params).fetchall()
+    series = [{"date": r[0].isoformat(), "value": float(r[1])} for r in rows if r[1] is not None]
+    update_time = series[-1]["date"] if series else ""
+    return {"series": series, "update_time": update_time}
+
+
+def _query_weekly_series(db: Session, indicator_code: str, region: str = "NATION",
+                         start: date = None, end: date = None, source: str = None) -> dict:
+    """通用周度时序查询"""
+    sql = """
+        SELECT week_end, value FROM fact_weekly_indicator
+        WHERE region_code = :region AND indicator_code = :code
+    """
+    params = {"region": region, "code": indicator_code}
+    if start:
+        sql += " AND week_end >= :start"
+        params["start"] = start
+    if end:
+        sql += " AND week_end <= :end"
+        params["end"] = end
+    if source:
+        sql += " AND source = :source"
+        params["source"] = source
+    sql += " ORDER BY week_end"
+    rows = db.execute(text(sql), params).fetchall()
+    series = [{"date": r[0].isoformat(), "value": float(r[1])} for r in rows if r[1] is not None]
+    update_time = series[-1]["date"] if series else ""
+    return {"series": series, "update_time": update_time}
+
+
 @router.get("/default", response_model=DashboardResponse)
 async def get_default_dashboard(
     current_user: SysUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """返回首页7个卡片数据"""
-    
-    # 默认时间范围：近6个月
     end_date = date.today()
     start_date = end_date - timedelta(days=180)
-    
+
     cards = []
-    
-    # 卡片1：全国出栏均价 + 标肥价差（合并图）
+
+    # 卡片1：全国出栏均价 + 标肥价差
     try:
-        price_data = query_indicator_ts(
-            db=db,
-            indicator_code="hog_price_nation",
-            region_code="NATION",
-            freq="D",
-            from_date=start_date,
-            to_date=end_date
-        )
-        
-        spread_data = query_indicator_ts(
-            db=db,
-            indicator_code="spread_std_fat",
-            region_code="NATION",
-            freq="D",
-            from_date=start_date,
-            to_date=end_date
-        )
-        
+        price = _query_daily_series(db, "fact_price_daily", "price_type", "标猪均价",
+                                    start=start_date, end=end_date, source="YONGYI")
+        spread = _query_daily_series(db, "fact_spread_daily", "spread_type", "std_fat_spread",
+                                     start=start_date, end=end_date, source="YONGYI")
         cards.append(CardData(
-            card_id="card_1_price_spread",
-            title="全国出栏均价 + 标肥价差",
+            card_id="card_1_price_spread", title="全国出栏均价 + 标肥价差",
             chart_type="dual_axis",
             data={
-                "series1": {
-                    "name": "全国出栏均价",
-                    "data": price_data.get("series", []),
-                    "unit": price_data.get("unit")
-                },
-                "series2": {
-                    "name": "标肥价差",
-                    "data": spread_data.get("series", []),
-                    "unit": spread_data.get("unit")
-                }
+                "series1": {"name": "全国出栏均价", "data": price["series"], "unit": "元/公斤"},
+                "series2": {"name": "标肥价差", "data": spread["series"], "unit": "元/公斤"}
             },
-            update_time=price_data.get("update_time", ""),
-            config={
-                "axis1": "left",
-                "axis2": "right"
-            }
+            update_time=price["update_time"],
+            config={"axis1": "left", "axis2": "right"}
         ))
     except Exception as e:
-        cards.append(CardData(
-            card_id="card_1_price_spread",
-            title="全国出栏均价 + 标肥价差",
-            chart_type="dual_axis",
-            data={"error": str(e)},
-            update_time="",
-            config={}
-        ))
-    
-    # 卡片2：日度屠宰量季节性（农历对齐）
+        cards.append(CardData(card_id="card_1_price_spread", title="全国出栏均价 + 标肥价差",
+                              chart_type="dual_axis", data={"error": str(e)}, update_time=""))
+
+    # 卡片2：日度屠宰量季节性
     try:
-        slaughter_data = query_indicator_ts(
-            db=db,
-            indicator_code="slaughter_daily",
-            region_code="NATION",
-            freq="D",
-            from_date=start_date - timedelta(days=365),  # 需要更多历史数据用于季节性
-            to_date=end_date
-        )
-        
-        # 这里需要调用农历对齐服务处理数据
-        # 简化处理：直接返回时序数据
+        slaughter = _query_daily_series(db, "fact_slaughter_daily", None, None,
+                                        start=start_date - timedelta(days=365), end=end_date, source="YONGYI")
         cards.append(CardData(
-            card_id="card_2_slaughter_seasonality",
-            title="日度屠宰量季节性",
+            card_id="card_2_slaughter_seasonality", title="日度屠宰量季节性",
             chart_type="seasonality",
-            data={
-                "series": slaughter_data.get("series", []),
-                "unit": slaughter_data.get("unit")
-            },
-            update_time=slaughter_data.get("update_time", ""),
-            config={
-                "lunar_alignment": True,
-                "years": [end_date.year - 1, end_date.year]
-            }
+            data={"series": slaughter["series"], "unit": "头"},
+            update_time=slaughter["update_time"],
+            config={"lunar_alignment": True, "years": [end_date.year - 1, end_date.year]}
         ))
     except Exception as e:
-        cards.append(CardData(
-            card_id="card_2_slaughter_seasonality",
-            title="日度屠宰量季节性",
-            chart_type="seasonality",
-            data={"error": str(e)},
-            update_time="",
-            config={}
-        ))
-    
-    # 卡片3：价格&屠宰走势（年度筛选）
+        cards.append(CardData(card_id="card_2_slaughter_seasonality", title="日度屠宰量季节性",
+                              chart_type="seasonality", data={"error": str(e)}, update_time=""))
+
+    # 卡片3：价格&屠宰走势
     try:
-        price_trend = query_indicator_ts(
-            db=db,
-            indicator_code="hog_price_nation",
-            region_code="NATION",
-            freq="D",
-            from_date=start_date,
-            to_date=end_date
-        )
-        
-        slaughter_trend = query_indicator_ts(
-            db=db,
-            indicator_code="slaughter_daily",
-            region_code="NATION",
-            freq="D",
-            from_date=start_date,
-            to_date=end_date
-        )
-        
+        price_trend = _query_daily_series(db, "fact_price_daily", "price_type", "标猪均价",
+                                          start=start_date, end=end_date, source="YONGYI")
+        slaughter_trend = _query_daily_series(db, "fact_slaughter_daily", None, None,
+                                              start=start_date, end=end_date, source="YONGYI")
         cards.append(CardData(
-            card_id="card_3_price_slaughter_trend",
-            title="价格&屠宰走势",
+            card_id="card_3_price_slaughter_trend", title="价格&屠宰走势",
             chart_type="line",
-            data={
-                "series": [
-                    {
-                        "name": "价格",
-                        "data": price_trend.get("series", []),
-                        "unit": price_trend.get("unit")
-                    },
-                    {
-                        "name": "屠宰量",
-                        "data": slaughter_trend.get("series", []),
-                        "unit": slaughter_trend.get("unit")
-                    }
-                ]
-            },
-            update_time=price_trend.get("update_time", ""),
-            config={
-                "year_filter": True
-            }
+            data={"series": [
+                {"name": "价格", "data": price_trend["series"], "unit": "元/公斤"},
+                {"name": "屠宰量", "data": slaughter_trend["series"], "unit": "头"}
+            ]},
+            update_time=price_trend["update_time"],
+            config={"year_filter": True}
         ))
     except Exception as e:
-        cards.append(CardData(
-            card_id="card_3_price_slaughter_trend",
-            title="价格&屠宰走势",
-            chart_type="line",
-            data={"error": str(e)},
-            update_time="",
-            config={}
-        ))
-    
-    # 卡片4：均重专区入口（6图）
+        cards.append(CardData(card_id="card_3_price_slaughter_trend", title="价格&屠宰走势",
+                              chart_type="line", data={"error": str(e)}, update_time=""))
+
+    # 卡片4：均重专区入口
     cards.append(CardData(
-        card_id="card_4_weight_entrance",
-        title="均重专区",
-        chart_type="entrance",
-        data={
-            "indicators": [
-                {"code": "hog_weight_pre_slaughter", "name": "宰前均重"},
-                {"code": "hog_weight_out_week", "name": "出栏均重"},
-                {"code": "hog_weight_scale", "name": "规模场出栏均重"},
-                {"code": "hog_weight_retail", "name": "散户出栏均重"},
-                {"code": "hog_weight_90kg", "name": "90kg出栏占比"},
-                {"code": "hog_weight_150kg", "name": "150kg出栏占比"}
-            ]
-        },
-        update_time="",
-        config={}
+        card_id="card_4_weight_entrance", title="均重专区", chart_type="entrance",
+        data={"indicators": [
+            {"code": "weight_avg", "name": "出栏均重"},
+            {"code": "weight_slaughter", "name": "宰前均重"},
+            {"code": "weight_pct_under90", "name": "90kg以下占比"},
+            {"code": "weight_pct_over150", "name": "150kg以上占比"}
+        ]},
+        update_time=""
     ))
-    
+
     # 卡片5：价差专区入口
     cards.append(CardData(
-        card_id="card_5_spread_entrance",
-        title="价差专区",
-        chart_type="entrance",
-        data={
-            "indicators": [
-                {"code": "spread_std_fat", "name": "标肥价差"},
-                {"code": "spread_region", "name": "区域价差"},
-                {"code": "spread_hog_carcass", "name": "毛白价差"}
-            ]
-        },
-        update_time="",
-        config={}
+        card_id="card_5_spread_entrance", title="价差专区", chart_type="entrance",
+        data={"indicators": [
+            {"code": "std_fat_spread", "name": "标肥价差"},
+            {"code": "region_spread", "name": "区域价差"},
+            {"code": "mao_bai_spread", "name": "毛白价差"}
+        ]},
+        update_time=""
     ))
-    
-    # 卡片6：冻品库容率（分省区季节性）
+
+    # 卡片6：冻品库容率
     try:
-        frozen_data = query_indicator_ts(
-            db=db,
-            indicator_code="frozen_capacity_rate",
-            freq="W",
-            from_date=start_date - timedelta(days=365),
-            to_date=end_date
-        )
-        
+        frozen = _query_weekly_series(db, "frozen_rate", start=start_date - timedelta(days=365),
+                                      end=end_date, source="YONGYI")
         cards.append(CardData(
-            card_id="card_6_frozen_capacity",
-            title="冻品库容率",
-            chart_type="seasonality",
-            data={
-                "series": frozen_data.get("series", []),
-                "unit": frozen_data.get("unit")
-            },
-            update_time=frozen_data.get("update_time", ""),
-            config={
-                "region_filter": True,
-                "by_province": True
-            }
+            card_id="card_6_frozen_capacity", title="冻品库容率", chart_type="seasonality",
+            data={"series": frozen["series"], "unit": "%"},
+            update_time=frozen["update_time"],
+            config={"region_filter": True, "by_province": True}
         ))
     except Exception as e:
-        cards.append(CardData(
-            card_id="card_6_frozen_capacity",
-            title="冻品库容率",
-            chart_type="seasonality",
-            data={"error": str(e)},
-            update_time="",
-            config={}
-        ))
-    
+        cards.append(CardData(card_id="card_6_frozen_capacity", title="冻品库容率",
+                              chart_type="seasonality", data={"error": str(e)}, update_time=""))
+
     # 卡片7：产业链周度汇总
     try:
-        profit_data = query_indicator_ts(
-            db=db,
-            indicator_code="profit_breeding",
-            region_code="NATION",
-            freq="W",
-            from_date=start_date,
-            to_date=end_date
-        )
-        
-        feed_data = query_indicator_ts(
-            db=db,
-            indicator_code="feed_price_full",
-            region_code="NATION",
-            freq="W",
-            from_date=start_date,
-            to_date=end_date
-        )
-        
+        profit = _query_weekly_series(db, "profit_breeding_10000", start=start_date,
+                                      end=end_date, source="YONGYI")
+        feed = _query_weekly_series(db, "feed_price_complete", start=start_date,
+                                    end=end_date, source="YONGYI")
         cards.append(CardData(
-            card_id="card_7_industry_chain",
-            title="产业链周度汇总",
-            chart_type="line",
-            data={
-                "series": [
-                    {
-                        "name": "养殖利润",
-                        "data": profit_data.get("series", []),
-                        "unit": profit_data.get("unit")
-                    },
-                    {
-                        "name": "全价料价格",
-                        "data": feed_data.get("series", []),
-                        "unit": feed_data.get("unit")
-                    }
-                ]
-            },
-            update_time=profit_data.get("update_time", ""),
-            config={}
+            card_id="card_7_industry_chain", title="产业链周度汇总", chart_type="line",
+            data={"series": [
+                {"name": "养殖利润", "data": profit["series"], "unit": "元/头"},
+                {"name": "全价料价格", "data": feed["series"], "unit": "元/吨"}
+            ]},
+            update_time=profit["update_time"]
         ))
     except Exception as e:
-        cards.append(CardData(
-            card_id="card_7_industry_chain",
-            title="产业链周度汇总",
-            chart_type="line",
-            data={"error": str(e)},
-            update_time="",
-            config={}
-        ))
-    
+        cards.append(CardData(card_id="card_7_industry_chain", title="产业链周度汇总",
+                              chart_type="line", data={"error": str(e)}, update_time=""))
+
     return DashboardResponse(
         cards=cards,
         global_filters={
-            "date_range": {
-                "start": start_date.isoformat(),
-                "end": end_date.isoformat()
-            },
+            "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "regions": ["NATION"],
             "years": [end_date.year - 1, end_date.year]
         }

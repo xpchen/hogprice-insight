@@ -21,7 +21,6 @@
       <!-- 波动率季节性图 -->
       <div v-loading="loading">
         <div v-for="series in volatilityData.series" :key="series.contract_code" style="margin-bottom: 12px">
-          <h3>{{ `${series.contract_month.toString().padStart(2, '0')}合约` }} - 波动率季节性图</h3>
           <div
             :ref="el => setChartRef(series.contract_month, el)"
             class="chart"

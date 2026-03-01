@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=env_path)
 
 class Settings(BaseSettings):
     # 数据库配置
-    DATABASE_URL: str = "mysql+pymysql://root:root@localhost:3306/hogprice?charset=utf8mb4"
+    DATABASE_URL: str = "mysql+pymysql://root:root@localhost:3306/hogprice_v3?charset=utf8mb4"
     
     # JWT配置
     SECRET_KEY: str = "your-secret-key-change-in-production"

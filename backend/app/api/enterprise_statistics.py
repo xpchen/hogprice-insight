@@ -1,45 +1,34 @@
 """
-企业集团统计API
-提供D1页面的4个图表数据接口：
-1. CR5企业日度出栏统计
-2. 四川重点企业日度出栏
-3. 广西重点企业日度出栏
-4. 西南样本企业日度出栏
+企业集团统计API (hogprice_v3)
+查询 fact_enterprise_daily + dim_company
+提供D1页面的4个图表数据接口
 """
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func, extract, text
+from sqlalchemy import text
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.config import settings
 from app.core.security import get_current_user
 from app.models.sys_user import SysUser
-from app.models.fact_observation import FactObservation
-from app.models.dim_metric import DimMetric
-from app.models.dim_company import DimCompany
-from app.models.dim_geo import DimGeo
 
 router = APIRouter(prefix="/api/v1/enterprise-statistics", tags=["enterprise-statistics"])
 
 
 class TimeSeriesDataPoint(BaseModel):
-    """时间序列数据点"""
-    date: str  # YYYY-MM-DD格式
+    date: str
     value: Optional[float]
 
 
 class TimeSeriesSeries(BaseModel):
-    """时间序列系列"""
     name: str
     data: List[TimeSeriesDataPoint]
     unit: Optional[str] = None
 
 
 class EnterpriseStatisticsResponse(BaseModel):
-    """企业统计响应"""
     chart_title: str
     series: List[TimeSeriesSeries]
     data_source: str
@@ -47,941 +36,352 @@ class EnterpriseStatisticsResponse(BaseModel):
     latest_date: Optional[str]
 
 
-def get_source_name_from_metric(metric: DimMetric) -> str:
-    """从DimMetric推断数据来源名称"""
-    if not metric:
-        return "企业集团出栏跟踪"
-    
-    sheet_name = metric.sheet_name or ""
-    if "CR5" in sheet_name:
-        return "企业集团出栏跟踪"
-    elif "西南" in sheet_name:
-        return "企业集团出栏跟踪"
-    
-    return "企业集团出栏跟踪"
-
-
-def format_update_date(date_obj: Optional[date]) -> Optional[str]:
-    """格式化更新日期（只显示年月日）"""
-    if not date_obj:
+def _compute_start_date(months: int) -> Optional[date]:
+    if months <= 0:
         return None
-    return f"{date_obj.year}年{date_obj.month:02d}月{date_obj.day:02d}日"
+    return date.today() - timedelta(days=months * 30)
+
+
+def _format_update_date(d: Optional[date]) -> Optional[str]:
+    if not d:
+        return None
+    return f"{d.year}年{d.month:02d}月{d.day:02d}日"
+
+
+def _query_aggregate(db: Session, company_code: str, metric_type: str,
+                     region_code: str = "NATION", start: Optional[date] = None) -> List[dict]:
+    sql = """SELECT trade_date, value, unit FROM fact_enterprise_daily
+             WHERE metric_type = :mt AND company_code = :cc AND region_code = :rc AND value IS NOT NULL"""
+    params: dict = {"mt": metric_type, "cc": company_code, "rc": region_code}
+    if start:
+        sql += " AND trade_date >= :s"
+        params["s"] = start
+    sql += " ORDER BY trade_date"
+    return [{"trade_date": r[0], "value": float(r[1]) if r[1] else None, "unit": r[2]}
+            for r in db.execute(text(sql), params).fetchall()]
+
+
+def _query_region_sum(db: Session, region_code: str, metric_type: str,
+                      start: Optional[date] = None) -> List[dict]:
+    sql = """SELECT trade_date, SUM(value) AS v, MAX(unit) AS u FROM fact_enterprise_daily
+             WHERE metric_type = :mt AND region_code = :rc AND value IS NOT NULL"""
+    params: dict = {"mt": metric_type, "rc": region_code}
+    if start:
+        sql += " AND trade_date >= :s"
+        params["s"] = start
+    sql += " GROUP BY trade_date ORDER BY trade_date"
+    return [{"trade_date": r[0], "value": float(r[1]) if r[1] else None, "unit": r[2]}
+            for r in db.execute(text(sql), params).fetchall()]
+
+
+def _query_region_avg(db: Session, region_code: str, metric_type: str,
+                      start: Optional[date] = None) -> List[dict]:
+    sql = """SELECT trade_date, AVG(value) AS v, MAX(unit) AS u FROM fact_enterprise_daily
+             WHERE metric_type = :mt AND region_code = :rc AND value IS NOT NULL"""
+    params: dict = {"mt": metric_type, "rc": region_code}
+    if start:
+        sql += " AND trade_date >= :s"
+        params["s"] = start
+    sql += " GROUP BY trade_date ORDER BY trade_date"
+    return [{"trade_date": r[0], "value": round(float(r[1]), 4) if r[1] else None, "unit": r[2]}
+            for r in db.execute(text(sql), params).fetchall()]
+
+
+def _to_series(rows: List[dict], name: str, unit: str = None) -> TimeSeriesSeries:
+    pts = [TimeSeriesDataPoint(date=r["trade_date"].isoformat(), value=r["value"]) for r in rows]
+    return TimeSeriesSeries(name=name, data=pts, unit=unit or (rows[0].get("unit") if rows else None))
+
+
+def _latest(rows: List[dict]) -> Optional[date]:
+    return rows[-1]["trade_date"] if rows else None
+
+
+def _max_date(*dates: Optional[date]) -> Optional[date]:
+    valid = [d for d in dates if d]
+    return max(valid) if valid else None
+
+
+def _build_response(title: str, output_rows, price_rows) -> EnterpriseStatisticsResponse:
+    series = []
+    ld = None
+    if output_rows:
+        series.append(_to_series(output_rows, "日度出栏", "头"))
+        ld = _max_date(ld, _latest(output_rows))
+    if price_rows:
+        series.append(_to_series(price_rows, "价格", "元/公斤"))
+        ld = _max_date(ld, _latest(price_rows))
+    if not series:
+        return EnterpriseStatisticsResponse(
+            chart_title=title, series=[], data_source="企业集团出栏跟踪",
+            update_time=None, latest_date=None)
+    return EnterpriseStatisticsResponse(
+        chart_title=title, series=series, data_source="企业集团出栏跟踪",
+        update_time=_format_update_date(ld), latest_date=ld.isoformat() if ld else None)
 
 
 @router.get("/cr5-daily", response_model=EnterpriseStatisticsResponse)
 async def get_cr5_daily(
     months: int = Query(6, description="近N个月，0表示全部"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取CR5企业日度出栏统计
-    
-    指标：
-    - 日度出栏（实际出栏）
-    - 计划量（月度计划）
-    - 价格（全国均价）
-    """
-    # 计算日期范围
-    end_date = date.today()
-    if months > 0:
-        start_date = end_date - timedelta(days=months * 30)
-    else:
-        start_date = None
-    
-    # 查询指标
-    metrics = db.query(DimMetric).filter(
-        and_(
-            DimMetric.sheet_name == "CR5日度",
-            or_(
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'CR5_DAILY_OUTPUT',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'CR5_MONTHLY_PLAN',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'CR5_PRICE'
-            )
-        )
-    ).all()
-    
-    if not metrics:
-        raise HTTPException(status_code=404, detail="未找到CR5日度数据")
-    
-    # 构建指标映射
-    metric_map = {}
-    for m in metrics:
-        metric_key = m.parse_json.get('metric_key') if m.parse_json else None
-        if metric_key == 'CR5_DAILY_OUTPUT':
-            metric_map['output'] = m
-        elif metric_key == 'CR5_MONTHLY_PLAN':
-            metric_map['plan'] = m
-        elif metric_key == 'CR5_PRICE':
-            metric_map['price'] = m
-    
-    # 查询数据
-    series_list = []
-    latest_date = None
-    
-    # 1. 日度出栏
-    if 'output' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['output'].id,
-            FactObservation.period_type == 'day'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-            if obs.obs_date and (not latest_date or obs.obs_date > latest_date):
-                latest_date = obs.obs_date
-        
-        series_list.append(TimeSeriesSeries(
-            name="日度出栏",
-            data=data_points,
-            unit=metric_map['output'].unit
-        ))
-    
-    # 2. 计划量
-    if 'plan' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['plan'].id,
-            FactObservation.period_type == 'day'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="计划量",
-            data=data_points,
-            unit=metric_map['plan'].unit
-        ))
-    
-    # 3. 价格
-    if 'price' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['price'].id,
-            FactObservation.period_type == 'day'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="价格",
-            data=data_points,
-            unit=metric_map['price'].unit
-        ))
-    
-    # 获取数据来源
-    data_source = get_source_name_from_metric(metrics[0]) if metrics else "企业集团出栏跟踪"
-    
-    return EnterpriseStatisticsResponse(
-        chart_title="CR5企业日度出栏",
-        series=series_list,
-        data_source=data_source,
-        update_time=format_update_date(latest_date),
-        latest_date=latest_date.isoformat() if latest_date else None
-    )
+    """CR5企业日度出栏统计"""
+    sd = _compute_start_date(months)
+    return _build_response("CR5企业日度出栏",
+                           _query_aggregate(db, "CR5", "output_cumulative", "NATION", sd),
+                           _query_aggregate(db, "CR5", "avg_price", "NATION", sd))
 
 
 @router.get("/sichuan-daily", response_model=EnterpriseStatisticsResponse)
 async def get_sichuan_daily(
     months: int = Query(6, description="近N个月，0表示全部"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取四川重点企业日度出栏
-    
-    指标：
-    - 日度出栏（实际成交）
-    - 计划出栏（计划日均）
-    - 成交率
-    - 价格
-    """
-    # 计算日期范围
-    end_date = date.today()
-    if months > 0:
-        start_date = end_date - timedelta(days=months * 30)
-    else:
-        start_date = None
-    
-    # 查询指标（西南汇总sheet，四川地区，成交率优先于完成率）
-    metrics = db.query(DimMetric).filter(
-        and_(
-            DimMetric.sheet_name == "西南汇总",
-            or_(
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_ACTUAL_OUTPUT',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PLAN_OUTPUT',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_TRANSACTION_RATE',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_COMPLETION_RATE',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PRICE'
-            )
-        )
-    ).all()
-    
-    if not metrics:
-        raise HTTPException(status_code=404, detail="未找到四川重点企业数据")
-    
-    # 构建指标映射（成交率优先，兼容旧数据完成率）
-    metric_map = {}
-    for m in metrics:
-        metric_key = m.parse_json.get('metric_key') if m.parse_json else None
-        if metric_key == 'SOUTHWEST_ACTUAL_OUTPUT':
-            metric_map['actual'] = m
-        elif metric_key == 'SOUTHWEST_PLAN_OUTPUT':
-            metric_map['plan'] = m
-        elif metric_key == 'SOUTHWEST_TRANSACTION_RATE':
-            metric_map['rate'] = m  # 成交率优先
-        elif metric_key == 'SOUTHWEST_COMPLETION_RATE' and 'rate' not in metric_map:
-            metric_map['rate'] = m  # 兼容旧数据
-        elif metric_key == 'SOUTHWEST_PRICE':
-            metric_map['price'] = m
-    
-    # 查询数据（过滤tags中的region=四川）
-    series_list = []
-    latest_date = None
-    
-    # 1. 实际成交（日度出栏）
-    if 'actual' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['actual'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '四川'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-            if obs.obs_date and (not latest_date or obs.obs_date > latest_date):
-                latest_date = obs.obs_date
-        
-        series_list.append(TimeSeriesSeries(
-            name="日度出栏",
-            data=data_points,
-            unit=metric_map['actual'].unit
-        ))
-    
-    # 2. 计划出栏
-    if 'plan' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['plan'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '四川'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="计划出栏",
-            data=data_points,
-            unit=metric_map['plan'].unit
-        ))
-    
-    # 3. 成交率
-    if 'rate' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['rate'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '四川'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="成交率",
-            data=data_points,
-            unit=metric_map['rate'].unit
-        ))
-    
-    # 4. 价格
-    if 'price' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['price'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '四川'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="价格",
-            data=data_points,
-            unit=metric_map['price'].unit
-        ))
-    
-    data_source = get_source_name_from_metric(metrics[0]) if metrics else "企业集团出栏跟踪"
-    
+    """四川重点企业日度出栏"""
+    # Frontend expects leftSeries=['日度出栏','计划出栏'] rightSeries=['成交率']
+    sd = _compute_start_date(months)
+    output_rows = _query_region_sum(db, "SICHUAN", "actual_sales", sd)
+    plan_rows = _query_region_sum(db, "SICHUAN", "planned_volume", sd)
+    deal_rows = _query_region_avg(db, "SICHUAN", "deal_rate", sd)
+    series = []
+    ld = None
+    if output_rows:
+        series.append(_to_series(output_rows, "日度出栏", "头"))
+        ld = _max_date(ld, _latest(output_rows))
+    if plan_rows:
+        series.append(_to_series(plan_rows, "计划出栏", "头"))
+        ld = _max_date(ld, _latest(plan_rows))
+    if deal_rows:
+        series.append(_to_series(deal_rows, "成交率", "%"))
+        ld = _max_date(ld, _latest(deal_rows))
+    if not series:
+        return EnterpriseStatisticsResponse(
+            chart_title="四川重点企业日度出栏", series=[], data_source="企业集团出栏跟踪",
+            update_time=None, latest_date=None)
     return EnterpriseStatisticsResponse(
-        chart_title="四川重点企业日度出栏",
-        series=series_list,
-        data_source=data_source,
-        update_time=format_update_date(latest_date),
-        latest_date=latest_date.isoformat() if latest_date else None
-    )
+        chart_title="四川重点企业日度出栏", series=series, data_source="企业集团出栏跟踪",
+        update_time=_format_update_date(ld), latest_date=ld.isoformat() if ld else None)
 
 
 @router.get("/guangxi-daily", response_model=EnterpriseStatisticsResponse)
 async def get_guangxi_daily(
     months: int = Query(6, description="近N个月，0表示全部"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取广西重点企业日度出栏
-    
-    指标：
-    - 日度出栏（实际成交）
-    - 成交率
-    - 价格
-    """
-    # 计算日期范围
-    end_date = date.today()
-    if months > 0:
-        start_date = end_date - timedelta(days=months * 30)
-    else:
-        start_date = None
-    
-    # 查询指标（西南汇总sheet，广西地区，成交率优先于完成率）
-    metrics = db.query(DimMetric).filter(
-        and_(
-            DimMetric.sheet_name == "西南汇总",
-            or_(
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_ACTUAL_OUTPUT',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_TRANSACTION_RATE',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_COMPLETION_RATE',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PRICE'
-            )
-        )
-    ).all()
-    
-    if not metrics:
-        raise HTTPException(status_code=404, detail="未找到广西重点企业数据")
-    
-    # 构建指标映射（成交率优先，兼容旧数据完成率）
-    metric_map = {}
-    for m in metrics:
-        metric_key = m.parse_json.get('metric_key') if m.parse_json else None
-        if metric_key == 'SOUTHWEST_ACTUAL_OUTPUT':
-            metric_map['actual'] = m
-        elif metric_key == 'SOUTHWEST_TRANSACTION_RATE':
-            metric_map['rate'] = m  # 成交率优先
-        elif metric_key == 'SOUTHWEST_COMPLETION_RATE' and 'rate' not in metric_map:
-            metric_map['rate'] = m  # 兼容旧数据
-        elif metric_key == 'SOUTHWEST_PRICE':
-            metric_map['price'] = m
-    
-    # 查询数据（过滤tags中的region=广西）
-    series_list = []
-    latest_date = None
-    
-    # 1. 实际成交（日度出栏）
-    if 'actual' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['actual'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '广西'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-            if obs.obs_date and (not latest_date or obs.obs_date > latest_date):
-                latest_date = obs.obs_date
-        
-        series_list.append(TimeSeriesSeries(
-            name="日度出栏",
-            data=data_points,
-            unit=metric_map['actual'].unit
-        ))
-    
-    # 2. 成交率
-    if 'rate' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['rate'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '广西'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="成交率",
-            data=data_points,
-            unit=metric_map['rate'].unit
-        ))
-    
-    # 3. 价格
-    if 'price' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['price'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '广西'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="价格",
-            data=data_points,
-            unit=metric_map['price'].unit
-        ))
-    
-    data_source = get_source_name_from_metric(metrics[0]) if metrics else "企业集团出栏跟踪"
-    
+    """广西重点企业日度出栏"""
+    # Frontend expects leftSeries=['日度出栏'] rightSeries=['成交率']
+    sd = _compute_start_date(months)
+    output_rows = _query_region_sum(db, "GUANGXI", "actual_sales", sd)
+    deal_rows = _query_region_avg(db, "GUANGXI", "deal_rate", sd)
+    series = []
+    ld = None
+    if output_rows:
+        series.append(_to_series(output_rows, "日度出栏", "头"))
+        ld = _max_date(ld, _latest(output_rows))
+    if deal_rows:
+        series.append(_to_series(deal_rows, "成交率", "%"))
+        ld = _max_date(ld, _latest(deal_rows))
+    if not series:
+        return EnterpriseStatisticsResponse(
+            chart_title="广西重点企业日度出栏", series=[], data_source="企业集团出栏跟踪",
+            update_time=None, latest_date=None)
     return EnterpriseStatisticsResponse(
-        chart_title="广西重点企业日度出栏",
-        series=series_list,
-        data_source=data_source,
-        update_time=format_update_date(latest_date),
-        latest_date=latest_date.isoformat() if latest_date else None
-    )
+        chart_title="广西重点企业日度出栏", series=series, data_source="企业集团出栏跟踪",
+        update_time=_format_update_date(ld), latest_date=ld.isoformat() if ld else None)
 
 
 @router.get("/southwest-sample-daily", response_model=EnterpriseStatisticsResponse)
-async def get_southwest_sample_daily(
+@router.get("/southwest-daily", response_model=EnterpriseStatisticsResponse)
+async def get_southwest_daily(
     months: int = Query(6, description="近N个月，0表示全部"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取西南样本企业日度出栏
-    
-    指标：
-    - 出栏量（量）
-    - 均重（重）
-    - 价格（价）
-    """
-    # 计算日期范围
-    end_date = date.today()
-    if months > 0:
-        start_date = end_date - timedelta(days=months * 30)
-    else:
-        start_date = None
-    
-    # 查询指标（西南汇总sheet，西南样本企业）
-    metrics = db.query(DimMetric).filter(
-        and_(
-            DimMetric.sheet_name == "西南汇总",
-            or_(
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_OUTPUT',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_AVG_WEIGHT',
-                func.json_extract(DimMetric.parse_json, '$.metric_key') == 'SOUTHWEST_PRICE'
-            )
-        )
-    ).all()
-    
-    if not metrics:
-        raise HTTPException(status_code=404, detail="未找到西南样本企业数据")
-    
-    # 构建指标映射
-    metric_map = {}
-    for m in metrics:
-        metric_key = m.parse_json.get('metric_key') if m.parse_json else None
-        if metric_key == 'SOUTHWEST_OUTPUT':
-            metric_map['output'] = m
-        elif metric_key == 'SOUTHWEST_AVG_WEIGHT':
-            metric_map['weight'] = m
-        elif metric_key == 'SOUTHWEST_PRICE':
-            metric_map['price'] = m
-    
-    # 查询数据（过滤tags中的region=西南样本企业）
-    series_list = []
-    latest_date = None
-    
-    # 1. 出栏量
-    if 'output' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['output'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '西南样本企业'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-            if obs.obs_date and (not latest_date or obs.obs_date > latest_date):
-                latest_date = obs.obs_date
-        
-        series_list.append(TimeSeriesSeries(
-            name="出栏量",
-            data=data_points,
-            unit=metric_map['output'].unit
-        ))
-    
-    # 2. 均重
-    if 'weight' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['weight'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '西南样本企业'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="均重",
-            data=data_points,
-            unit=metric_map['weight'].unit
-        ))
-    
-    # 3. 价格
-    if 'price' in metric_map:
-        query = db.query(
-            FactObservation.obs_date,
-            FactObservation.value
-        ).filter(
-            FactObservation.metric_id == metric_map['price'].id,
-            FactObservation.period_type == 'day',
-            func.json_extract(FactObservation.tags_json, '$.region') == '西南样本企业'
-        )
-        if start_date:
-            query = query.filter(FactObservation.obs_date >= start_date)
-        query = query.order_by(FactObservation.obs_date)
-        
-        data_points = []
-        for obs in query.all():
-            data_points.append(TimeSeriesDataPoint(
-                date=obs.obs_date.isoformat(),
-                value=float(obs.value) if obs.value is not None else None
-            ))
-        
-        series_list.append(TimeSeriesSeries(
-            name="价格",
-            data=data_points,
-            unit=metric_map['price'].unit
-        ))
-    
-    data_source = get_source_name_from_metric(metrics[0]) if metrics else "企业集团出栏跟踪"
-    
+    """西南样本企业日度出栏"""
+    sd = _compute_start_date(months)
+    # Frontend expects series named '出栏量' (left axis) and '均重' (right axis)
+    output = _query_aggregate(db, "SAMPLE", "sample_volume", "SOUTHWEST", sd)
+    if not output:
+        output = _query_region_sum(db, "SOUTHWEST", "actual_sales", sd)
+    weight = _query_aggregate(db, "SAMPLE", "sample_weight", "SOUTHWEST", sd)
+
+    series = []
+    ld = None
+    if output:
+        series.append(_to_series(output, "出栏量", "头"))
+        ld = _max_date(ld, _latest(output))
+    if weight:
+        series.append(_to_series(weight, "均重", "公斤"))
+        ld = _max_date(ld, _latest(weight))
+    if not series:
+        return EnterpriseStatisticsResponse(
+            chart_title="西南样本企业日度出栏", series=[], data_source="企业集团出栏跟踪",
+            update_time=None, latest_date=None)
     return EnterpriseStatisticsResponse(
-        chart_title="西南样本企业日度出栏",
-        series=series_list,
-        data_source=data_source,
-        update_time=format_update_date(latest_date),
-        latest_date=latest_date.isoformat() if latest_date else None
-    )
+        chart_title="西南样本企业日度出栏", series=series, data_source="企业集团出栏跟踪",
+        update_time=_format_update_date(ld), latest_date=ld.isoformat() if ld else None)
 
 
-class ProvinceSummaryTableRow(BaseModel):
-    """省份汇总表格行"""
-    date: str  # YYYY-MM-DD格式
-    period_type: str  # 旬度类型：上旬、中旬、月度
-    province: str  # 省份名称
-    value: Optional[float]
+# ---------------------------------------------------------------------------
+# Province summary table (D2 page)
+# ---------------------------------------------------------------------------
+
+PROVINCE_SUMMARY_REGIONS = [
+    ("四川", "SICHUAN"),
+    ("广西", "GUANGXI"),
+    ("贵州", "GUIZHOU"),
+]
 
 
 class ProvinceSummaryTableResponse(BaseModel):
-    """省份汇总表格响应"""
-    columns: List[str]  # 列名（包含日期、旬度、以及各省份各指标的组合，如"广东-出栏计划"）
-    rows: List[Dict[str, Any]]  # 行数据，每行包含date、period_type和各个省份各指标的值
-    data_source: str
-    update_time: Optional[str]
-    latest_date: Optional[str]
+    columns: List[str]
+    rows: List[Dict[str, Any]]
+    data_source: str = "企业集团出栏跟踪"
+    update_time: Optional[str] = None
+    latest_date: Optional[str] = None
+
+
+def _get_period_type(d: date) -> str:
+    """Determine 旬度 period for a date."""
+    if d.day <= 10:
+        return "上旬"
+    elif d.day <= 20:
+        return "中旬"
+    return "月度"
+
+
+def _period_start(d: date) -> date:
+    """Get the start date of the 旬 period containing d."""
+    if d.day <= 10:
+        return d.replace(day=1)
+    elif d.day <= 20:
+        return d.replace(day=11)
+    else:
+        return d.replace(day=21)
 
 
 @router.get("/province-summary-table", response_model=ProvinceSummaryTableResponse)
 async def get_province_summary_table(
-    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
+    """重点省份旬度汇总表格"""
+    # Determine date range — default to latest 4 months
+    if not end_date:
+        r = db.execute(text(
+            "SELECT MAX(trade_date) FROM fact_enterprise_daily "
+            "WHERE metric_type IN ('actual_sales','planned_volume')"
+        )).scalar()
+        ed = r if r else date.today()
+    else:
+        ed = date.fromisoformat(end_date)
+
+    if not start_date:
+        sd = ed - timedelta(days=120)
+    else:
+        sd = date.fromisoformat(start_date)
+
+    # Query data per province
+    sql = """
+        SELECT trade_date, region_code, metric_type, SUM(value) AS v
+        FROM fact_enterprise_daily
+        WHERE region_code IN ('SICHUAN','GUANGXI','GUIZHOU')
+          AND metric_type IN ('actual_sales','planned_volume')
+          AND trade_date BETWEEN :sd AND :ed
+          AND value IS NOT NULL
+          AND company_code != 'SAMPLE'
+        GROUP BY trade_date, region_code, metric_type
+        ORDER BY trade_date
     """
-    获取重点省份旬度汇总表格数据
-    
-    数据来源：重点省区汇总sheet
-    按省份展示计划量数据
+    rows = db.execute(text(sql), {"sd": sd, "ed": ed}).fetchall()
+
+    # Also get MS average price per province
+    price_sql = """
+        SELECT trade_date, region_code, value
+        FROM fact_enterprise_daily
+        WHERE region_code IN ('SICHUAN','GUANGXI','GUIZHOU')
+          AND metric_type = 'ms_avg_price'
+          AND company_code = 'MS'
+          AND trade_date BETWEEN :sd AND :ed
+          AND value IS NOT NULL
+        ORDER BY trade_date
     """
-    # 解析日期范围
-    start = None
-    end = None
-    if start_date:
-        start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    if end_date:
-        end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    
-    # 如果没有指定日期范围，先查询数据的实际最新日期
-    if not start or not end:
-        # 先查询"汇总"sheet的指标，获取数据的实际日期范围
-        temp_metrics = db.query(DimMetric).filter(
-            DimMetric.sheet_name == "汇总"
-        ).all()
-        
-        if temp_metrics:
-            temp_metric_ids = [m.id for m in temp_metrics]
-            # 查询数据的实际最新日期
-            actual_max_date = db.query(func.max(FactObservation.obs_date)).filter(
-                FactObservation.metric_id.in_(temp_metric_ids)
-            ).scalar()
-            
-            if actual_max_date:
-                # 使用数据的实际最新日期作为结束日期
-                end = end or actual_max_date
-                # 从最新日期往前推4个月（120天）
-                start = start or (end - timedelta(days=120))
-            else:
-                # 如果没有数据，使用今天
-                end = end or date.today()
-                start = start or (end - timedelta(days=120))
-        else:
-            # 如果没有找到指标，使用今天
-            end = end or date.today()
-            start = start or (end - timedelta(days=120))
-    
-    # 查询指标（优先查找"汇总"sheet，如果没有则查找"重点省区汇总"sheet）
-    # 查询汇总sheet的所有指标
-    metrics = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "汇总"
-    ).all()
-    
-    if not metrics:
-        # 如果没有找到汇总sheet，尝试查找重点省区汇总sheet
-        metrics = db.query(DimMetric).filter(
-            and_(
-                DimMetric.sheet_name == "重点省区汇总",
-                or_(
-                    func.json_extract(DimMetric.parse_json, '$.metric_key') == 'PROVINCE_PLAN',
-                    DimMetric.metric_name.like('%计划%')
-                )
-            )
-        ).all()
-    
-    if not metrics:
-        # 返回空数据而不是抛出异常，让前端显示空表格
-        return ProvinceSummaryTableResponse(
-            columns=['日期', '旬度'],
-            rows=[],
-            data_source="企业集团出栏跟踪",
-            update_time=None,
-            latest_date=None
-        )
-    
-    # 过滤出有效的DimMetric对象
-    valid_metrics = [m for m in metrics if hasattr(m, 'id') and hasattr(m, 'metric_name')]
-    if not valid_metrics:
-        return ProvinceSummaryTableResponse(
-            columns=['日期', '旬度'],
-            rows=[],
-            data_source="企业集团出栏跟踪",
-            update_time=None,
-            latest_date=None
-        )
-    
-    metric_ids = [m.id for m in valid_metrics]
-    
-    # 获取所有省份列表（从tags_json中提取region）
-    # 只显示广东、四川、贵州三个省份
-    target_provinces = ['广东', '四川', '贵州']
-    
-    try:
-        # 使用json_unquote去除引号，因为json_extract返回的值可能带引号
-        provinces_query = db.query(
-            func.json_unquote(
-                func.json_extract(FactObservation.tags_json, '$.region')
-            ).label('region')
-        ).filter(
-            FactObservation.metric_id.in_(metric_ids),
-            FactObservation.obs_date >= start,
-            FactObservation.obs_date <= end,
-            func.json_unquote(
-                func.json_extract(FactObservation.tags_json, '$.region')
-            ).in_(target_provinces)
-        ).distinct()
-        
-        found_provinces = [p.region for p in provinces_query.all() if p.region and p.region in target_provinces]
-        # 确保顺序：广东、四川、贵州
-        provinces = [p for p in target_provinces if p in found_provinces]
-    except Exception as e:
-        print(f"获取省份列表失败: {e}")
-        provinces = target_provinces  # 使用默认列表
-    
-    # 如果没有从tags中获取到省份，使用默认省份列表
-    if not provinces:
-        provinces = target_provinces
-    
-    # 定义指标映射（指标名称 -> metric_key）
-    metric_mapping = {
-        '出栏计划': 'PROVINCE_PLAN',
-        '计划出栏量': 'PROVINCE_PLAN',
-        '实际出栏量': 'PROVINCE_ACTUAL',
-        '计划完成率': 'PROVINCE_COMPLETION_RATE',
-        '计划达成率': 'PROVINCE_COMPLETION_RATE',
-        '均重': 'PROVINCE_AVG_WEIGHT',
-        '实际均重': 'PROVINCE_AVG_WEIGHT',
-        '计划均重': 'PROVINCE_PLAN_WEIGHT',
-        '销售均价': 'PROVINCE_PRICE'
-    }
-    
-    # 定义要显示的指标列表（按顺序）
-    display_metrics = ['出栏计划', '实际出栏量', '计划完成率', '均重', '销售均价']
-    
-    # 定义各省份的指标配置
-    province_metrics_config = {
-        '广东': ['出栏计划', '实际出栏量', '计划完成率', '均重', '销售均价'],
-        '四川': ['出栏计划', '实际出栏量', '计划完成率', '均重'],  # 四川没有销售均价
-        '贵州': ['计划出栏量', '实际出栏量', '计划达成率', '实际均重']  # 贵州的指标名称不同
-    }
-    
-    # 构建列名：日期、旬度、以及各省份各指标的组合
-    columns = ['日期', '旬度']
-    for province in provinces:
-        province_metrics_list = province_metrics_config.get(province, display_metrics)
-        for metric in province_metrics_list:
-            columns.append(f"{province}-{metric}")
-    
-    # 获取所有日期和旬度类型
-    dates_periods_query = db.query(
-        FactObservation.obs_date,
-        func.json_unquote(
-            func.json_extract(FactObservation.tags_json, '$.period_type')
-        ).label('period_type')
-    ).filter(
-        FactObservation.metric_id.in_(metric_ids),
-        FactObservation.obs_date >= start,
-        FactObservation.obs_date <= end,
-        func.json_extract(FactObservation.tags_json, '$.period_type').isnot(None)
-    ).distinct().order_by(FactObservation.obs_date)
-    
-    dates_periods = [(d.obs_date, d.period_type) for d in dates_periods_query.all()]
-    
-    # 如果没有旬度信息，尝试从日期推断
-    if not dates_periods:
-        dates_query = db.query(
-            FactObservation.obs_date
-        ).filter(
-            FactObservation.metric_id.in_(metric_ids),
-            FactObservation.obs_date >= start,
-            FactObservation.obs_date <= end
-        ).distinct().order_by(FactObservation.obs_date)
-        
-        dates = [d.obs_date for d in dates_query.all()]
-        # 根据日期推断旬度
-        dates_periods = []
-        for date_val in dates:
-            day = date_val.day
-            if day <= 10:
-                period_type = '上旬'
-            elif day <= 20:
-                period_type = '中旬'
-            else:
-                period_type = '月度'
-            dates_periods.append((date_val, period_type))
-    
-    # 构建表格数据
-    rows = []
-    for date_val, period_type in dates_periods:
-        row: Dict[str, Any] = {
-            'date': date_val.isoformat(),
-            'period_type': period_type if period_type else '月度'
-        }
-        
-        # 查询每个省份每个指标的数据
-        for province in provinces:
-            metrics_list = province_metrics_config.get(province, display_metrics)
-            for metric_display in metrics_list:
-                # 查找对应的metric_key
-                target_metric_key = metric_mapping.get(metric_display)
-                if not target_metric_key:
-                    continue
-                
-                # 查找对应的DimMetric（通过metric_key或metric_name匹配）
-                target_metric = None
-                for m in valid_metrics:
-                    metric_key = m.parse_json.get('metric_key') if m.parse_json else None
-                    metric_name = m.metric_name or ""
-                    
-                    # 优先匹配metric_key
-                    if metric_key == target_metric_key:
-                        target_metric = m
-                        break
-                    # 如果metric_key不匹配，尝试通过metric_name匹配
-                    elif metric_display in metric_name:
-                        # 如果metric_key为空或匹配，使用这个metric
-                        if not metric_key or metric_key == target_metric_key:
-                            target_metric = m
-                            break
-                
-                if not target_metric:
-                    row[f"{province}-{metric_display}"] = None
-                    continue
-                
-                # 查询数据（同时匹配region和period_type）
-                # 使用json_unquote去除引号
-                obs_query = db.query(FactObservation).filter(
-                    FactObservation.metric_id == target_metric.id,
-                    FactObservation.obs_date == date_val,
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, '$.region')
-                    ) == province
-                )
-                
-                # 如果period_type存在且不为空，也匹配period_type
-                if period_type and period_type.strip():
-                    obs_query = obs_query.filter(
-                        func.json_unquote(
-                            func.json_extract(FactObservation.tags_json, '$.period_type')
-                        ) == period_type
-                    )
-                
-                obs = obs_query.first()
-                
-                if obs and obs.value is not None:
-                    try:
-                        row[f"{province}-{metric_display}"] = float(obs.value)
-                    except (ValueError, TypeError):
-                        row[f"{province}-{metric_display}"] = None
-                else:
-                    row[f"{province}-{metric_display}"] = None
-        
-        rows.append(row)
-    
-    # 获取数据来源和更新时间：以实际出栏量（PROVINCE_ACTUAL）有数据的日期为准
-    latest_date = None
-    actual_output_metric = next(
-        (
-            m for m in valid_metrics
-            if (m.parse_json or {}).get('metric_key') == 'PROVINCE_ACTUAL'
-            or (m.metric_name or '').find('实际出栏') >= 0
-        ),
-        None
-    )
-    if actual_output_metric:
-        actual_max = db.query(func.max(FactObservation.obs_date)).filter(
-            FactObservation.metric_id == actual_output_metric.id,
-            FactObservation.obs_date >= start,
-            FactObservation.obs_date <= end,
-            FactObservation.value.isnot(None)
-        ).scalar()
-        latest_date = actual_max
-    if latest_date is None and dates_periods:
-        latest_date = max([dp[0] for dp in dates_periods])
-    data_source = get_source_name_from_metric(valid_metrics[0]) if valid_metrics else "企业集团出栏跟踪"
-    
+    price_rows = db.execute(text(price_sql), {"sd": sd, "ed": ed}).fetchall()
+
+    # Build period-level aggregation: (period_start, region) -> {metric: sum}
+    region_name_map = {code: name for name, code in PROVINCE_SUMMARY_REGIONS}
+    period_data: Dict[tuple, Dict[str, float]] = {}  # (period_start, period_type) -> {col: val}
+
+    for r in rows:
+        td, rgn, mt, val = r[0], r[1], r[2], float(r[3])
+        prov_name = region_name_map.get(rgn, rgn)
+        ps = _period_start(td)
+        pt = _get_period_type(td)
+        key = (ps, pt)
+        if key not in period_data:
+            period_data[key] = {}
+        col = f"{prov_name}-{'出栏计划' if mt == 'planned_volume' else '实际出栏量'}"
+        period_data[key][col] = period_data[key].get(col, 0) + val
+
+    # Aggregate prices: average over the period
+    price_agg: Dict[tuple, Dict[str, list]] = {}
+    for r in price_rows:
+        td, rgn, val = r[0], r[1], float(r[2])
+        prov_name = region_name_map.get(rgn, rgn)
+        ps = _period_start(td)
+        pt = _get_period_type(td)
+        key = (ps, pt)
+        col = f"{prov_name}-均价"
+        if key not in price_agg:
+            price_agg[key] = {}
+        if col not in price_agg[key]:
+            price_agg[key][col] = []
+        price_agg[key][col].append(val)
+
+    for key, cols in price_agg.items():
+        if key not in period_data:
+            period_data[key] = {}
+        for col, vals in cols.items():
+            period_data[key][col] = round(sum(vals) / len(vals), 2)
+
+    # Compute completion rates
+    for key, cols in period_data.items():
+        for prov_name, _ in PROVINCE_SUMMARY_REGIONS:
+            plan_col = f"{prov_name}-出栏计划"
+            actual_col = f"{prov_name}-实际出栏量"
+            rate_col = f"{prov_name}-计划完成率"
+            plan = cols.get(plan_col, 0)
+            actual = cols.get(actual_col, 0)
+            if plan and plan > 0:
+                cols[rate_col] = round(actual / plan, 4)
+
+    # Build columns
+    columns = ["日期", "旬度"]
+    for prov_name, _ in PROVINCE_SUMMARY_REGIONS:
+        columns.extend([
+            f"{prov_name}-出栏计划",
+            f"{prov_name}-实际出栏量",
+            f"{prov_name}-计划完成率",
+            f"{prov_name}-均价",
+        ])
+
+    # Build rows sorted by date descending
+    sorted_keys = sorted(period_data.keys(), key=lambda x: x[0], reverse=True)
+    result_rows = []
+    for ps, pt in sorted_keys:
+        row: Dict[str, Any] = {"date": ps.isoformat(), "period_type": pt}
+        row.update(period_data[(ps, pt)])
+        result_rows.append(row)
+
+    latest = sorted_keys[0][0].isoformat() if sorted_keys else None
+
     return ProvinceSummaryTableResponse(
         columns=columns,
-        rows=rows,
-        data_source=data_source,
-        update_time=format_update_date(latest_date),
-        latest_date=latest_date.isoformat() if latest_date else None
+        rows=result_rows,
+        latest_date=latest,
+        update_time=_format_update_date(sorted_keys[0][0]) if sorted_keys else None,
     )

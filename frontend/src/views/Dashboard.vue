@@ -11,6 +11,28 @@
       </el-button>
     </header>
 
+    <!-- 数据更新状态条 -->
+    <div v-if="freshnessData" class="freshness-bar">
+      <div class="freshness-bar-inner">
+        <span class="freshness-label">数据更新状态</span>
+        <div class="freshness-items">
+          <div
+            v-for="item in freshnessItems"
+            :key="item.key"
+            class="freshness-item"
+            :class="item.statusClass"
+          >
+            <span class="freshness-dot"></span>
+            <span class="freshness-name">{{ item.label }}</span>
+            <span class="freshness-date">{{ item.dateText }}</span>
+          </div>
+        </div>
+        <span v-if="freshnessData.summary.last_import_time" class="freshness-import-time">
+          最近导入：{{ formatImportTime(freshnessData.summary.last_import_time) }}
+        </span>
+      </div>
+    </div>
+
     <div ref="exportTargetRef" class="charts-container">
       <!-- 第一行：A1区域 全国猪价、标肥价差 【季节性图】 -->
       <div class="chart-row">
@@ -157,7 +179,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import html2canvas from 'html2canvas'
@@ -171,6 +193,8 @@ import {
   getRegionSpreadSeasonality,
   getProvinceIndicatorsSeasonality
 } from '../api/price-display'
+import { dataFreshnessApi } from '../api/data-freshness'
+import type { DataFreshnessResponse, TableFreshnessItem } from '../api/data-freshness'
 import type { SeasonalityData } from '../components/SeasonalityChart.vue'
 import type { SeasonalityResponse } from '../api/price-display'
 
@@ -204,6 +228,54 @@ const slaughterProfitData = ref<SeasonalityData | null>(null)
 const selfProfitData = ref<SeasonalityData | null>(null)
 const regionSpreadGZData = ref<SeasonalityData | null>(null)
 const regionSpreadHNData = ref<SeasonalityData | null>(null)
+
+// 数据新鲜度
+const freshnessData = ref<DataFreshnessResponse | null>(null)
+
+interface FreshnessDisplayItem {
+  key: string
+  label: string
+  dateText: string
+  statusClass: string
+}
+
+const freshnessItems = computed<FreshnessDisplayItem[]>(() => {
+  if (!freshnessData.value?.tables?.length) return []
+  // 按 label 合并（取每个 label 的最新日期）
+  const map = new Map<string, TableFreshnessItem>()
+  for (const t of freshnessData.value.tables) {
+    const existing = map.get(t.label)
+    if (!existing || (t.latest_date && (!existing.latest_date || t.latest_date > existing.latest_date))) {
+      map.set(t.label, t)
+    }
+  }
+  return Array.from(map.entries()).map(([label, t]) => {
+    let statusClass = 'status-unknown'
+    let dateText = '无数据'
+    if (t.latest_date) {
+      dateText = t.latest_date
+      if (t.days_ago !== null && t.days_ago !== undefined) {
+        if (t.days_ago <= 1) statusClass = 'status-fresh'
+        else if (t.days_ago <= 7) statusClass = 'status-recent'
+        else statusClass = 'status-stale'
+      }
+    }
+    return { key: `${t.table}-${t.source || ''}`, label, dateText, statusClass }
+  })
+})
+
+function formatImportTime(dt: string | null): string {
+  if (!dt) return ''
+  return dt.replace('T', ' ').slice(0, 16)
+}
+
+const loadFreshness = async () => {
+  try {
+    freshnessData.value = await dataFreshnessApi.getDataFreshness() as any
+  } catch (e) {
+    console.warn('加载数据新鲜度失败:', e)
+  }
+}
 
 /** 周度数据（week 1-52，后端按周序返回）→ SeasonalityData */
 function toSeasonalityDataWeek(res: SeasonalityResponse | null): SeasonalityData | null {
@@ -395,6 +467,7 @@ const exportToImage = async () => {
 }
 
 onMounted(() => {
+  loadFreshness()
   loadA1()
   loadA3()
   loadA2()
@@ -439,6 +512,75 @@ onMounted(() => {
 
 .export-btn {
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.freshness-bar {
+  margin-bottom: 16px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  padding: 12px 20px;
+}
+
+.freshness-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.freshness-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.freshness-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+}
+
+.freshness-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.freshness-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.freshness-item.status-fresh .freshness-dot { background: #22c55e; }
+.freshness-item.status-fresh { background: #f0fdf4; color: #166534; }
+.freshness-item.status-recent .freshness-dot { background: #eab308; }
+.freshness-item.status-recent { background: #fefce8; color: #854d0e; }
+.freshness-item.status-stale .freshness-dot { background: #ef4444; }
+.freshness-item.status-stale { background: #fef2f2; color: #991b1b; }
+
+.freshness-name {
+  font-weight: 500;
+}
+
+.freshness-date {
+  opacity: 0.7;
+}
+
+.freshness-import-time {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 .charts-container {

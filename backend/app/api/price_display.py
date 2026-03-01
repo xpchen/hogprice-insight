@@ -1,90 +1,49 @@
 """
-价格展示API
-提供5个图表所需的数据接口：
+价格展示API (hogprice_v3)
+查询 fact_price_daily / fact_spread_daily / fact_slaughter_daily / dim_region 四张表。
+
+提供图表数据接口：
 1. 全国猪价（季节性）
 2. 标肥价差（季节性）
 3. 猪价&标肥价差（可年度筛选）
 4. 日度屠宰量（农历）
 5. 标肥价差（分省区）
 6. 区域价差（季节性）
+7. 毛白价差双轴
+8. 冻品库容率（省份列表 / 季节性）  -- 新表中暂无，保留接口返回空
+9. 产业链数据（周度）              -- 新表中暂无，保留接口返回空
+10. 省份多指标面板
 """
-from typing import List, Optional, Dict, Any
-from datetime import date, datetime
-import re
+from typing import List, Optional, Dict, Any, Tuple
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func, extract, text
+from sqlalchemy import text
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.config import settings
 from app.core.security import get_current_user
 from app.models.sys_user import SysUser
-from app.models.fact_observation import FactObservation
-from app.models.fact_observation_tag import FactObservationTag
-from app.models.dim_metric import DimMetric
-from app.models.dim_region import DimRegion
-from app.models.dim_geo import DimGeo
 from app.services.lunar_alignment_service import (
     solar_to_lunar,
-    _calculate_lunar_day_index,
+    get_lunar_year_date_range,
     get_leap_month_info,
-    get_lunar_year_date_range
+    get_lunar_year_date_range_la_ba,
 )
-from app.utils.price_display_utils import resolve_update_time
 
 router = APIRouter(prefix="/api/v1/price-display", tags=["price-display"])
 
 
-def get_source_name_from_metric(metric: DimMetric) -> str:
-    """
-    从DimMetric推断数据来源名称（标准化）
-    
-    根据sheet_name或其他字段判断数据来源：
-    - 钢联相关sheet -> "钢联"
-    - 涌益相关sheet -> "涌益"
-    """
-    if not metric:
-        return "未知"
-    
-    sheet_name = metric.sheet_name or ""
-    
-    # 钢联数据源
-    if any(keyword in sheet_name for keyword in ["分省区猪价", "肥标价差", "毛白价差", "区域价差"]):
-        return "钢联"
-    
-    # 涌益数据源
-    if any(keyword in sheet_name for keyword in ["价格+宰量", "涌益"]):
-        return "涌益"
-    
-    # 默认返回钢联（大部分数据来自钢联）
-    return "钢联"
-
-
-def format_update_date(date_obj: Optional[date]) -> Optional[str]:
-    """
-    格式化更新日期（只显示年月日，不显示时刻）
-    
-    返回格式：YYYY年MM月DD日
-    """
-    if not date_obj:
-        return None
-    
-    return f"{date_obj.year}年{date_obj.month:02d}月{date_obj.day:02d}日"
-
-
-@router.get("/test")
-async def test_price_display():
-    """测试端点，验证路由是否工作"""
-    return {"status": "ok", "message": "Price display API is working"}
-
+# ---------------------------------------------------------------------------
+# Pydantic 响应模型（与前端约定保持不变）
+# ---------------------------------------------------------------------------
 
 class SeasonalityDataPoint(BaseModel):
     """季节性数据点"""
     year: int
-    month_day: str  # "MM-DD"格式
+    month_day: str  # "MM-DD" 格式
     value: Optional[float]
-    lunar_day_index: Optional[int] = None  # 农历日期索引（用于农历对齐）
+    lunar_day_index: Optional[int] = None
 
 
 class SeasonalitySeries(BaseModel):
@@ -92,8 +51,8 @@ class SeasonalitySeries(BaseModel):
     year: int
     data: List[SeasonalityDataPoint]
     color: Optional[str] = None
-    is_leap_month: Optional[bool] = False  # 是否为闰月系列
-    leap_month: Optional[int] = None  # 如果是闰月，记录闰月月份
+    is_leap_month: Optional[bool] = False
+    leap_month: Optional[int] = None
 
 
 class SeasonalityResponse(BaseModel):
@@ -107,9 +66,9 @@ class SeasonalityResponse(BaseModel):
 
 class PriceSpreadResponse(BaseModel):
     """价格和价差响应"""
-    price_data: List[Dict[str, Any]]  # 价格数据
-    spread_data: List[Dict[str, Any]]  # 价差数据
-    available_years: List[int]  # 可用年份
+    price_data: List[Dict[str, Any]]
+    spread_data: List[Dict[str, Any]]
+    available_years: List[int]
     update_time: Optional[str] = None
 
 
@@ -120,7 +79,7 @@ class SlaughterLunarResponse(BaseModel):
     series: List[SeasonalitySeries]
     update_time: Optional[str] = None
     latest_date: Optional[str] = None
-    x_axis_labels: Optional[Dict[int, str]] = None  # 索引到农历日期标签的映射，如 {1: "正月初八", 30: "二月初一"}
+    x_axis_labels: Optional[Dict[int, str]] = None
 
 
 class SlaughterPriceTrendResponse(BaseModel):
@@ -132,170 +91,34 @@ class SlaughterPriceTrendResponse(BaseModel):
     latest_date: Optional[str] = None
 
 
-class LiveWhiteSpreadDualAxisResponse(BaseModel):
-    """毛白价差双轴数据响应"""
-    spread_data: List[Dict[str, Any]]  # 毛白价差数据 [{date, value}]
-    ratio_data: List[Dict[str, Any]]  # 价差比率数据 [{date, value}]
-    spread_unit: str  # 毛白价差单位
-    ratio_unit: str  # 价差比率单位
+class SlaughterPriceTrendSolarResponse(BaseModel):
+    """屠宰&价格 相关走势（按年，阳历日期 正月初八~腊月二十八）"""
+    slaughter_data: List[Dict[str, Any]]
+    price_data: List[Dict[str, Any]]
+    available_years: List[int]
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     update_time: Optional[str] = None
     latest_date: Optional[str] = None
 
 
-@router.get("/slaughter-price-trend/lunar-year", response_model=SlaughterPriceTrendResponse)
-async def get_slaughter_price_trend_lunar_year(
-    lunar_year: Optional[int] = Query(None, description="农历年份（如2024），如果为None则返回所有可用年份"),
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
-):
-    """
-    获取屠宰量&价格走势数据（农历年度日期范围）
-    
-    日期范围：每年2月20日至次年2月10日
-    条件：
-    - 2月20日必须对应农历的正月
-    - 2月10日（次年）必须对应农历的腊月或之前
-    
-    图例年份为农历年份
-    """
-    # 查询日度屠宰量指标（优先 _1 全量，再 _2，与 /slaughter/lunar 一致）
-    slaughter_metric = db.query(DimMetric).filter(
-        func.json_extract(DimMetric.parse_json, '$.metric_key') == 'YY_D_SLAUGHTER_TOTAL_1',
-        DimMetric.sheet_name == "价格+宰量",
-        DimMetric.freq == "D"
-    ).first()
-    if not slaughter_metric:
-        slaughter_metric = db.query(DimMetric).filter(
-            func.json_extract(DimMetric.parse_json, '$.metric_key') == 'YY_D_SLAUGHTER_TOTAL_2',
-            DimMetric.freq == "D"
-        ).first()
-    if not slaughter_metric:
-        slaughter_metric = db.query(DimMetric).filter(
-            DimMetric.metric_name.like("%屠宰量%"),
-            DimMetric.sheet_name == "价格+宰量",
-            DimMetric.freq == "D"
-        ).first()
-    if not slaughter_metric:
-        slaughter_metric = db.query(DimMetric).filter(
-            or_(
-                DimMetric.raw_header.like("%屠宰量%"),
-                DimMetric.raw_header.like("%宰量%")
-            ),
-            DimMetric.sheet_name == "价格+宰量",
-            DimMetric.freq == "D"
-        ).first()
-    # 查询价格指标
-    price_metric = db.query(DimMetric).filter(
-        DimMetric.metric_name.like("%价格%"),
-        DimMetric.sheet_name == "价格+宰量",
-        DimMetric.freq == "D"
-    ).first()
-    
-    if not slaughter_metric:
-        raise HTTPException(status_code=404, detail="未找到日度屠宰量指标")
-    if not price_metric:
-        raise HTTPException(status_code=404, detail="未找到价格指标")
-    
-    # 获取可用的农历年份范围（最近5年）
-    current_solar_year = datetime.now().year
-    lunar_years_to_check = list(range(current_solar_year - 2, current_solar_year + 3))
-    
-    # 查找符合条件的农历年度日期范围
-    valid_lunar_years: List[int] = []
-    lunar_year_ranges: Dict[int, Tuple[date, date]] = {}
-    
-    for check_year in lunar_years_to_check:
-        date_range = get_lunar_year_date_range(check_year)
-        if date_range:
-            valid_lunar_years.append(check_year)
-            lunar_year_ranges[check_year] = date_range
-    
-    if not valid_lunar_years:
-        return SlaughterPriceTrendResponse(
-            slaughter_data=[],
-            price_data=[],
-            available_lunar_years=[],
-            update_time=None,
-            latest_date=None
-        )
-    
-    # 如果指定了lunar_year，只查询该年份
-    if lunar_year is not None:
-        if lunar_year not in valid_lunar_years:
-            raise HTTPException(status_code=400, detail=f"农历年份{lunar_year}不符合条件或没有数据")
-        valid_lunar_years = [lunar_year]
-    
-    # 查询所有符合条件的日期范围的数据
-    all_start_dates = [r[0] for r in lunar_year_ranges.values()]
-    all_end_dates = [r[1] for r in lunar_year_ranges.values()]
-    min_start_date = min(all_start_dates)
-    max_end_date = max(all_end_dates)
-    
-    # 查询屠宰量数据
-    slaughter_query = db.query(FactObservation).filter(
-        FactObservation.metric_id == slaughter_metric.id,
-        FactObservation.period_type == "day",
-        FactObservation.obs_date >= min_start_date,
-        FactObservation.obs_date <= max_end_date
-    )
-    slaughter_obs = slaughter_query.order_by(FactObservation.obs_date).all()
-    
-    # 查询价格数据
-    price_query = db.query(FactObservation).filter(
-        FactObservation.metric_id == price_metric.id,
-        FactObservation.period_type == "day",
-        FactObservation.obs_date >= min_start_date,
-        FactObservation.obs_date <= max_end_date
-    )
-    price_obs = price_query.order_by(FactObservation.obs_date).all()
-    
-    # 构建响应数据：按农历年度分组
-    slaughter_data: List[Dict[str, Any]] = []
-    price_data: List[Dict[str, Any]] = []
-    
-    for lunar_year_val in valid_lunar_years:
-        start_date, end_date = lunar_year_ranges[lunar_year_val]
-        
-        # 筛选该农历年度范围内的数据
-        for obs in slaughter_obs:
-            if start_date <= obs.obs_date <= end_date:
-                slaughter_data.append({
-                    "date": obs.obs_date.isoformat(),
-                    "year": lunar_year_val,  # 使用农历年份
-                    "value": float(obs.value) if obs.value is not None else None
-                })
-        
-        for obs in price_obs:
-            if start_date <= obs.obs_date <= end_date:
-                price_data.append({
-                    "date": obs.obs_date.isoformat(),
-                    "year": lunar_year_val,  # 使用农历年份
-                    "value": float(obs.value) if obs.value is not None else None
-                })
-    
-    # 获取最新日期
-    latest_date = None
-    if slaughter_obs:
-        latest_date = slaughter_obs[-1].obs_date.isoformat()
-    elif price_obs:
-        latest_date = price_obs[-1].obs_date.isoformat()
-    
-    return SlaughterPriceTrendResponse(
-        slaughter_data=slaughter_data,
-        price_data=price_data,
-        available_lunar_years=valid_lunar_years,
-        update_time=latest_date,
-        latest_date=latest_date
-    )
+class LiveWhiteSpreadDualAxisResponse(BaseModel):
+    """毛白价差双轴数据响应"""
+    spread_data: List[Dict[str, Any]]
+    ratio_data: List[Dict[str, Any]]
+    spread_unit: str
+    ratio_unit: str
+    update_time: Optional[str] = None
+    latest_date: Optional[str] = None
 
 
 class ProvinceSpreadInfo(BaseModel):
     """省区标肥价差信息"""
-    province_name: str  # 省区名称
-    province_code: Optional[str] = None  # 省区代码
-    metric_id: int  # 指标ID
-    latest_date: Optional[str] = None  # 最新数据日期
-    latest_value: Optional[float] = None  # 最新值
+    province_name: str
+    province_code: Optional[str] = None
+    metric_id: int = 0  # 兼容旧字段，新表无意义，固定 0
+    latest_date: Optional[str] = None
+    latest_value: Optional[float] = None
 
 
 class ProvinceSpreadListResponse(BaseModel):
@@ -304,156 +127,344 @@ class ProvinceSpreadListResponse(BaseModel):
     unit: str
 
 
+class FrozenInventoryProvinceInfo(BaseModel):
+    province_name: str
+    metric_id: int = 0
+    latest_date: Optional[str] = None
+    latest_value: Optional[float] = None
+
+
+class FrozenInventoryProvinceListResponse(BaseModel):
+    provinces: List[FrozenInventoryProvinceInfo]
+    unit: str
+
+
+class FrozenInventorySeasonalityResponse(BaseModel):
+    metric_name: str
+    unit: str
+    province_name: str
+    series: List[SeasonalitySeries]
+    update_time: Optional[str] = None
+    latest_date: Optional[str] = None
+    period_change: Optional[float] = None
+    yoy_change: Optional[float] = None
+
+
+class IndustryChainSeasonalityResponse(BaseModel):
+    metric_name: str
+    unit: str
+    series: List[SeasonalitySeries]
+    update_time: Optional[str] = None
+    latest_date: Optional[str] = None
+    period_change: Optional[float] = None
+    yoy_change: Optional[float] = None
+
+
+class ProvinceIndicatorsResponse(BaseModel):
+    province_name: str
+    indicators: Dict[str, SeasonalityResponse]
+
+
+# ---------------------------------------------------------------------------
+# 通用辅助函数
+# ---------------------------------------------------------------------------
+
+def _rows_to_daily_seasonality(
+    rows,
+    *,
+    date_col: str = "trade_date",
+    value_col: str = "value",
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
+) -> Tuple[List[SeasonalitySeries], Optional[str]]:
+    """将 (trade_date, value) 行列表转为按年分组的 SeasonalitySeries 列表。"""
+    year_data: Dict[int, List[Dict]] = {}
+    for row in rows:
+        d = row._mapping[date_col] if hasattr(row, '_mapping') else row[date_col]
+        v = row._mapping[value_col] if hasattr(row, '_mapping') else row[value_col]
+        if d is None:
+            continue
+        year = d.year
+        if start_year and year < start_year:
+            continue
+        if end_year and year > end_year:
+            continue
+        if year not in year_data:
+            year_data[year] = []
+        year_data[year].append({
+            "month_day": d.strftime("%m-%d"),
+            "value": float(v) if v is not None else None,
+            "date": d,
+        })
+
+    series: List[SeasonalitySeries] = []
+    for year in sorted(year_data.keys()):
+        data_points = [
+            SeasonalityDataPoint(year=year, month_day=item["month_day"], value=item["value"])
+            for item in sorted(year_data[year], key=lambda x: x["date"])
+        ]
+        series.append(SeasonalitySeries(year=year, data=data_points))
+
+    latest_date: Optional[str] = None
+    if rows:
+        last_row = rows[-1]
+        d = last_row._mapping[date_col] if hasattr(last_row, '_mapping') else last_row[date_col]
+        if d:
+            latest_date = d.isoformat()
+    return series, latest_date
+
+
+def _rows_to_weekly_seasonality(
+    rows,
+    *,
+    date_col: str = "trade_date",
+    value_col: str = "value",
+) -> Tuple[List[SeasonalitySeries], Optional[str]]:
+    """将周度 (trade_date, value) 行列表按 ISO 周号分组为季节性曲线。"""
+    year_data: Dict[int, Dict[int, List[float]]] = {}
+    for row in rows:
+        d = row._mapping[date_col] if hasattr(row, '_mapping') else row[date_col]
+        v = row._mapping[value_col] if hasattr(row, '_mapping') else row[value_col]
+        if d is None:
+            continue
+        year = d.year
+        week = max(1, min(52, d.isocalendar()[1]))
+        if year not in year_data:
+            year_data[year] = {}
+        if week not in year_data[year]:
+            year_data[year][week] = []
+        if v is not None:
+            year_data[year][week].append(float(v))
+
+    series: List[SeasonalitySeries] = []
+    for year in sorted(year_data.keys()):
+        data_points = []
+        for week in range(1, 53):
+            vals = year_data[year].get(week, [])
+            value = (sum(vals) / len(vals)) if vals else None
+            jan1 = datetime(year, 1, 1)
+            days_offset = (week - 1) * 7 - jan1.weekday()
+            week_start = jan1 + timedelta(days=days_offset)
+            month_day = week_start.strftime("%m-%d")
+            data_points.append(SeasonalityDataPoint(year=year, month_day=month_day, value=value))
+        series.append(SeasonalitySeries(year=year, data=data_points))
+
+    latest_date: Optional[str] = None
+    if rows:
+        last_row = rows[-1]
+        d = last_row._mapping[date_col] if hasattr(last_row, '_mapping') else last_row[date_col]
+        if d:
+            latest_date = d.isoformat()
+    return series, latest_date
+
+
+def _resolve_region_code(db: Session, province_name: str) -> Optional[str]:
+    """根据省份名称在 dim_region 中查找 region_code。"""
+    row = db.execute(
+        text("SELECT region_code FROM dim_region WHERE region_name = :name LIMIT 1"),
+        {"name": province_name},
+    ).first()
+    return row[0] if row else None
+
+
+def _compute_changes(
+    db: Session,
+    table: str,
+    type_col: str,
+    type_val: str,
+    region_code: str = "NATION",
+    extra_filter: str = "",
+) -> Dict[str, Any]:
+    """通用涨跌计算：5 日 / 10 日变化。"""
+    sql = f"""
+        SELECT trade_date, value FROM {table}
+        WHERE {type_col} = :type_val AND region_code = :rc {extra_filter}
+        ORDER BY trade_date DESC LIMIT 11
+    """
+    rows = db.execute(text(sql), {"type_val": type_val, "rc": region_code}).fetchall()
+    if not rows:
+        return {"current_value": None, "latest_date": None, "day5_change": None, "day10_change": None, "unit": "元/公斤"}
+
+    latest_date = rows[0][0]
+    latest_value = float(rows[0][1]) if rows[0][1] is not None else None
+
+    day5_date = date.fromordinal(latest_date.toordinal() - 5)
+    day10_date = date.fromordinal(latest_date.toordinal() - 10)
+
+    def _find_val(target: date):
+        sql2 = f"""
+            SELECT value FROM {table}
+            WHERE {type_col} = :type_val AND region_code = :rc {extra_filter}
+              AND trade_date = :td LIMIT 1
+        """
+        r = db.execute(text(sql2), {"type_val": type_val, "rc": region_code, "td": target}).first()
+        return float(r[0]) if r and r[0] is not None else None
+
+    d5v = _find_val(day5_date)
+    d10v = _find_val(day10_date)
+
+    return {
+        "current_value": latest_value,
+        "latest_date": latest_date.isoformat(),
+        "day5_change": (latest_value - d5v) if latest_value is not None and d5v is not None else None,
+        "day10_change": (latest_value - d10v) if latest_value is not None and d10v is not None else None,
+        "unit": "元/公斤",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 端点
+# ---------------------------------------------------------------------------
+
+@router.get("/test")
+async def test_price_display():
+    """测试端点"""
+    return {"status": "ok", "message": "Price display API is working"}
+
+
+# ========================== 屠宰&价格走势（农历年度）==========================
+
+@router.get("/slaughter-price-trend/lunar-year", response_model=SlaughterPriceTrendResponse)
+async def get_slaughter_price_trend_lunar_year(
+    lunar_year: Optional[int] = Query(None, description="农历年份"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """屠宰量&价格走势数据（农历年度日期范围，每年 2/20 ~ 次年 2/10）"""
+    current_solar_year = datetime.now().year
+    lunar_years_to_check = list(range(current_solar_year - 2, current_solar_year + 3))
+
+    valid_lunar_years: List[int] = []
+    lunar_year_ranges: Dict[int, Tuple[date, date]] = {}
+    for check_year in lunar_years_to_check:
+        dr = get_lunar_year_date_range(check_year)
+        if dr:
+            valid_lunar_years.append(check_year)
+            lunar_year_ranges[check_year] = dr
+
+    if not valid_lunar_years:
+        return SlaughterPriceTrendResponse(
+            slaughter_data=[], price_data=[], available_lunar_years=[], update_time=None, latest_date=None
+        )
+
+    if lunar_year is not None:
+        if lunar_year not in valid_lunar_years:
+            raise HTTPException(status_code=400, detail=f"农历年份{lunar_year}不符合条件或没有数据")
+        valid_lunar_years = [lunar_year]
+
+    all_start = min(r[0] for r in lunar_year_ranges.values())
+    all_end = max(r[1] for r in lunar_year_ranges.values())
+
+    slaughter_rows = db.execute(
+        text("""
+            SELECT trade_date, volume FROM fact_slaughter_daily
+            WHERE region_code = 'NATION'
+              AND trade_date BETWEEN :s AND :e
+            ORDER BY trade_date
+        """),
+        {"s": all_start, "e": all_end},
+    ).fetchall()
+
+    price_rows = db.execute(
+        text("""
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = '标猪均价' AND region_code = 'NATION' AND source = 'YONGYI'
+              AND trade_date BETWEEN :s AND :e
+            ORDER BY trade_date
+        """),
+        {"s": all_start, "e": all_end},
+    ).fetchall()
+
+    slaughter_data: List[Dict[str, Any]] = []
+    price_data: List[Dict[str, Any]] = []
+
+    for ly in valid_lunar_years:
+        sd, ed = lunar_year_ranges[ly]
+        for row in slaughter_rows:
+            d, v = row[0], row[1]
+            if sd <= d <= ed:
+                slaughter_data.append({"date": d.isoformat(), "year": ly, "value": float(v) if v is not None else None})
+        for row in price_rows:
+            d, v = row[0], row[1]
+            if sd <= d <= ed:
+                price_data.append({"date": d.isoformat(), "year": ly, "value": float(v) if v is not None else None})
+
+    latest_date = slaughter_rows[-1][0].isoformat() if slaughter_rows else (price_rows[-1][0].isoformat() if price_rows else None)
+
+    return SlaughterPriceTrendResponse(
+        slaughter_data=slaughter_data,
+        price_data=price_data,
+        available_lunar_years=valid_lunar_years,
+        update_time=latest_date,
+        latest_date=latest_date,
+    )
+
+
+# ========================== 标肥价差（分省区）==========================
+
 @router.get("/fat-std-spread/provinces", response_model=ProvinceSpreadListResponse)
 async def get_fat_std_spread_provinces(
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取所有有标肥价差数据的省区列表
-    
-    从"肥标价差"sheet中查找所有省区的指标
-    """
-    # 查询"肥标价差"sheet下的所有指标（排除"中国"）
-    metrics = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "肥标价差",
-        ~DimMetric.raw_header.like("%中国%")
-    ).all()
-    
-    if not metrics:
-        return ProvinceSpreadListResponse(provinces=[], unit="元/公斤")
-    
-    # 提取省区名称并获取最新数据
-    provinces_info = []
-    unit = "元/公斤"
-    
-    for metric in metrics:
-        # 从raw_header中提取省区名称，例如："生猪标肥：价差：四川（日）" -> "四川"
-        raw_header = metric.raw_header
-        province_name = None
-        
-        # 尝试提取省区名称（在"："和"（"之间）
-        match = re.search(r'：([^：（）]+)（', raw_header)
-        if match:
-            province_name = match.group(1).strip()
-        else:
-            # 如果没有匹配到，尝试其他方式
-            # 查找常见的省份名称
-            provinces_list = ["四川", "贵州", "重庆", "湖南", "江西", "湖北", "河北", "河南", 
-                            "山东", "山西", "辽宁", "吉林", "黑龙江"]
-            for p in provinces_list:
-                if p in raw_header:
-                    province_name = p
-                    break
-        
-        if not province_name:
-            continue
-        
-        # 获取最新数据
-        latest_obs = db.query(FactObservation).filter(
-            FactObservation.metric_id == metric.id
-        ).order_by(FactObservation.obs_date.desc()).first()
-        
-        unit = metric.unit or "元/公斤"
-        
-        provinces_info.append(ProvinceSpreadInfo(
-            province_name=province_name,
-            metric_id=metric.id,
-            latest_date=latest_obs.obs_date.isoformat() if latest_obs else None,
-            latest_value=float(latest_obs.value) if latest_obs and latest_obs.value else None
-        ))
-    
-    # 按省区名称排序
-    provinces_info.sort(key=lambda x: x.province_name)
-    
-    return ProvinceSpreadListResponse(provinces=provinces_info, unit=unit)
+    """获取所有有标肥价差数据的省区列表"""
+    rows = db.execute(text("""
+        SELECT s.region_code, r.region_name,
+               MAX(s.trade_date) AS latest_date,
+               (SELECT s2.value FROM fact_spread_daily s2
+                WHERE s2.region_code = s.region_code AND s2.spread_type = 'fat_std_spread'
+                ORDER BY s2.trade_date DESC LIMIT 1) AS latest_value
+        FROM fact_spread_daily s
+        JOIN dim_region r ON r.region_code = s.region_code
+        WHERE s.spread_type = 'fat_std_spread' AND s.region_code <> 'NATION'
+        GROUP BY s.region_code, r.region_name
+        ORDER BY r.region_name
+    """)).fetchall()
+
+    provinces = [
+        ProvinceSpreadInfo(
+            province_name=row[1],
+            province_code=row[0],
+            latest_date=row[2].isoformat() if row[2] else None,
+            latest_value=float(row[3]) if row[3] is not None else None,
+        )
+        for row in rows
+    ]
+    return ProvinceSpreadListResponse(provinces=provinces, unit="元/公斤")
 
 
 @router.get("/fat-std-spread/province/{province_name}/seasonality", response_model=SeasonalityResponse)
 async def get_fat_std_spread_province_seasonality(
     province_name: str,
-    start_year: Optional[int] = Query(None, description="起始年份"),
-    end_year: Optional[int] = Query(None, description="结束年份"),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取指定省区的标肥价差季节性数据
-    
-    返回按年份对齐的季节性数据
-    """
-    # 查询指定省区的标肥价差指标
-    metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "肥标价差",
-        DimMetric.raw_header.like(f"%{province_name}%")
-    ).first()
-    
-    if not metric:
-        raise HTTPException(status_code=404, detail=f"未找到{province_name}的标肥价差指标")
-    
-    # 构建查询
-    query = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.period_type == "day"
-    )
-    
+    """获取指定省区的标肥价差季节性数据"""
+    rc = _resolve_region_code(db, province_name)
+    if not rc:
+        raise HTTPException(status_code=404, detail=f"未找到省份：{province_name}")
+
+    params: Dict[str, Any] = {"rc": rc, "st": "fat_std_spread"}
+    sql = "SELECT trade_date, value FROM fact_spread_daily WHERE spread_type = :st AND region_code = :rc"
     if start_year:
-        query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
+        sql += " AND YEAR(trade_date) >= :sy"
+        params["sy"] = start_year
     if end_year:
-        query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-    
-    observations = query.order_by(FactObservation.obs_date).all()
-    
-    if not observations:
-        return SeasonalityResponse(
-            metric_name=f"{province_name}标肥价差",
-            unit=metric.unit or "元/公斤",
-            series=[],
-            update_time=None,
-            latest_date=None
-        )
-    
-    # 按年份分组
-    year_data: Dict[int, List[Dict]] = {}
-    for obs in observations:
-        year = obs.obs_date.year
-        if year not in year_data:
-            year_data[year] = []
-        
-        month_day = obs.obs_date.strftime("%m-%d")
-        year_data[year].append({
-            "month_day": month_day,
-            "value": float(obs.value) if obs.value else None,
-            "date": obs.obs_date
-        })
-    
-    # 构建响应
-    series = []
-    for year in sorted(year_data.keys()):
-        data_points = []
-        for item in sorted(year_data[year], key=lambda x: x["date"]):
-            data_points.append(SeasonalityDataPoint(
-                year=year,
-                month_day=item["month_day"],
-                value=item["value"]
-            ))
-        
-        series.append(SeasonalitySeries(
-            year=year,
-            data=data_points
-        ))
-    
-    latest_obs = observations[-1] if observations else None
-    update_time = resolve_update_time(metric, latest_obs) if latest_obs else None
-    if not update_time and latest_obs:
-        update_time = latest_obs.obs_date.isoformat()
-    
+        sql += " AND YEAR(trade_date) <= :ey"
+        params["ey"] = end_year
+    sql += " ORDER BY trade_date"
+
+    rows = db.execute(text(sql), params).fetchall()
+    series, latest = _rows_to_daily_seasonality(rows, start_year=start_year, end_year=end_year)
+
     return SeasonalityResponse(
         metric_name=f"{province_name}标肥价差",
-        unit=metric.unit or "元/公斤",
+        unit="元/公斤",
         series=series,
-        update_time=update_time,
-        latest_date=update_time
+        update_time=latest,
+        latest_date=latest,
     )
 
 
@@ -461,1997 +472,1061 @@ async def get_fat_std_spread_province_seasonality(
 async def get_fat_std_spread_province_changes(
     province_name: str,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取指定省区标肥价差的涨跌数据
-    
-    返回5日/10日涨跌幅
-    """
-    # 查询指定省区的标肥价差指标
-    metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "肥标价差",
-        DimMetric.raw_header.like(f"%{province_name}%")
-    ).first()
-    
-    if not metric:
-        raise HTTPException(status_code=404, detail=f"未找到{province_name}的标肥价差指标")
-    
-    # 获取最新数据
-    latest_obs = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id
-    ).order_by(FactObservation.obs_date.desc()).first()
-    
-    if not latest_obs:
-        return {
-            "current_value": None,
-            "day5_change": None,
-            "day10_change": None
-        }
-    
-    latest_date = latest_obs.obs_date
-    latest_value = float(latest_obs.value) if latest_obs.value else None
-    
-    # 查询5日/10日前的数据
-    day5_date = date.fromordinal(latest_date.toordinal() - 5)
-    day10_date = date.fromordinal(latest_date.toordinal() - 10)
-    
-    day5_obs = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.obs_date == day5_date
-    ).first()
-    
-    day10_obs = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.obs_date == day10_date
-    ).first()
-    
-    # 计算涨跌
-    day5_change = None
-    day10_change = None
-    
-    if latest_value is not None:
-        if day5_obs and day5_obs.value:
-            day5_change = latest_value - float(day5_obs.value)
-        if day10_obs and day10_obs.value:
-            day10_change = latest_value - float(day10_obs.value)
-    
-    return {
-        "current_value": latest_value,
-        "latest_date": latest_date.isoformat(),
-        "day5_change": day5_change,
-        "day10_change": day10_change,
-        "unit": metric.unit or "元/公斤"
-    }
+    """获取指定省区标肥价差的涨跌数据"""
+    rc = _resolve_region_code(db, province_name)
+    if not rc:
+        raise HTTPException(status_code=404, detail=f"未找到省份：{province_name}")
+    return _compute_changes(db, "fact_spread_daily", "spread_type", "fat_std_spread", region_code=rc)
 
+
+# ========================== 区域价差（季节性 & 涨跌）==========================
 
 @router.get("/region-spread/seasonality", response_model=SeasonalityResponse)
 async def get_region_spread_seasonality(
     region_pair: str = Query(..., description="区域对，格式：XX-YY，如'广东-广西'"),
-    start_year: Optional[int] = Query(None, description="起始年份"),
-    end_year: Optional[int] = Query(None, description="结束年份"),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取区域价差季节性数据
-    
-    返回指定区域对的季节性价差数据，支持按年份筛选
-    """
-    # 解析区域对
-    regions = region_pair.split('-')
+    """获取区域价差季节性数据"""
+    regions = region_pair.split("-")
     if len(regions) != 2:
         raise HTTPException(status_code=400, detail="区域对格式错误，应为'XX-YY'格式")
-    
-    region1, region2 = regions[0].strip(), regions[1].strip()
-    
-    # 查询区域价差指标
-    # 数据库中metric_name是"出栏均价"，需要通过raw_header匹配
-    # raw_header格式：商品猪：出栏均价：广东（日） - 商品猪：出栏均价：广西（日）
-    metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "区域价差",
-        DimMetric.raw_header.like(f"%{region1}%"),
-        DimMetric.raw_header.like(f"%{region2}%")
+
+    r1, r2 = regions[0].strip(), regions[1].strip()
+    # 中文省名 → 英文 code 映射
+    from import_tool.utils import PROVINCE_TO_CODE
+    r1_code = PROVINCE_TO_CODE.get(r1, r1).upper()
+    r2_code = PROVINCE_TO_CODE.get(r2, r2).upper()
+
+    # 精确匹配 spread_type = region_spread_XX_YY
+    spread_type_exact = f"region_spread_{r1_code}_{r2_code}"
+    st_row = db.execute(
+        text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = :st LIMIT 1"),
+        {"st": spread_type_exact},
     ).first()
-    
-    if not metric:
+    if not st_row:
+        # 反方向试试
+        spread_type_exact2 = f"region_spread_{r2_code}_{r1_code}"
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = :st LIMIT 1"),
+            {"st": spread_type_exact2},
+        ).first()
+    if not st_row:
+        # 降级到 LIKE
+        spread_type_like = f"region_spread_%{r1_code}%{r2_code}%"
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type LIKE :stl LIMIT 1"),
+            {"stl": spread_type_like},
+        ).first()
+    if not st_row:
         raise HTTPException(status_code=404, detail=f"未找到区域价差指标：{region_pair}")
-    
-    # 构建查询
-    query = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.period_type == "day"
-    )
-    
+
+    spread_type = st_row[0]
+    sql_params: Dict[str, Any] = {"st": spread_type}
+    sql = "SELECT trade_date, value FROM fact_spread_daily WHERE spread_type = :st"
     if start_year:
-        query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
+        sql += " AND YEAR(trade_date) >= :sy"
+        sql_params["sy"] = start_year
     if end_year:
-        query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-    
-    observations = query.order_by(FactObservation.obs_date).all()
-    
-    if not observations:
-        return SeasonalityResponse(
-            metric_name=metric.metric_name,
-            unit=metric.unit or "元/公斤",
-            series=[],
-            update_time=None,
-            latest_date=None
-        )
-    
-    # 按年份分组
-    year_data: Dict[int, List[Dict]] = {}
-    for obs in observations:
-        year = obs.obs_date.year
-        if year not in year_data:
-            year_data[year] = []
-        
-        month_day = obs.obs_date.strftime("%m-%d")
-        year_data[year].append({
-            "month_day": month_day,
-            "value": float(obs.value) if obs.value else None,
-            "date": obs.obs_date
-        })
-    
-    # 构建响应
-    series = []
-    for year in sorted(year_data.keys()):
-        data_points = []
-        for item in sorted(year_data[year], key=lambda x: x["date"]):
-            data_points.append(SeasonalityDataPoint(
-                year=year,
-                month_day=item["month_day"],
-                value=item["value"]
-            ))
-        
-        series.append(SeasonalitySeries(
-            year=year,
-            data=data_points
-        ))
-    
-    latest_obs = observations[-1] if observations else None
-    update_time = resolve_update_time(metric, latest_obs) if latest_obs else None
-    if not update_time and latest_obs:
-        update_time = latest_obs.obs_date.isoformat()
-    
+        sql += " AND YEAR(trade_date) <= :ey"
+        sql_params["ey"] = end_year
+    sql += " ORDER BY trade_date"
+
+    rows = db.execute(text(sql), sql_params).fetchall()
+    series, latest = _rows_to_daily_seasonality(rows, start_year=start_year, end_year=end_year)
+
     return SeasonalityResponse(
-        metric_name=metric.metric_name,
-        unit=metric.unit or "元/公斤",
+        metric_name=f"{r1}-{r2}区域价差",
+        unit="元/公斤",
         series=series,
-        update_time=update_time,
-        latest_date=update_time
+        update_time=latest,
+        latest_date=latest,
     )
 
 
 @router.get("/region-spread/changes")
 async def get_region_spread_changes(
-    region_pair: str = Query(..., description="区域对，格式：XX-YY，如'广东-广西'"),
+    region_pair: str = Query(..., description="区域对，格式：XX-YY"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取区域价差的涨跌数据
-    
-    返回5日/10日涨跌幅
-    注释：5日涨跌，10日涨跌
-    """
-    # 解析区域对
-    regions = region_pair.split('-')
+    """获取区域价差的涨跌数据"""
+    regions = region_pair.split("-")
     if len(regions) != 2:
         raise HTTPException(status_code=400, detail="区域对格式错误，应为'XX-YY'格式")
-    
-    region1, region2 = regions[0].strip(), regions[1].strip()
-    
-    # 查询区域价差指标
-    # 数据库中metric_name是"出栏均价"，需要通过raw_header匹配
-    # raw_header格式：商品猪：出栏均价：广东（日） - 商品猪：出栏均价：广西（日）
-    metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "区域价差",
-        DimMetric.raw_header.like(f"%{region1}%"),
-        DimMetric.raw_header.like(f"%{region2}%")
-    ).first()
-    
-    if not metric:
-        raise HTTPException(status_code=404, detail=f"未找到区域价差指标：{region_pair}")
-    
-    # 获取最新数据
-    latest_obs = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id
-    ).order_by(FactObservation.obs_date.desc()).first()
-    
-    if not latest_obs:
-        return {
-            "current_value": None,
-            "latest_date": None,
-            "day5_change": None,
-            "day10_change": None,
-            "unit": metric.unit or "元/公斤"
-        }
-    
-    latest_date = latest_obs.obs_date
-    latest_value = float(latest_obs.value) if latest_obs.value else None
-    
-    # 查询5日/10日前的数据
-    day5_date = date.fromordinal(latest_date.toordinal() - 5)
-    day10_date = date.fromordinal(latest_date.toordinal() - 10)
-    
-    day5_obs = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.obs_date == day5_date
-    ).first()
-    
-    day10_obs = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.obs_date == day10_date
-    ).first()
-    
-    # 计算涨跌
-    day5_change = None
-    day10_change = None
-    
-    if latest_value is not None:
-        if day5_obs and day5_obs.value:
-            day5_change = latest_value - float(day5_obs.value)
-        if day10_obs and day10_obs.value:
-            day10_change = latest_value - float(day10_obs.value)
-    
-    return {
-        "current_value": latest_value,
-        "latest_date": latest_date.isoformat(),
-        "day5_change": day5_change,
-        "day10_change": day10_change,
-        "unit": metric.unit or "元/公斤"
-    }
 
+    r1, r2 = regions[0].strip(), regions[1].strip()
+    from import_tool.utils import PROVINCE_TO_CODE
+    r1_code = PROVINCE_TO_CODE.get(r1, r1).upper()
+    r2_code = PROVINCE_TO_CODE.get(r2, r2).upper()
+    spread_type_exact = f"region_spread_{r1_code}_{r2_code}"
+    st_row = db.execute(
+        text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = :st LIMIT 1"),
+        {"st": spread_type_exact},
+    ).first()
+    if not st_row:
+        spread_type_exact2 = f"region_spread_{r2_code}_{r1_code}"
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = :st LIMIT 1"),
+            {"st": spread_type_exact2},
+        ).first()
+    if not st_row:
+        raise HTTPException(status_code=404, detail=f"未找到区域价差指标：{region_pair}")
+
+    return _compute_changes(db, "fact_spread_daily", "spread_type", st_row[0])
+
+
+# ========================== 毛白价差双轴 ==========================
 
 @router.get("/live-white-spread/dual-axis", response_model=LiveWhiteSpreadDualAxisResponse)
 async def get_live_white_spread_dual_axis(
-    start_date: Optional[str] = Query(None, description="起始日期，格式：YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="结束日期，格式：YYYY-MM-DD"),
+    start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
+    """毛白价差 + 价差比率双轴"""
+    # 毛白价差
+    spread_sql = """
+        SELECT trade_date, value FROM fact_spread_daily
+        WHERE spread_type = 'mao_bai_spread' AND region_code = 'NATION'
     """
-    获取毛白价差双轴数据
-    
-    返回毛白价差和价差比率的时间序列数据，支持时间范围筛选
-    左轴：毛白价差
-    右轴：价差比率
-    """
-    # 查询毛白价差指标
-    spread_metric = db.query(DimMetric).filter(
-        DimMetric.raw_header == "毛白：价差：中国（日）",
-        DimMetric.sheet_name == "毛白价差"
-    ).first()
-    
-    # 查询价差比率指标
-    ratio_metric = db.query(DimMetric).filter(
-        DimMetric.raw_header == "毛白：价差：中国（日） / 商品猪：出栏均价：中国（日）",
-        DimMetric.sheet_name == "毛白价差"
-    ).first()
-    
-    if not spread_metric:
-        raise HTTPException(status_code=404, detail="未找到毛白价差指标")
-    
-    if not ratio_metric:
-        raise HTTPException(status_code=404, detail="未找到价差比率指标")
-    
-    # 构建查询
-    spread_query = db.query(FactObservation).filter(
-        FactObservation.metric_id == spread_metric.id,
-        FactObservation.period_type == "day"
-    )
-    
-    ratio_query = db.query(FactObservation).filter(
-        FactObservation.metric_id == ratio_metric.id,
-        FactObservation.period_type == "day"
-    )
-    
-    # 应用时间范围筛选
+    params: Dict[str, Any] = {}
     if start_date:
-        try:
-            start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
-            spread_query = spread_query.filter(FactObservation.obs_date >= start_dt)
-            ratio_query = ratio_query.filter(FactObservation.obs_date >= start_dt)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="起始日期格式错误，应为YYYY-MM-DD")
-    
+        spread_sql += " AND trade_date >= :sd"
+        params["sd"] = start_date
     if end_date:
-        try:
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
-            spread_query = spread_query.filter(FactObservation.obs_date <= end_dt)
-            ratio_query = ratio_query.filter(FactObservation.obs_date <= end_dt)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="结束日期格式错误，应为YYYY-MM-DD")
-    
-    # 获取数据
-    spread_obs = spread_query.order_by(FactObservation.obs_date).all()
-    ratio_obs = ratio_query.order_by(FactObservation.obs_date).all()
-    
-    # 构建响应数据
+        spread_sql += " AND trade_date <= :ed"
+        params["ed"] = end_date
+    spread_sql += " ORDER BY trade_date"
+    spread_rows = db.execute(text(spread_sql), params).fetchall()
+
+    # 价差比率 = 毛白价差 / 毛猪价格。如表中有 'mao_bai_ratio' 则直接取，否则计算。
+    ratio_sql = """
+        SELECT trade_date, value FROM fact_spread_daily
+        WHERE spread_type = 'mao_bai_ratio' AND region_code = 'NATION'
+    """
+    if start_date:
+        ratio_sql += " AND trade_date >= :sd"
+    if end_date:
+        ratio_sql += " AND trade_date <= :ed"
+    ratio_sql += " ORDER BY trade_date"
+    ratio_rows = db.execute(text(ratio_sql), params).fetchall()
+
+    # 如果没有预算的 ratio，从毛白价差和生猪价格手动计算
+    if not ratio_rows:
+        price_sql = """
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN'
+        """
+        if start_date:
+            price_sql += " AND trade_date >= :sd"
+        if end_date:
+            price_sql += " AND trade_date <= :ed"
+        price_sql += " ORDER BY trade_date"
+        price_rows = db.execute(text(price_sql), params).fetchall()
+
+        price_map = {r[0]: float(r[1]) for r in price_rows if r[1] is not None}
+        ratio_rows_computed = []
+        for r in spread_rows:
+            d, v = r[0], r[1]
+            if v is not None and d in price_map and price_map[d] != 0:
+                ratio_rows_computed.append({"date": d.isoformat(), "value": round(float(v) / price_map[d], 4)})
+            else:
+                ratio_rows_computed.append({"date": d.isoformat(), "value": None})
+        ratio_data = ratio_rows_computed
+    else:
+        ratio_data = [
+            {"date": r[0].isoformat(), "value": float(r[1]) if r[1] is not None else None}
+            for r in ratio_rows
+        ]
+
     spread_data = [
-        {
-            "date": obs.obs_date.isoformat(),
-            "value": float(obs.value) if obs.value is not None else None
-        }
-        for obs in spread_obs
+        {"date": r[0].isoformat(), "value": float(r[1]) if r[1] is not None else None}
+        for r in spread_rows
     ]
-    
-    ratio_data = [
-        {
-            "date": obs.obs_date.isoformat(),
-            "value": float(obs.value) if obs.value is not None else None
-        }
-        for obs in ratio_obs
-    ]
-    
-    # 获取最新日期（优先使用 Excel 更新时间 source_updated_at）
-    latest_date = None
-    if spread_obs:
-        latest_date = resolve_update_time(spread_metric, spread_obs[-1])
-    if not latest_date and ratio_obs:
-        latest_date = resolve_update_time(ratio_metric, ratio_obs[-1])
-    if not latest_date and spread_obs:
-        latest_date = spread_obs[-1].obs_date.isoformat()
-    elif not latest_date and ratio_obs:
-        latest_date = ratio_obs[-1].obs_date.isoformat()
-    
+
+    latest = spread_rows[-1][0].isoformat() if spread_rows else None
+
     return LiveWhiteSpreadDualAxisResponse(
         spread_data=spread_data,
         ratio_data=ratio_data,
-        spread_unit=spread_metric.unit or "元/公斤",
-        ratio_unit=ratio_metric.unit or "元/公斤",
-        update_time=latest_date,
-        latest_date=latest_date
+        spread_unit="元/公斤",
+        ratio_unit="元/公斤",
+        update_time=latest,
+        latest_date=latest,
     )
 
 
-class FrozenInventoryProvinceInfo(BaseModel):
-    """冻品库容率省份信息"""
-    province_name: str
-    metric_id: int
-    latest_date: Optional[str] = None
-    latest_value: Optional[float] = None
-
-
-class FrozenInventoryProvinceListResponse(BaseModel):
-    """冻品库容率省份列表响应"""
-    provinces: List[FrozenInventoryProvinceInfo]
-    unit: str
-
-
-class FrozenInventorySeasonalityResponse(BaseModel):
-    """冻品库容率季节性数据响应（包含涨跌信息）"""
-    metric_name: str
-    unit: str
-    province_name: str
-    series: List[SeasonalitySeries]
-    update_time: Optional[str] = None
-    latest_date: Optional[str] = None
-    # 涨跌信息
-    period_change: Optional[float] = None  # 本期涨跌（较上期）
-    yoy_change: Optional[float] = None  # 较去年同期涨跌
-
+# ========================== 冻品库容率 ==========================
 
 @router.get("/frozen-inventory/provinces", response_model=FrozenInventoryProvinceListResponse)
 async def get_frozen_inventory_provinces(
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取所有有冻品库容率数据的省份列表
-    
-    从"周度-冻品库存"sheet中查找所有省份的数据
-    """
-    # 查询"周度-冻品库存"sheet下的指标
-    metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "周度-冻品库存",
-        func.json_unquote(
-            func.json_extract(DimMetric.parse_json, '$.metric_key')
-        ) == "YY_W_FROZEN_INVENTORY_RATIO"
-    ).first()
-    
-    if not metric:
-        return FrozenInventoryProvinceListResponse(provinces=[], unit="ratio")
-    
-    # 查询所有有数据的省份（通过geo_id关联）
-    # 使用period_end而不是obs_date，因为周度数据使用period_end
-    provinces_query = db.query(
-        DimGeo.province,
-        func.max(FactObservation.period_end).label("latest_date"),
-        func.max(FactObservation.value).label("latest_value")
-    ).join(
-        FactObservation, FactObservation.geo_id == DimGeo.id
-    ).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.period_type == "week"
-    ).group_by(DimGeo.province).order_by(DimGeo.province)
-    
-    provinces_result = provinces_query.all()
-    
-    provinces_info = []
-    unit = metric.unit or "ratio"
-    
-    for row in provinces_result:
-        province_name = row.province
-        latest_date = row.latest_date.isoformat() if row.latest_date else None
-        latest_value = float(row.latest_value) if row.latest_value else None
-        
-        provinces_info.append(FrozenInventoryProvinceInfo(
-            province_name=province_name,
-            metric_id=metric.id,
-            latest_date=latest_date,
-            latest_value=latest_value
-        ))
-    
-    return FrozenInventoryProvinceListResponse(provinces=provinces_info, unit=unit)
+    """获取所有有冻品库容率数据的省份列表"""
+    rows = db.execute(text("""
+        SELECT w.region_code, r.region_name,
+               MAX(w.week_end) AS latest_date,
+               (SELECT w2.value FROM fact_weekly_indicator w2
+                WHERE w2.region_code = w.region_code AND w2.indicator_code = 'frozen_rate'
+                ORDER BY w2.week_end DESC LIMIT 1) AS latest_value
+        FROM fact_weekly_indicator w
+        JOIN dim_region r ON r.region_code = w.region_code
+        WHERE w.indicator_code = 'frozen_rate' AND w.region_code <> 'NATION'
+        GROUP BY w.region_code, r.region_name
+        ORDER BY r.region_name
+    """)).fetchall()
+    provinces = [
+        FrozenInventoryProvinceInfo(
+            province_name=r.region_name,
+            latest_date=r.latest_date.isoformat() if r.latest_date else None,
+            latest_value=float(r.latest_value) if r.latest_value else None,
+        )
+        for r in rows
+    ]
+    return FrozenInventoryProvinceListResponse(provinces=provinces, unit="%")
 
 
 @router.get("/frozen-inventory/province/{province_name}/seasonality", response_model=FrozenInventorySeasonalityResponse)
 async def get_frozen_inventory_province_seasonality(
     province_name: str,
-    start_year: Optional[int] = Query(None, description="起始年份"),
-    end_year: Optional[int] = Query(None, description="结束年份"),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取指定省份的冻品库容率季节性数据
-    
-    返回按年份对齐的季节性数据，包含涨跌信息
-    """
-    # 查询"周度-冻品库存"sheet下的指标
-    metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "周度-冻品库存",
-        func.json_unquote(
-            func.json_extract(DimMetric.parse_json, '$.metric_key')
-        ) == "YY_W_FROZEN_INVENTORY_RATIO"
-    ).first()
-    
-    if not metric:
-        raise HTTPException(status_code=404, detail="未找到冻品库容率指标")
-    
-    # 查询省份的geo_id
-    geo = db.query(DimGeo).filter(DimGeo.province == province_name).first()
-    if not geo:
-        raise HTTPException(status_code=404, detail=f"未找到省份：{province_name}")
-    
-    # 构建查询
-    query = db.query(FactObservation).filter(
-        FactObservation.metric_id == metric.id,
-        FactObservation.geo_id == geo.id,
-        FactObservation.period_type == "week"
-    )
-    
-    # 应用年份筛选
-    if start_year:
-        query = query.filter(extract('year', FactObservation.period_end) >= start_year)
-    if end_year:
-        query = query.filter(extract('year', FactObservation.period_end) <= end_year)
-    
-    observations = query.order_by(FactObservation.period_end).all()
-    
-    if not observations:
+    """指定省份冻品库容率季节性"""
+    rc = _resolve_region_code(db, province_name)
+    if not rc:
         return FrozenInventorySeasonalityResponse(
-            metric_name=metric.metric_name or "冻品库容率",
-            unit=metric.unit or "ratio",
-            province_name=province_name,
-            series=[],
-            update_time=None,
-            latest_date=None,
-            period_change=None,
-            yoy_change=None
+            metric_name="冻品库容率", unit="%", province_name=province_name,
+            series=[], update_time=None, latest_date=None, period_change=None, yoy_change=None,
         )
-    
-    # 计算涨跌信息
-    # 1. 本期涨跌（较上期）
-    latest_obs = observations[-1]
-    period_change = None
-    if len(observations) >= 2:
-        prev_obs = observations[-2]
-        if latest_obs.value is not None and prev_obs.value is not None:
-            period_change = float(latest_obs.value) - float(prev_obs.value)
-    
-    # 2. 较去年同期涨跌
-    yoy_change = None
-    if latest_obs.period_end:
-        latest_year = latest_obs.period_end.year
-        latest_week = latest_obs.period_end.isocalendar()[1]  # ISO周序号
-        
-        # 查找去年同期的数据
-        for obs in observations:
-            if obs.period_end:
-                obs_year = obs.period_end.year
-                obs_week = obs.period_end.isocalendar()[1]
-                if obs_year == latest_year - 1 and obs_week == latest_week:
-                    if latest_obs.value is not None and obs.value is not None:
-                        yoy_change = float(latest_obs.value) - float(obs.value)
-                    break
-    
-    # 按年份和周序号分组（周度数据使用周序号）
-    year_data: Dict[int, Dict[int, List[float]]] = {}  # {year: {week: [values]}}
-    
-    for obs in observations:
-        if obs.period_end:
-            year = obs.period_end.year
-            if year not in year_data:
-                year_data[year] = {}
-            
-            # 计算ISO周序号
-            week_of_year = obs.period_end.isocalendar()[1]
-            # 限制在1-52范围内
-            week_of_year = max(1, min(52, week_of_year))
-            
-            if week_of_year not in year_data[year]:
-                year_data[year][week_of_year] = []
-            
-            if obs.value is not None:
-                year_data[year][week_of_year].append(float(obs.value))
-    
-    # 构建响应（使用周序号，但为了兼容性，month_day使用period_end的月-日）
-    series = []
-    for year in sorted(year_data.keys()):
-        data_points = []
-        # 遍历1-52周
-        for week in range(1, 53):
-            week_values = year_data[year].get(week, [])
-            if week_values:
-                # 如果有多个值，取平均值（周度数据通常只有一个值）
-                value = sum(week_values) / len(week_values)
-            else:
-                value = None
-            
-            # 为了兼容SeasonalityDataPoint格式，需要month_day
-            # 使用该周的第一天（简化处理：year年第week周的第一天）
-            from datetime import datetime, timedelta
-            jan1 = datetime(year, 1, 1)
-            # 计算该周的第一天（周一）
-            days_offset = (week - 1) * 7 - jan1.weekday()
-            week_start = jan1 + timedelta(days=days_offset)
-            month_day = week_start.strftime("%m-%d")
-            
-            data_points.append(SeasonalityDataPoint(
-                year=year,
-                month_day=month_day,
-                value=value
-            ))
-        
-        series.append(SeasonalitySeries(
-            year=year,
-            data=data_points
-        ))
-    
-    # 获取更新时间
-    latest_date = latest_obs.period_end.isoformat() if latest_obs.period_end else None
-    
+
+    _end = end_year if end_year is not None else date.today().year
+    _start = start_year if start_year is not None else (_end - 5)
+
+    rows = db.execute(
+        text("""
+            SELECT week_end AS trade_date, value FROM fact_weekly_indicator
+            WHERE indicator_code = 'frozen_rate' AND region_code = :rc
+              AND YEAR(week_end) BETWEEN :sy AND :ey
+            ORDER BY week_end
+        """),
+        {"rc": rc, "sy": _start, "ey": _end},
+    ).fetchall()
+
+    series, latest = _rows_to_weekly_seasonality(rows)
     return FrozenInventorySeasonalityResponse(
-        metric_name=metric.metric_name or "冻品库容率",
-        unit=metric.unit or "ratio",
+        metric_name="冻品库容率",
+        unit="%",
         province_name=province_name,
         series=series,
-        update_time=latest_date,
-        latest_date=latest_date,
-        period_change=period_change,
-        yoy_change=yoy_change
+        update_time=latest,
+        latest_date=latest,
+        period_change=None,
+        yoy_change=None,
     )
 
 
-# 产业链数据指标映射配置
-# 注意：profit_type的值来自Excel文件"养殖利润（周度）"sheet的第2行（指标名称行）
-INDUSTRY_CHAIN_METRICS = {
-    "二元母猪价格": "二元母猪：每头重50kg：样本养殖企业：均价：中国（周）",
-    "仔猪价格": "仔猪：每头重7kg：规模化养殖场：出栏均价：中国（周）",
-    "淘汰母猪价格": "淘汰母猪：样本养殖企业：均价：中国（周）",
-    "淘汰母猪折扣率": "淘汰母猪：样本养殖企业：均价：中国（周） / 标猪：市场价：中国（日）",
-    "猪料比": "生猪饲料：比价：中国（周）",
-    "屠宰利润": "猪：屠宰利润（周）",
-    "自养利润": "猪：外购利润（周）",  # 注意：根据实际Excel数据，可能需要调整为"自繁自养利润"等
-    "代养利润": "猪：外购利润（周）",  # 注意：根据实际Excel数据，可能需要调整为"代养利润"等
-    "白条价格": "白条肉：前三级：均价：中国（日）（变频周平均值）",
-    "1#鲜肉价格": "鲜猪肉：1号：市场均价：中国（周）",
-    "2#冻肉价格": "冻肉：2号：市场价：中国（日）（变频周平均值）",
-    "4#冻肉价格": "冻肉：4号：市场价：中国（日）（变频周平均值）",
-    "2号冻肉/1#鲜肉": None,  # 需要计算：2#冻肉价格 / 1#鲜肉价格
-    "4#冻肉/白条": None,  # 需要计算：4#冻肉价格 / 白条价格
-    "冻品库容率": None  # 不在这个sheet中，需要从其他表查询（yongyi_weekly_frozen_inventory）
+# ========================== 产业链数据（周度）==========================
+
+# 中文指标名 → (indicator_code, unit) 映射
+INDUSTRY_CHAIN_METRIC_MAP: Dict[str, Tuple[str, str]] = {
+    "仔猪价格": ("piglet_price", "元/头"),
+    "淘汰母猪折扣率": ("cull_sow_std_ratio", "%"),
+    "屠宰利润": ("slaughter_profit", "元/头"),
+    "自养利润": ("external_purchase_profit", "元/头"),
+    "外购仔猪利润": ("external_purchase_profit", "元/头"),
+    "代养利润": ("profit_contract_farming", "元/头"),
+    "仔猪价格(15kg)": ("piglet_price_15kg", "元/头"),
+    "出栏均重": ("weight_avg", "公斤"),
+    "宰后均重": ("post_slaughter_weight", "公斤"),
+    "冻品库容率": ("frozen_storage_rate", "%"),
+    "猪粮比": ("pig_grain_ratio", ""),
+    "猪料比": ("pig_feed_ratio", ""),
+    "二元母猪价格": ("gilt_price", "元/头"),
+    "淘汰母猪价格": ("cull_sow_price", "元/头"),
+    "白条价格": ("carcass_top3_price_wavg", "元/公斤"),
+    "1#鲜肉价格": ("fresh_pork_no1_price", "元/公斤"),
+    "2#冻肉价格": ("frozen_no2_price_wavg", "元/公斤"),
+    "4#冻肉价格": ("frozen_no4_price_wavg", "元/公斤"),
 }
 
-
-class IndustryChainSeasonalityResponse(BaseModel):
-    """产业链数据季节性数据响应（包含涨跌信息）"""
-    metric_name: str
-    unit: str
-    series: List[SeasonalitySeries]
-    update_time: Optional[str] = None
-    latest_date: Optional[str] = None
-    # 涨跌信息
-    period_change: Optional[float] = None  # 本期涨跌（较上期）
-    yoy_change: Optional[float] = None  # 较去年同期涨跌
+# 比率指标：分子 indicator_code / 分母 indicator_code
+INDUSTRY_CHAIN_RATIO_MAP: Dict[str, Tuple[str, str]] = {
+    "2号冻肉/1#鲜肉": ("frozen_no2_price_wavg", "fresh_pork_no1_price"),
+    "4#冻肉/白条": ("frozen_no4_price_wavg", "carcass_top3_price_wavg"),
+}
 
 
 @router.get("/industry-chain/seasonality", response_model=IndustryChainSeasonalityResponse)
 async def get_industry_chain_seasonality(
     metric_name: str = Query(..., description="指标名称"),
-    start_year: Optional[int] = Query(None, description="起始年份"),
-    end_year: Optional[int] = Query(None, description="结束年份"),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
-    """
-    获取产业链数据季节性数据（周度1-52周）
-    
-    支持的指标：
-    - 二元母猪价格
-    - 仔猪价格
-    - 淘汰母猪价格
-    - 淘汰母猪折扣率
-    - 猪料比
-    - 屠宰利润
-    - 自养利润
-    - 代养利润
-    - 白条价格
-    - 1#鲜肉价格
-    - 2#冻肉价格
-    - 4#冻肉价格
-    - 2号冻肉/1#鲜肉（计算指标）
-    - 4#冻肉/白条（计算指标）
-    - 冻品库容率（从其他表查询）
-    """
-    # #region agent log
-    import json
-    import urllib.parse
-    try:
-        with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A",
-                "location": "price_display.py:1365",
-                "message": "API called with metric_name",
-                "data": {
-                    "metric_name": metric_name,
-                    "metric_name_repr": repr(metric_name),
-                    "metric_name_encoded": urllib.parse.quote(metric_name),
-                    "start_year": start_year,
-                    "end_year": end_year
-                },
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + '\n')
-    except Exception:
-        pass
-    # #endregion
-    
-    # 获取profit_type
-    profit_type = INDUSTRY_CHAIN_METRICS.get(metric_name)
-    
-    # #region agent log
-    try:
-        with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B",
-                "location": "price_display.py:1394",
-                "message": "profit_type lookup result",
-                "data": {
-                    "metric_name": metric_name,
-                    "profit_type": profit_type,
-                    "is_none": profit_type is None,
-                    "available_keys": list(INDUSTRY_CHAIN_METRICS.keys())
-                },
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + '\n')
-    except Exception:
-        pass
-    # #endregion
-    
-    if profit_type is None:
-        # #region agent log
-        try:
-            with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C",
-                    "location": "price_display.py:1396",
-                    "message": "Entering special handling for calculated metrics",
-                    "data": {
-                        "metric_name": metric_name,
-                        "matches_2号冻肉": metric_name == "2号冻肉/1#鲜肉",
-                        "matches_4#冻肉": metric_name == "4#冻肉/白条",
-                        "matches_冻品库容率": metric_name == "冻品库容率"
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        
-        # 对于计算指标，需要特殊处理
-        if metric_name == "2号冻肉/1#鲜肉":
-            # #region agent log
-            try:
-                with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "D",
-                        "location": "price_display.py:1398",
-                        "message": "Calling _get_calculated_metric_seasonality for 2号冻肉/1#鲜肉",
-                        "data": {
-                            "numerator": "2#冻肉价格",
-                            "denominator": "1#鲜肉价格"
-                        },
-                        "timestamp": int(__import__('time').time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except Exception:
-                pass
-            # #endregion
-            # 需要查询两个指标并计算比值
-            try:
-                result = await _get_calculated_metric_seasonality(
-                    db, "2#冻肉价格", "1#鲜肉价格", metric_name, start_year, end_year, operation="divide"
-                )
-                # #region agent log
-                try:
-                    with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "D",
-                            "location": "price_display.py:1400",
-                            "message": "_get_calculated_metric_seasonality returned successfully",
-                            "data": {
-                                "series_count": len(result.series) if result.series else 0
-                            },
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-                return result
-            except Exception as e:
-                # #region agent log
-                try:
-                    with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "D",
-                            "location": "price_display.py:1400",
-                            "message": "_get_calculated_metric_seasonality raised exception",
-                            "data": {
-                                "error_type": type(e).__name__,
-                                "error_message": str(e)
-                            },
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-                raise
-        elif metric_name == "4#冻肉/白条":
-            # #region agent log
-            try:
-                with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "E",
-                        "location": "price_display.py:1403",
-                        "message": "Calling _get_calculated_metric_seasonality for 4#冻肉/白条",
-                        "data": {
-                            "numerator": "4#冻肉价格",
-                            "denominator": "白条价格"
-                        },
-                        "timestamp": int(__import__('time').time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except Exception:
-                pass
-            # #endregion
-            try:
-                result = await _get_calculated_metric_seasonality(
-                    db, "4#冻肉价格", "白条价格", metric_name, start_year, end_year, operation="divide"
-                )
-                # #region agent log
-                try:
-                    with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "E",
-                            "location": "price_display.py:1405",
-                            "message": "_get_calculated_metric_seasonality returned successfully",
-                            "data": {
-                                "series_count": len(result.series) if result.series else 0
-                            },
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-                return result
-            except Exception as e:
-                # #region agent log
-                try:
-                    with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "E",
-                            "location": "price_display.py:1405",
-                            "message": "_get_calculated_metric_seasonality raised exception",
-                            "data": {
-                                "error_type": type(e).__name__,
-                                "error_message": str(e)
-                            },
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-                raise
-        elif metric_name == "冻品库容率":
-            # 冻品库容率从fact_observation表查询（钢联数据）
-            # 查询指标：sheet_name="冻品库容率"，metric_key="GL_W_FROZEN_CAPACITY_RATE"
-            metric = db.query(DimMetric).filter(
-                DimMetric.sheet_name == "冻品库容率",
-                DimMetric.raw_header.like("%库容率%中国%")
-            ).first()
-            
-            if not metric:
-                # 如果找不到，返回空数据
-                return IndustryChainSeasonalityResponse(
-                    metric_name="冻品库容率",
-                    unit="%",
-                    series=[],
-                    update_time=None,
-                    latest_date=None,
-                    period_change=None,
-                    yoy_change=None
-                )
-            
-            # 查询fact_observation表的数据（全国数据，geo_id为None或tags中有scope="nation"）
-            query = db.query(FactObservation).filter(
-                FactObservation.metric_id == metric.id,
-                FactObservation.period_type == "week"
-            )
-            
-            # 应用年份筛选
-            if start_year:
-                query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
-            if end_year:
-                query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-            
-            observations = query.order_by(FactObservation.obs_date).all()
-            
-            if not observations:
-                return IndustryChainSeasonalityResponse(
-                    metric_name=metric.metric_name or "冻品库容率",
-                    unit=metric.unit or "%",
-                    series=[],
-                    update_time=None,
-                    latest_date=None,
-                    period_change=None,
-                    yoy_change=None
-                )
-            
-            # 计算涨跌信息
-            latest_obs = observations[-1]
-            period_change = None
-            if len(observations) >= 2:
-                prev_obs = observations[-2]
-                if latest_obs.value is not None and prev_obs.value is not None:
-                    period_change = float(latest_obs.value) - float(prev_obs.value)
-            
-            # 较去年同期涨跌
-            yoy_change = None
-            if latest_obs.obs_date:
-                latest_year = latest_obs.obs_date.year
-                latest_week = latest_obs.obs_date.isocalendar()[1]
-                
-                # 查找去年同期的数据
-                for obs in observations:
-                    if obs.obs_date:
-                        obs_year = obs.obs_date.year
-                        obs_week = obs.obs_date.isocalendar()[1]
-                        if obs_year == latest_year - 1 and obs_week == latest_week:
-                            if latest_obs.value is not None and obs.value is not None:
-                                yoy_change = float(latest_obs.value) - float(obs.value)
-                            break
-            
-            # 按年份和周序号分组
-            year_data: Dict[int, Dict[int, List[float]]] = {}
-            
-            for obs in observations:
-                if obs.obs_date:
-                    year = obs.obs_date.year
-                    if year not in year_data:
-                        year_data[year] = {}
-                    
-                    # 计算ISO周序号
-                    week_of_year = obs.obs_date.isocalendar()[1]
-                    week_of_year = max(1, min(52, week_of_year))
-                    
-                    if week_of_year not in year_data[year]:
-                        year_data[year][week_of_year] = []
-                    
-                    if obs.value is not None:
-                        year_data[year][week_of_year].append(float(obs.value))
-            
-            # 构建响应
-            series = []
-            for year in sorted(year_data.keys()):
-                data_points = []
-                # 遍历1-52周
-                for week in range(1, 53):
-                    week_values = year_data[year].get(week, [])
-                    if week_values:
-                        # 如果有多个值，取平均值
-                        value = sum(week_values) / len(week_values)
-                    else:
-                        value = None
-                    
-                    # 计算该周的日期（用于month_day）
-                    from datetime import datetime, timedelta
-                    jan1 = datetime(year, 1, 1)
-                    days_offset = (week - 1) * 7 - jan1.weekday()
-                    week_start = jan1 + timedelta(days=days_offset)
-                    month_day = week_start.strftime("%m-%d")
-                    
-                    data_points.append(SeasonalityDataPoint(
-                        year=year,
-                        month_day=month_day,
-                        value=value
-                    ))
-                
-                series.append(SeasonalitySeries(
-                    year=year,
-                    data=data_points
-                ))
-            
-            # 获取更新时间
-            latest_date_str = latest_obs.obs_date.isoformat() if latest_obs.obs_date else None
-            
-            # 获取批次更新时间
-            update_time = None
-            if latest_obs.batch_id:
-                from app.models.import_batch import ImportBatch
-                batch = db.query(ImportBatch).filter(ImportBatch.id == latest_obs.batch_id).first()
-                if batch and batch.created_at:
-                    update_time = batch.created_at.isoformat()
-            
-            return IndustryChainSeasonalityResponse(
-                metric_name=metric.metric_name or "冻品库容率",
-                unit=metric.unit or "%",
-                series=series,
-                update_time=update_time,
-                latest_date=latest_date_str,
-                period_change=period_change,
-                yoy_change=yoy_change
-            )
-        else:
-            # #region agent log
-            try:
-                with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "G",
-                        "location": "price_display.py:1411",
-                        "message": "Unknown metric_name, raising 404",
-                        "data": {
-                            "metric_name": metric_name
-                        },
-                        "timestamp": int(__import__('time').time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except Exception:
-                pass
-            # #endregion
-            raise HTTPException(status_code=404, detail=f"不支持的指标：{metric_name}")
-    
-    # 查询ganglian_weekly_farm_profit表
-    query_sql = """
-        SELECT 
-            period_end,
-            value,
-            unit
-        FROM ganglian_weekly_farm_profit
-        WHERE profit_type = :profit_type
-    """
-    
-    params = {"profit_type": profit_type}
-    
-    if start_year:
-        query_sql += " AND YEAR(period_end) >= :start_year"
-        params["start_year"] = start_year
-    
-    if end_year:
-        query_sql += " AND YEAR(period_end) <= :end_year"
-        params["end_year"] = end_year
-    
-    query_sql += " ORDER BY period_end"
-    
-    result = db.execute(text(query_sql), params)
-    rows = result.fetchall()
-    
-    if not rows:
-        # 获取单位（从第一条记录或默认值）
-        unit = "元/头" if "价格" in metric_name or "利润" in metric_name else "-"
+    """产业链数据季节性（周度 1-52 周），从 fact_weekly_indicator 查询。"""
+    _end = end_year if end_year is not None else date.today().year
+    _start = start_year if start_year is not None else (_end - 5)
+
+    # 比率指标：分子/分母 两条时序按日期对齐后计算
+    ratio_def = INDUSTRY_CHAIN_RATIO_MAP.get(metric_name)
+    if ratio_def:
+        num_code, den_code = ratio_def
+        num_rows = db.execute(
+            text("""
+                SELECT week_end AS trade_date, value FROM fact_weekly_indicator
+                WHERE indicator_code = :ic AND region_code = 'NATION'
+                  AND YEAR(week_end) BETWEEN :sy AND :ey
+                ORDER BY week_end
+            """), {"ic": num_code, "sy": _start, "ey": _end},
+        ).fetchall()
+        den_rows = db.execute(
+            text("""
+                SELECT week_end AS trade_date, value FROM fact_weekly_indicator
+                WHERE indicator_code = :ic AND region_code = 'NATION'
+                  AND YEAR(week_end) BETWEEN :sy AND :ey
+                ORDER BY week_end
+            """), {"ic": den_code, "sy": _start, "ey": _end},
+        ).fetchall()
+        den_map = {r.trade_date: float(r.value) for r in den_rows if r.value}
+        rows = []
+        for r in num_rows:
+            d = den_map.get(r.trade_date)
+            if r.value and d and d != 0:
+                rows.append({"trade_date": r.trade_date, "value": round(float(r.value) / d, 4)})
+        series, latest = _rows_to_weekly_seasonality(rows)
         return IndustryChainSeasonalityResponse(
-            metric_name=metric_name,
-            unit=unit,
-            series=[],
-            update_time=None,
-            latest_date=None,
-            period_change=None,
-            yoy_change=None
+            metric_name=metric_name, unit="", series=series,
+            update_time=latest, latest_date=latest, period_change=None, yoy_change=None,
         )
-    
-    # 获取单位（从第一条记录）
-    unit = rows[0][2] if rows[0][2] else ("元/头" if "价格" in metric_name or "利润" in metric_name else "-")
-    
-    # 计算涨跌信息
-    latest_row = rows[-1]
-    period_change = None
-    if len(rows) >= 2:
-        prev_row = rows[-2]
-        if latest_row[1] is not None and prev_row[1] is not None:
-            period_change = float(latest_row[1]) - float(prev_row[1])
-    
-    # 较去年同期涨跌
-    yoy_change = None
-    if latest_row[0]:  # period_end
-        latest_date = latest_row[0]
-        latest_year = latest_date.year
-        latest_week = latest_date.isocalendar()[1]
-        
-        # 查找去年同期的数据
-        for row in rows:
-            if row[0]:  # period_end
-                obs_date = row[0]
-                obs_year = obs_date.year
-                obs_week = obs_date.isocalendar()[1]
-                if obs_year == latest_year - 1 and obs_week == latest_week:
-                    if latest_row[1] is not None and row[1] is not None:
-                        yoy_change = float(latest_row[1]) - float(row[1])
-                    break
-    
-    # 按年份和周序号分组
-    year_data: Dict[int, Dict[int, List[float]]] = {}
-    
-    for row in rows:
-        period_end = row[0]
-        value = row[1]
-        
-        if period_end:
-            year = period_end.year
-            if year not in year_data:
-                year_data[year] = {}
-            
-            # 计算ISO周序号
-            week_of_year = period_end.isocalendar()[1]
-            week_of_year = max(1, min(52, week_of_year))
-            
-            if week_of_year not in year_data[year]:
-                year_data[year][week_of_year] = []
-            
-            if value is not None:
-                year_data[year][week_of_year].append(float(value))
-    
-    # 构建响应
-    series = []
-    for year in sorted(year_data.keys()):
-        data_points = []
-        for week in range(1, 53):
-            week_values = year_data[year].get(week, [])
-            if week_values:
-                value = sum(week_values) / len(week_values)
-            else:
-                value = None
-            
-            # 计算month_day
-            from datetime import datetime, timedelta
-            jan1 = datetime(year, 1, 1)
-            days_offset = (week - 1) * 7 - jan1.weekday()
-            week_start = jan1 + timedelta(days=days_offset)
-            month_day = week_start.strftime("%m-%d")
-            
-            data_points.append(SeasonalityDataPoint(
-                year=year,
-                month_day=month_day,
-                value=value
-            ))
-        
-        series.append(SeasonalitySeries(
-            year=year,
-            data=data_points
-        ))
-    
-    latest_date = latest_row[0].isoformat() if latest_row[0] else None
-    
+
+    # 普通指标
+    mapping = INDUSTRY_CHAIN_METRIC_MAP.get(metric_name)
+    if not mapping:
+        return IndustryChainSeasonalityResponse(
+            metric_name=metric_name, unit="-", series=[],
+            update_time=None, latest_date=None, period_change=None, yoy_change=None,
+        )
+
+    indicator_code, unit = mapping
+
+    rows = db.execute(
+        text("""
+            SELECT week_end AS trade_date, value
+            FROM fact_weekly_indicator
+            WHERE indicator_code = :ic AND region_code = 'NATION'
+              AND YEAR(week_end) BETWEEN :sy AND :ey
+            ORDER BY week_end
+        """),
+        {"ic": indicator_code, "sy": _start, "ey": _end},
+    ).fetchall()
+
+    series, latest = _rows_to_weekly_seasonality(rows)
     return IndustryChainSeasonalityResponse(
         metric_name=metric_name,
         unit=unit,
         series=series,
-        update_time=latest_date,
-        latest_date=latest_date,
-        period_change=period_change,
-        yoy_change=yoy_change
+        update_time=latest,
+        latest_date=latest,
+        period_change=None,
+        yoy_change=None,
     )
 
 
-async def _get_calculated_metric_seasonality(
-    db: Session,
-    numerator_metric: str,
-    denominator_metric: str,
-    result_metric_name: str,
-    start_year: Optional[int],
-    end_year: Optional[int],
-    operation: str = "divide"
-):
-    """获取计算指标的季节性数据（如比值）"""
-    # #region agent log
-    import json
-    try:
-        with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "H",
-                "location": "price_display.py:1544",
-                "message": "_get_calculated_metric_seasonality called",
-                "data": {
-                    "numerator_metric": numerator_metric,
-                    "denominator_metric": denominator_metric,
-                    "result_metric_name": result_metric_name
-                },
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + '\n')
-    except Exception:
-        pass
-    # #endregion
-    
-    # 获取两个指标的profit_type
-    numerator_type = INDUSTRY_CHAIN_METRICS.get(numerator_metric)
-    denominator_type = INDUSTRY_CHAIN_METRICS.get(denominator_metric)
-    
-    # #region agent log
-    try:
-        with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "H",
-                "location": "price_display.py:1555",
-                "message": "profit_type lookup for numerator and denominator",
-                "data": {
-                    "numerator_type": numerator_type,
-                    "denominator_type": denominator_type,
-                    "numerator_found": numerator_type is not None,
-                    "denominator_found": denominator_type is not None
-                },
-                "timestamp": int(__import__('time').time() * 1000)
-            }, ensure_ascii=False) + '\n')
-    except Exception:
-        pass
-    # #endregion
-    
-    if not numerator_type or not denominator_type:
-        # #region agent log
-        try:
-            with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "H",
-                    "location": "price_display.py:1557",
-                    "message": "Missing profit_type, raising 404",
-                    "data": {
-                        "numerator_metric": numerator_metric,
-                        "denominator_metric": denominator_metric
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        raise HTTPException(status_code=404, detail=f"无法找到计算所需的指标：{numerator_metric} 或 {denominator_metric}")
-    
-    # 查询两个指标的数据（分别查询）
-    numerator_query_sql = """
-        SELECT period_end, value, unit
-        FROM ganglian_weekly_farm_profit
-        WHERE profit_type = :profit_type
-    """
-    numerator_params = {"profit_type": numerator_type}
-    
-    if start_year:
-        numerator_query_sql += " AND YEAR(period_end) >= :start_year"
-        numerator_params["start_year"] = start_year
-    
-    if end_year:
-        numerator_query_sql += " AND YEAR(period_end) <= :end_year"
-        numerator_params["end_year"] = end_year
-    
-    numerator_query_sql += " ORDER BY period_end"
-    
-    denominator_query_sql = numerator_query_sql.replace(":profit_type", ":denominator_type")
-    denominator_params = {"denominator_type": denominator_type}
-    if start_year:
-        denominator_params["start_year"] = start_year
-    if end_year:
-        denominator_params["end_year"] = end_year
-    
-    numerator_result = db.execute(text(numerator_query_sql), numerator_params)
-    numerator_rows = numerator_result.fetchall()
-    
-    denominator_result = db.execute(text(denominator_query_sql), denominator_params)
-    denominator_rows = denominator_result.fetchall()
-    
-    # 构建period_end到value的映射
-    numerator_dict = {row[0]: float(row[1]) for row in numerator_rows if row[0] and row[1] is not None}
-    denominator_dict = {row[0]: float(row[1]) for row in denominator_rows if row[0] and row[1] is not None}
-    
-    # 找到共同的period_end
-    common_periods = set(numerator_dict.keys()) & set(denominator_dict.keys())
-    
-    if not common_periods:
-        return IndustryChainSeasonalityResponse(
-            metric_name=result_metric_name,
-            unit="-",
-            series=[],
-            update_time=None,
-            latest_date=None,
-            period_change=None,
-            yoy_change=None
-        )
-    
-    # 计算比值并构建季节性数据
-    year_data: Dict[int, Dict[int, List[float]]] = {}
-    
-    for period_end in sorted(common_periods):
-        if denominator_dict[period_end] != 0:
-            ratio = numerator_dict[period_end] / denominator_dict[period_end]
-            
-            year = period_end.year
-            if year not in year_data:
-                year_data[year] = {}
-            
-            week_of_year = period_end.isocalendar()[1]
-            week_of_year = max(1, min(52, week_of_year))
-            
-            if week_of_year not in year_data[year]:
-                year_data[year][week_of_year] = []
-            
-            year_data[year][week_of_year].append(ratio)
-    
-    # 构建响应
-    series = []
-    for year in sorted(year_data.keys()):
-        data_points = []
-        for week in range(1, 53):
-            week_values = year_data[year].get(week, [])
-            if week_values:
-                value = sum(week_values) / len(week_values)
-            else:
-                value = None
-            
-            from datetime import datetime, timedelta
-            jan1 = datetime(year, 1, 1)
-            days_offset = (week - 1) * 7 - jan1.weekday()
-            week_start = jan1 + timedelta(days=days_offset)
-            month_day = week_start.strftime("%m-%d")
-            
-            data_points.append(SeasonalityDataPoint(
-                year=year,
-                month_day=month_day,
-                value=value
-            ))
-        
-        series.append(SeasonalitySeries(
-            year=year,
-            data=data_points
-        ))
-    
-    # 计算涨跌信息
-    period_change = None
-    yoy_change = None
-    latest_date = None
-    
-    if series and series[-1].data:
-        latest_year_data = series[-1].data
-        latest_value = None
-        latest_week_idx = None
-        
-        # 找到最后一个非空值
-        for i in range(len(latest_year_data) - 1, -1, -1):
-            if latest_year_data[i].value is not None:
-                latest_value = latest_year_data[i].value
-                latest_week_idx = i
-                break
-        
-        if latest_value is not None:
-            # 本期涨跌（较上期）
-            if latest_week_idx is not None and latest_week_idx > 0:
-                prev_value = None
-                for i in range(latest_week_idx - 1, -1, -1):
-                    if latest_year_data[i].value is not None:
-                        prev_value = latest_year_data[i].value
-                        break
-                if prev_value is not None:
-                    period_change = latest_value - prev_value
-            
-            # 较去年同期
-            if len(series) >= 2 and latest_week_idx is not None:
-                prev_year_data = series[-2].data
-                if latest_week_idx < len(prev_year_data) and prev_year_data[latest_week_idx].value is not None:
-                    yoy_change = latest_value - prev_year_data[latest_week_idx].value
-        
-        # 获取最新日期
-        if common_periods:
-            latest_date = max(common_periods).isoformat()
-    
-    return IndustryChainSeasonalityResponse(
-        metric_name=result_metric_name,
-        unit="-",
-        series=series,
-        update_time=latest_date,
-        latest_date=latest_date,
-        period_change=period_change,
-        yoy_change=yoy_change
-    )
-
-
-class ProvinceIndicatorsResponse(BaseModel):
-    """省份指标数据响应"""
-    province_name: str
-    indicators: Dict[str, SeasonalityResponse]  # key: 指标名称, value: 季节性数据
-
+# ========================== 省份多指标面板 ==========================
 
 @router.get("/province-indicators/{province_name}/seasonality", response_model=ProvinceIndicatorsResponse)
 async def get_province_indicators_seasonality(
     province_name: str,
-    start_year: Optional[int] = Query(None, description="起始年份"),
-    end_year: Optional[int] = Query(None, description="结束年份"),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user)
+    current_user: SysUser = Depends(get_current_user),
 ):
     """
-    获取指定省份的6个指标季节性数据
-    
-    6个指标：
-    1. 日度 均价 - 从"分省区猪价"sheet获取
-    2. 日度 散户标肥价差 - 从"肥标价差"sheet获取
-    3. 周度 出栏均重 - YY_W_OUT_WEIGHT, indicator='均重'
-    4. 周度 宰后均重 - 钢联数据库，sheet表均重（需要查找）
-    5. 周度 90KG占比 - YY_W_OUT_WEIGHT, indicator='90Kg出栏占比'
-    6. 周度 冻品库容 - 从"周度-冻品库存"sheet获取
+    获取指定省份的多指标季节性数据。
+    新表可提供：日度均价、日度散户标肥价差。
+    周度出栏均重 / 宰后均重 / 90KG占比 / 冻品库容 暂无数据，跳过。
     """
-    indicators_data = {}
-    
-    # 1. 日度 均价
-    try:
-        # #region agent log
-        import json
+    indicators_data: Dict[str, SeasonalityResponse] = {}
+    rc = _resolve_region_code(db, province_name)
+
+    # 1. 日度 均价 (fact_price_daily, price_type='省份均价')
+    if rc:
         try:
-            with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "price_display.py:2013",
-                    "message": "开始查询日度均价metric",
-                    "data": {
-                        "province_name": province_name,
-                        "metric_key": "YY_D_PRICE_PROVINCE_AVG",
-                        "freq_filter": ["D", "daily", "D"]
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        
-        # 查询YY_D_PRICE_PROVINCE_AVG指标（涌益各省份均价）
-        price_metric = db.query(DimMetric).filter(
-            func.json_unquote(
-                func.json_extract(DimMetric.parse_json, '$.metric_key')
-            ) == "YY_D_PRICE_PROVINCE_AVG"
-        ).first()
-        
-        # 如果没找到，尝试通过sheet_name查找（兼容旧数据）
-        if not price_metric:
-            price_metric = db.query(DimMetric).filter(
-                DimMetric.sheet_name == "各省份均价"
-            ).first()
-        
-        # 如果还是没找到，尝试查找"分省区猪价"sheet（钢联数据，作为备选）
-        if not price_metric:
-            price_metric = db.query(DimMetric).filter(
-                DimMetric.sheet_name == "分省区猪价",
-                DimMetric.raw_header.like(f"%{province_name}%"),
-                DimMetric.freq.in_(["D", "daily", "D"])
-            ).first()
-        
-        # #region agent log
-        try:
-            with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "price_display.py:2021",
-                    "message": "日度均价metric查询结果",
-                    "data": {
-                        "province_name": province_name,
-                        "metric_found": price_metric is not None,
-                        "metric_id": price_metric.id if price_metric else None,
-                        "metric_name": price_metric.metric_name if price_metric else None,
-                        "raw_header": price_metric.raw_header if price_metric else None,
-                        "freq": price_metric.freq if price_metric else None
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        
-        if price_metric:
-            # 判断是否是钢联数据（通过sheet_name判断）
-            is_ganglian_data = price_metric.sheet_name == "分省区猪价"
-            
-            observations = []
-            
-            if is_ganglian_data:
-                # 钢联数据：直接查询metric_id，不需要geo_id过滤（因为raw_header已经包含省份信息）
-                query = db.query(FactObservation).filter(
-                    FactObservation.metric_id == price_metric.id,
-                    FactObservation.period_type == "day"
-                )
-                
-                if start_year:
-                    query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
-                if end_year:
-                    query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-                
-                observations = query.order_by(FactObservation.obs_date).all()
-            else:
-                # 涌益数据（YY_D_PRICE_PROVINCE_AVG）：需要通过geo_id过滤
-                geo = db.query(DimGeo).filter(DimGeo.province == province_name).first()
-                
-                if not geo:
-                    # #region agent log
-                    try:
-                        with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "A",
-                                "location": "price_display.py:2085",
-                                "message": "未找到省份geo信息",
-                                "data": {
-                                    "province_name": province_name
-                                },
-                                "timestamp": int(__import__('time').time() * 1000)
-                            }, ensure_ascii=False) + '\n')
-                    except Exception:
-                        pass
-                    # #endregion
-                else:
-                    query = db.query(FactObservation).filter(
-                        FactObservation.metric_id == price_metric.id,
-                        FactObservation.geo_id == geo.id,
-                        FactObservation.period_type == "day"
-                    )
-                    
-                    if start_year:
-                        query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
-                    if end_year:
-                        query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-                    
-                    observations = query.order_by(FactObservation.obs_date).all()
-                
-                # #region agent log
-                try:
-                    with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "B",
-                            "location": "price_display.py:2114",
-                            "message": "日度均价observations查询结果",
-                            "data": {
-                                "province_name": province_name,
-                                "metric_id": price_metric.id,
-                                "geo_id": geo.id,
-                                "observations_count": len(observations),
-                                "has_data": len(observations) > 0,
-                                "first_obs_date": observations[0].obs_date.isoformat() if observations else None,
-                                "last_obs_date": observations[-1].obs_date.isoformat() if observations else None
-                            },
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-            
-            if observations:
-                year_data: Dict[int, List[Dict]] = {}
-                for obs in observations:
-                    year = obs.obs_date.year
-                    if year not in year_data:
-                        year_data[year] = []
-                    
-                    month_day = obs.obs_date.strftime("%m-%d")
-                    year_data[year].append({
-                        "month_day": month_day,
-                        "value": float(obs.value) if obs.value else None,
-                        "date": obs.obs_date
-                    })
-                
-                series = []
-                for year in sorted(year_data.keys()):
-                    data_points = []
-                    for item in sorted(year_data[year], key=lambda x: x["date"]):
-                        data_points.append(SeasonalityDataPoint(
-                            year=year,
-                            month_day=item["month_day"],
-                            value=item["value"]
-                        ))
-                    
-                    series.append(SeasonalitySeries(
-                        year=year,
-                        data=data_points
-                    ))
-                
-                latest_obs = observations[-1] if observations else None
-                update_time = latest_obs.obs_date.isoformat() if latest_obs else None
-                
+            params: Dict[str, Any] = {"rc": rc, "pt": "省份均价"}
+            sql = "SELECT trade_date, value FROM fact_price_daily WHERE price_type = :pt AND region_code = :rc"
+            if start_year:
+                sql += " AND YEAR(trade_date) >= :sy"
+                params["sy"] = start_year
+            if end_year:
+                sql += " AND YEAR(trade_date) <= :ey"
+                params["ey"] = end_year
+            sql += " ORDER BY trade_date"
+            rows = db.execute(text(sql), params).fetchall()
+            if rows:
+                series, latest = _rows_to_daily_seasonality(rows)
                 indicators_data["日度 均价"] = SeasonalityResponse(
                     metric_name=f"{province_name}均价",
-                    unit=price_metric.unit or "元/公斤",
+                    unit="元/公斤",
                     series=series,
-                    update_time=update_time,
-                    latest_date=update_time
+                    update_time=latest,
+                    latest_date=latest,
                 )
-    except Exception as e:
-        # #region agent log
+        except Exception as e:
+            print(f"获取日度均价失败: {e}")
+
+    # 2. 日度 散户标肥价差 (fact_spread_daily, spread_type='fat_std_spread')
+    if rc:
         try:
-            import traceback
-            with open('d:\\Workspace\\hogprice-insight\\.cursor\\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "price_display.py:2074",
-                    "message": "获取日度均价异常",
-                    "data": {
-                        "province_name": province_name,
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                        "traceback": traceback.format_exc()
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        print(f"获取日度均价失败: {e}")
-    
-    # 2. 日度 散户标肥价差
-    try:
-        spread_metric = db.query(DimMetric).filter(
-            DimMetric.sheet_name == "肥标价差",
-            DimMetric.raw_header.like(f"%{province_name}%")
-        ).first()
-        
-        if spread_metric:
-            query = db.query(FactObservation).filter(
-                FactObservation.metric_id == spread_metric.id,
-                FactObservation.period_type == "day"
-            )
-            
+            params2: Dict[str, Any] = {"rc": rc, "st": "fat_std_spread"}
+            sql2 = "SELECT trade_date, value FROM fact_spread_daily WHERE spread_type = :st AND region_code = :rc"
             if start_year:
-                query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
+                sql2 += " AND YEAR(trade_date) >= :sy"
+                params2["sy"] = start_year
             if end_year:
-                query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-            
-            observations = query.order_by(FactObservation.obs_date).all()
-            
-            if observations:
-                year_data: Dict[int, List[Dict]] = {}
-                for obs in observations:
-                    year = obs.obs_date.year
-                    if year not in year_data:
-                        year_data[year] = []
-                    
-                    month_day = obs.obs_date.strftime("%m-%d")
-                    year_data[year].append({
-                        "month_day": month_day,
-                        "value": float(obs.value) if obs.value else None,
-                        "date": obs.obs_date
-                    })
-                
-                series = []
-                for year in sorted(year_data.keys()):
-                    data_points = []
-                    for item in sorted(year_data[year], key=lambda x: x["date"]):
-                        data_points.append(SeasonalityDataPoint(
-                            year=year,
-                            month_day=item["month_day"],
-                            value=item["value"]
-                        ))
-                    
-                    series.append(SeasonalitySeries(
-                        year=year,
-                        data=data_points
-                    ))
-                
-                latest_obs = observations[-1] if observations else None
-                update_time = latest_obs.obs_date.isoformat() if latest_obs else None
-                
+                sql2 += " AND YEAR(trade_date) <= :ey"
+                params2["ey"] = end_year
+            sql2 += " ORDER BY trade_date"
+            rows2 = db.execute(text(sql2), params2).fetchall()
+            if rows2:
+                series2, latest2 = _rows_to_daily_seasonality(rows2)
                 indicators_data["日度 散户标肥价差"] = SeasonalityResponse(
                     metric_name=f"{province_name}散户标肥价差",
-                    unit=spread_metric.unit or "元/公斤",
-                    series=series,
-                    update_time=update_time,
-                    latest_date=update_time
+                    unit="元/公斤",
+                    series=series2,
+                    update_time=latest2,
+                    latest_date=latest2,
                 )
-    except Exception as e:
-        print(f"获取日度散户标肥价差失败: {e}")
-    
-    # 3. 周度 出栏均重
-    try:
-        # 查询省份的geo_id
-        geo = db.query(DimGeo).filter(DimGeo.province == province_name).first()
-        
-        if geo:
-            weight_metric = db.query(DimMetric).filter(
-                func.json_unquote(
-                    func.json_extract(DimMetric.parse_json, '$.metric_key')
-                ) == "YY_W_OUT_WEIGHT"
-            ).first()
-            
-            if weight_metric:
-                query = db.query(FactObservation).filter(
-                    FactObservation.metric_id == weight_metric.id,
-                    FactObservation.geo_id == geo.id,
-                    FactObservation.period_type == "week",
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, '$.indicator')
-                    ) == "均重"
-                )
-                
-                if start_year:
-                    query = query.filter(extract('year', FactObservation.period_end) >= start_year)
-                if end_year:
-                    query = query.filter(extract('year', FactObservation.period_end) <= end_year)
-                
-                observations = query.order_by(FactObservation.period_end).all()
-                
-                if observations:
-                    year_data: Dict[int, Dict[int, List[float]]] = {}
-                    
-                    for obs in observations:
-                        if obs.period_end:
-                            year = obs.period_end.year
-                            if year not in year_data:
-                                year_data[year] = {}
-                            
-                            week_of_year = obs.period_end.isocalendar()[1]
-                            week_of_year = max(1, min(52, week_of_year))
-                            
-                            if week_of_year not in year_data[year]:
-                                year_data[year][week_of_year] = []
-                            
-                            if obs.value is not None:
-                                year_data[year][week_of_year].append(float(obs.value))
-                    
-                    series = []
-                    for year in sorted(year_data.keys()):
-                        data_points = []
-                        for week in range(1, 53):
-                            week_values = year_data[year].get(week, [])
-                            if week_values:
-                                value = sum(week_values) / len(week_values)
-                            else:
-                                value = None
-                            
-                            from datetime import datetime, timedelta
-                            jan1 = datetime(year, 1, 1)
-                            days_offset = (week - 1) * 7 - jan1.weekday()
-                            week_start = jan1 + timedelta(days=days_offset)
-                            month_day = week_start.strftime("%m-%d")
-                            
-                            data_points.append(SeasonalityDataPoint(
-                                year=year,
-                                month_day=month_day,
-                                value=value
-                            ))
-                        
-                        series.append(SeasonalitySeries(
-                            year=year,
-                            data=data_points
-                        ))
-                    
-                    latest_obs = observations[-1] if observations else None
-                    update_time = latest_obs.period_end.isoformat() if latest_obs and latest_obs.period_end else None
-                    
-                    indicators_data["周度 出栏均重"] = SeasonalityResponse(
-                        metric_name=f"{province_name}出栏均重",
-                        unit=weight_metric.unit or "kg",
-                        series=series,
-                        update_time=update_time,
-                        latest_date=update_time
-                    )
-    except Exception as e:
-        print(f"获取周度出栏均重失败: {e}")
-    
-    # 4. 周度 宰后均重（钢联数据库，从"宰后均重"sheet查询）
-    try:
-        # 查询钢联数据库的宰后均重指标
-        # 每个省份有独立的metric，通过raw_header中包含省份名称来查找
-        # raw_header格式：白条肉：屠宰企业：宰后均重：{省份}（周）
-        slaughter_weight_metric = db.query(DimMetric).filter(
-            DimMetric.sheet_name == "宰后均重",
-            DimMetric.metric_name == "宰后均重",
-            DimMetric.raw_header.like(f"%{province_name}%"),
-            DimMetric.freq.in_(["W", "week", "W"])
-        ).first()
-        
-        if slaughter_weight_metric:
-            # 查询该省份的宰后均重数据
-            # 每个metric对应一个省份，直接查询该metric的所有数据
-            query = db.query(FactObservation).filter(
-                FactObservation.metric_id == slaughter_weight_metric.id,
-                FactObservation.period_type == "week"
-            )
-            
+        except Exception as e:
+            print(f"获取日度散户标肥价差失败: {e}")
+
+    # 3. 周度 出栏均重 (fact_weekly_indicator, indicator_code='weight_avg')
+    if rc:
+        try:
+            params3: Dict[str, Any] = {"rc": rc, "ic": "weight_avg"}
+            sql3 = "SELECT week_end AS trade_date, value FROM fact_weekly_indicator WHERE indicator_code = :ic AND region_code = :rc"
             if start_year:
-                query = query.filter(extract('year', FactObservation.obs_date) >= start_year)
+                sql3 += " AND YEAR(week_end) >= :sy"
+                params3["sy"] = start_year
             if end_year:
-                query = query.filter(extract('year', FactObservation.obs_date) <= end_year)
-            
-            observations = query.order_by(FactObservation.obs_date).all()
-            
-            if observations:
-                year_data: Dict[int, Dict[int, List[float]]] = {}
-                
-                for obs in observations:
-                    # 使用obs_date字段（钢联数据使用obs_date而不是period_end）
-                    if obs.obs_date:
-                        year = obs.obs_date.year
-                        if year not in year_data:
-                            year_data[year] = {}
-                        
-                        week_of_year = obs.obs_date.isocalendar()[1]
-                        week_of_year = max(1, min(52, week_of_year))
-                        
-                        if week_of_year not in year_data[year]:
-                            year_data[year][week_of_year] = []
-                        
-                        if obs.value is not None:
-                            year_data[year][week_of_year].append(float(obs.value))
-                
-                series = []
-                for year in sorted(year_data.keys()):
-                    data_points = []
-                    for week in range(1, 53):
-                        week_values = year_data[year].get(week, [])
-                        if week_values:
-                            value = sum(week_values) / len(week_values)
-                        else:
-                            value = None
-                        
-                        from datetime import datetime, timedelta
-                        jan1 = datetime(year, 1, 1)
-                        days_offset = (week - 1) * 7 - jan1.weekday()
-                        week_start = jan1 + timedelta(days=days_offset)
-                        month_day = week_start.strftime("%m-%d")
-                        
-                        data_points.append(SeasonalityDataPoint(
-                            year=year,
-                            month_day=month_day,
-                            value=value
-                        ))
-                    
-                    series.append(SeasonalitySeries(
-                        year=year,
-                        data=data_points
-                    ))
-                
-                latest_obs = observations[-1] if observations else None
-                update_time = latest_obs.obs_date.isoformat() if latest_obs and latest_obs.obs_date else None
-                
+                sql3 += " AND YEAR(week_end) <= :ey"
+                params3["ey"] = end_year
+            sql3 += " ORDER BY week_end"
+            rows3 = db.execute(text(sql3), params3).fetchall()
+            if rows3:
+                series3, latest3 = _rows_to_weekly_seasonality(rows3)
+                indicators_data["周度 出栏均重"] = SeasonalityResponse(
+                    metric_name=f"{province_name}出栏均重",
+                    unit="公斤",
+                    series=series3,
+                    update_time=latest3,
+                    latest_date=latest3,
+                )
+        except Exception as e:
+            print(f"获取周度出栏均重失败: {e}")
+
+    # 4. 周度 宰后均重
+    if rc:
+        try:
+            params4: Dict[str, Any] = {"rc": rc, "ic": "post_slaughter_weight"}
+            sql4 = "SELECT week_end AS trade_date, value FROM fact_weekly_indicator WHERE indicator_code = :ic AND region_code = :rc"
+            if start_year:
+                sql4 += " AND YEAR(week_end) >= :sy"
+                params4["sy"] = start_year
+            if end_year:
+                sql4 += " AND YEAR(week_end) <= :ey"
+                params4["ey"] = end_year
+            sql4 += " ORDER BY week_end"
+            rows4 = db.execute(text(sql4), params4).fetchall()
+            if rows4:
+                series4, latest4 = _rows_to_weekly_seasonality(rows4)
                 indicators_data["周度 宰后均重"] = SeasonalityResponse(
                     metric_name=f"{province_name}宰后均重",
-                    unit=slaughter_weight_metric.unit or "千克",
-                    series=series,
-                    update_time=update_time,
-                    latest_date=update_time
+                    unit="公斤",
+                    series=series4,
+                    update_time=latest4,
+                    latest_date=latest4,
                 )
-    except Exception as e:
-        import traceback
-        print(f"获取周度宰后均重失败: {e}")
-        traceback.print_exc()
-    
-    # 5. 周度 90KG占比
-    try:
-        geo = db.query(DimGeo).filter(DimGeo.province == province_name).first()
-        
-        if geo:
-            weight_metric = db.query(DimMetric).filter(
-                func.json_unquote(
-                    func.json_extract(DimMetric.parse_json, '$.metric_key')
-                ) == "YY_W_OUT_WEIGHT"
-            ).first()
-            
-            if weight_metric:
-                query = db.query(FactObservation).filter(
-                    FactObservation.metric_id == weight_metric.id,
-                    FactObservation.geo_id == geo.id,
-                    FactObservation.period_type == "week",
-                    func.json_unquote(
-                        func.json_extract(FactObservation.tags_json, '$.indicator')
-                    ) == "90Kg出栏占比"
+        except Exception as e:
+            print(f"获取周度宰后均重失败: {e}")
+
+    # 5. 周度 90KG占比 (fact_weekly_indicator, indicator_code='weight_pct_under90')
+    if rc:
+        try:
+            params5: Dict[str, Any] = {"rc": rc, "ic": "weight_pct_under90"}
+            sql5 = "SELECT week_end AS trade_date, value FROM fact_weekly_indicator WHERE indicator_code = :ic AND region_code = :rc"
+            if start_year:
+                sql5 += " AND YEAR(week_end) >= :sy"
+                params5["sy"] = start_year
+            if end_year:
+                sql5 += " AND YEAR(week_end) <= :ey"
+                params5["ey"] = end_year
+            sql5 += " ORDER BY week_end"
+            rows5 = db.execute(text(sql5), params5).fetchall()
+            if rows5:
+                series5, latest5 = _rows_to_weekly_seasonality(rows5)
+                indicators_data["周度 90KG占比"] = SeasonalityResponse(
+                    metric_name=f"{province_name}90KG占比",
+                    unit="%",
+                    series=series5,
+                    update_time=latest5,
+                    latest_date=latest5,
                 )
-                
-                if start_year:
-                    query = query.filter(extract('year', FactObservation.period_end) >= start_year)
-                if end_year:
-                    query = query.filter(extract('year', FactObservation.period_end) <= end_year)
-                
-                observations = query.order_by(FactObservation.period_end).all()
-                
-                if observations:
-                    year_data: Dict[int, Dict[int, List[float]]] = {}
-                    
-                    for obs in observations:
-                        if obs.period_end:
-                            year = obs.period_end.year
-                            if year not in year_data:
-                                year_data[year] = {}
-                            
-                            week_of_year = obs.period_end.isocalendar()[1]
-                            week_of_year = max(1, min(52, week_of_year))
-                            
-                            if week_of_year not in year_data[year]:
-                                year_data[year][week_of_year] = []
-                            
-                            if obs.value is not None:
-                                year_data[year][week_of_year].append(float(obs.value))
-                    
-                    series = []
-                    for year in sorted(year_data.keys()):
-                        data_points = []
-                        for week in range(1, 53):
-                            week_values = year_data[year].get(week, [])
-                            if week_values:
-                                value = sum(week_values) / len(week_values)
-                            else:
-                                value = None
-                            
-                            from datetime import datetime, timedelta
-                            jan1 = datetime(year, 1, 1)
-                            days_offset = (week - 1) * 7 - jan1.weekday()
-                            week_start = jan1 + timedelta(days=days_offset)
-                            month_day = week_start.strftime("%m-%d")
-                            
-                            data_points.append(SeasonalityDataPoint(
-                                year=year,
-                                month_day=month_day,
-                                value=value
-                            ))
-                        
-                        series.append(SeasonalitySeries(
-                            year=year,
-                            data=data_points
-                        ))
-                    
-                    latest_obs = observations[-1] if observations else None
-                    update_time = latest_obs.period_end.isoformat() if latest_obs and latest_obs.period_end else None
-                    
-                    indicators_data["周度 90KG占比"] = SeasonalityResponse(
-                        metric_name=f"{province_name}90KG占比",
-                        unit=weight_metric.unit or "%",
-                        series=series,
-                        update_time=update_time,
-                        latest_date=update_time
-                    )
-    except Exception as e:
-        print(f"获取周度90KG占比失败: {e}")
-    
-    # 6. 周度 冻品库容
-    try:
-        geo = db.query(DimGeo).filter(DimGeo.province == province_name).first()
-        
-        if geo:
-            frozen_metric = db.query(DimMetric).filter(
-                DimMetric.sheet_name == "周度-冻品库存",
-                func.json_unquote(
-                    func.json_extract(DimMetric.parse_json, '$.metric_key')
-                ) == "YY_W_FROZEN_INVENTORY_RATIO"
-            ).first()
-            
-            if frozen_metric:
-                query = db.query(FactObservation).filter(
-                    FactObservation.metric_id == frozen_metric.id,
-                    FactObservation.geo_id == geo.id,
-                    FactObservation.period_type == "week"
+        except Exception as e:
+            print(f"获取周度90KG占比失败: {e}")
+
+    # 6. 周度 冻品库容 (fact_weekly_indicator, indicator_code='frozen_rate')
+    if rc:
+        try:
+            params6: Dict[str, Any] = {"rc": rc, "ic": "frozen_rate"}
+            sql6 = "SELECT week_end AS trade_date, value FROM fact_weekly_indicator WHERE indicator_code = :ic AND region_code = :rc"
+            if start_year:
+                sql6 += " AND YEAR(week_end) >= :sy"
+                params6["sy"] = start_year
+            if end_year:
+                sql6 += " AND YEAR(week_end) <= :ey"
+                params6["ey"] = end_year
+            sql6 += " ORDER BY week_end"
+            rows6 = db.execute(text(sql6), params6).fetchall()
+            if rows6:
+                series6, latest6 = _rows_to_weekly_seasonality(rows6)
+                indicators_data["周度 冻品库容"] = SeasonalityResponse(
+                    metric_name=f"{province_name}冻品库容",
+                    unit="%",
+                    series=series6,
+                    update_time=latest6,
+                    latest_date=latest6,
                 )
-                
-                if start_year:
-                    query = query.filter(extract('year', FactObservation.period_end) >= start_year)
-                if end_year:
-                    query = query.filter(extract('year', FactObservation.period_end) <= end_year)
-                
-                observations = query.order_by(FactObservation.period_end).all()
-                
-                if observations:
-                    year_data: Dict[int, Dict[int, List[float]]] = {}
-                    
-                    for obs in observations:
-                        if obs.period_end:
-                            year = obs.period_end.year
-                            if year not in year_data:
-                                year_data[year] = {}
-                            
-                            week_of_year = obs.period_end.isocalendar()[1]
-                            week_of_year = max(1, min(52, week_of_year))
-                            
-                            if week_of_year not in year_data[year]:
-                                year_data[year][week_of_year] = []
-                            
-                            if obs.value is not None:
-                                year_data[year][week_of_year].append(float(obs.value))
-                    
-                    series = []
-                    for year in sorted(year_data.keys()):
-                        data_points = []
-                        for week in range(1, 53):
-                            week_values = year_data[year].get(week, [])
-                            if week_values:
-                                value = sum(week_values) / len(week_values)
-                            else:
-                                value = None
-                            
-                            from datetime import datetime, timedelta
-                            jan1 = datetime(year, 1, 1)
-                            days_offset = (week - 1) * 7 - jan1.weekday()
-                            week_start = jan1 + timedelta(days=days_offset)
-                            month_day = week_start.strftime("%m-%d")
-                            
-                            data_points.append(SeasonalityDataPoint(
-                                year=year,
-                                month_day=month_day,
-                                value=value
-                            ))
-                        
-                        series.append(SeasonalitySeries(
-                            year=year,
-                            data=data_points
-                        ))
-                    
-                    latest_obs = observations[-1] if observations else None
-                    update_time = latest_obs.period_end.isoformat() if latest_obs and latest_obs.period_end else None
-                    
-                    indicators_data["周度 冻品库容"] = SeasonalityResponse(
-                        metric_name=f"{province_name}冻品库容",
-                        unit=frozen_metric.unit or "ratio",
-                        series=series,
-                        update_time=update_time,
-                        latest_date=update_time
-                    )
-    except Exception as e:
-        print(f"获取周度冻品库容失败: {e}")
-    
-    return ProvinceIndicatorsResponse(
-        province_name=province_name,
-        indicators=indicators_data
+        except Exception as e:
+            print(f"获取周度冻品库容失败: {e}")
+
+    return ProvinceIndicatorsResponse(province_name=province_name, indicators=indicators_data)
+
+
+# ========================== price_national 子路由 ==========================
+# 以下端点原来在 price_national.py 中，现在统一到此文件。
+
+@router.get("/national-price/seasonality", response_model=SeasonalityResponse)
+async def get_national_price_seasonality(
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """全国猪价季节性（按年对齐）"""
+    _end = end_year if end_year is not None else date.today().year
+    _start = start_year if start_year is not None else (_end - 5)
+
+    rows = db.execute(
+        text("""
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = '标猪均价' AND region_code = 'NATION' AND source = 'YONGYI'
+              AND YEAR(trade_date) BETWEEN :sy AND :ey
+            ORDER BY trade_date
+        """),
+        {"sy": _start, "ey": _end},
+    ).fetchall()
+
+    if not rows:
+        # 如果涌益没数据, 试试钢联
+        rows = db.execute(
+            text("""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN'
+                  AND YEAR(trade_date) BETWEEN :sy AND :ey
+                ORDER BY trade_date
+            """),
+            {"sy": _start, "ey": _end},
+        ).fetchall()
+
+    series, latest = _rows_to_daily_seasonality(rows)
+    return SeasonalityResponse(
+        metric_name="全国猪价",
+        unit="元/公斤",
+        series=series,
+        update_time=latest,
+        latest_date=latest,
     )
 
 
-# A1. 价格（全国） 专用接口已拆到 price_national 模块（末尾挂载避免循环导入）
-from app.api import price_national
-router.include_router(price_national.router)
+@router.get("/fat-std-spread/seasonality", response_model=SeasonalityResponse)
+async def get_fat_std_spread_seasonality(
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
+    region_code: Optional[str] = Query(None, description="区域代码（可选）"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """标肥价差季节性（全国）"""
+    _end = end_year if end_year is not None else date.today().year
+    _start = start_year if start_year is not None else (_end - 5)
+    rc = region_code or "NATION"
+
+    rows = db.execute(
+        text("""
+            SELECT trade_date, value FROM fact_spread_daily
+            WHERE spread_type = 'fat_std_spread' AND region_code = :rc
+              AND YEAR(trade_date) BETWEEN :sy AND :ey
+            ORDER BY trade_date
+        """),
+        {"rc": rc, "sy": _start, "ey": _end},
+    ).fetchall()
+
+    series, latest = _rows_to_daily_seasonality(rows)
+    return SeasonalityResponse(
+        metric_name="标肥价差",
+        unit="元/公斤",
+        series=series,
+        update_time=latest,
+        latest_date=latest,
+    )
+
+
+@router.get("/price-and-spread", response_model=PriceSpreadResponse)
+async def get_price_and_spread(
+    selected_years: Optional[str] = Query(None, description="选中年份，逗号分隔"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """猪价和标肥价差（可年度筛选），未传年份默认最近 6 年"""
+    year_list: List[int] = []
+    if selected_years:
+        year_list = [int(y.strip()) for y in selected_years.split(",") if y.strip().isdigit()]
+    if not year_list:
+        _end = date.today().year
+        year_list = list(range(_end - 5, _end + 1))
+
+    # 将年份列表转为逗号字符串用于 IN
+    year_str = ",".join(str(y) for y in year_list)
+
+    price_rows = db.execute(
+        text(f"""
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = '标猪均价' AND region_code = 'NATION' AND source = 'YONGYI'
+              AND YEAR(trade_date) IN ({year_str})
+            ORDER BY trade_date
+        """),
+    ).fetchall()
+
+    # fallback to GANGLIAN if YONGYI is empty
+    if not price_rows:
+        price_rows = db.execute(
+            text(f"""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN'
+                  AND YEAR(trade_date) IN ({year_str})
+                ORDER BY trade_date
+            """),
+        ).fetchall()
+
+    spread_rows = db.execute(
+        text(f"""
+            SELECT trade_date, value FROM fact_spread_daily
+            WHERE spread_type = 'fat_std_spread' AND region_code = 'NATION'
+              AND YEAR(trade_date) IN ({year_str})
+            ORDER BY trade_date
+        """),
+    ).fetchall()
+
+    price_data = [
+        {"date": r[0].isoformat(), "year": r[0].year, "value": float(r[1]) if r[1] is not None else None}
+        for r in price_rows
+    ]
+    spread_data = [
+        {"date": r[0].isoformat(), "year": r[0].year, "value": float(r[1]) if r[1] is not None else None}
+        for r in spread_rows
+    ]
+
+    all_years = sorted({r[0].year for r in price_rows} | {r[0].year for r in spread_rows})
+
+    update_time = None
+    if price_rows:
+        update_time = price_rows[-1][0].isoformat()
+    elif spread_rows:
+        update_time = spread_rows[-1][0].isoformat()
+
+    return PriceSpreadResponse(
+        price_data=price_data,
+        spread_data=spread_data,
+        available_years=all_years,
+        update_time=update_time,
+    )
+
+
+@router.get("/slaughter/lunar", response_model=SlaughterLunarResponse)
+async def get_slaughter_lunar(
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """日度屠宰量（农历对齐）"""
+    _end = end_year if end_year is not None else date.today().year
+    _start = start_year if start_year is not None else (_end - 5)
+
+    rows = db.execute(
+        text("""
+            SELECT trade_date, volume FROM fact_slaughter_daily
+            WHERE region_code = 'NATION'
+              AND YEAR(trade_date) BETWEEN :sy AND :ey
+            ORDER BY trade_date
+        """),
+        {"sy": _start, "ey": _end},
+    ).fetchall()
+
+    if not rows:
+        return SlaughterLunarResponse(
+            metric_name="日度屠宰量",
+            unit="头",
+            series=[],
+            update_time=None,
+            latest_date=None,
+        )
+
+    # 按农历年分组
+    year_data: Dict[int, List[Dict]] = {}
+    for row in rows:
+        d, v = row[0], row[1]
+        lunar_info = solar_to_lunar(d)
+        lunar_day_index = lunar_info.get("lunar_day_index")
+        is_leap_month = lunar_info.get("is_leap_month", False)
+        lunar_year = lunar_info.get("lunar_year")
+        lunar_month = lunar_info.get("lunar_month")
+        lunar_day = lunar_info.get("lunar_day")
+        if lunar_year is None:
+            continue
+        if lunar_year not in year_data:
+            year_data[lunar_year] = []
+        year_data[lunar_year].append({
+            "date": d,
+            "value": float(v) if v is not None else None,
+            "lunar_day_index": lunar_day_index,
+            "is_leap_month": is_leap_month,
+            "lunar_year": lunar_year,
+            "lunar_month": lunar_month,
+            "lunar_day": lunar_day,
+        })
+
+    # 闰月兜底
+    for lunar_year_k in list(year_data.keys()):
+        leap_info = get_leap_month_info(lunar_year_k)
+        if not leap_info:
+            continue
+        start_d = leap_info.get("leap_month_start")
+        end_d = leap_info.get("leap_month_end")
+        if not isinstance(start_d, date) or not isinstance(end_d, date):
+            continue
+        lm = leap_info.get("leap_month")
+        for item in year_data[lunar_year_k]:
+            if start_d <= item["date"] <= end_d:
+                item["is_leap_month"] = True
+                item["lunar_month"] = lm
+                if item.get("lunar_day") is None:
+                    item["lunar_day"] = (item["date"] - start_d).days + 1
+
+    max_index = 0
+    valid_indices: List[int] = []
+    for year_data_list in year_data.values():
+        for item in year_data_list:
+            if item["lunar_day_index"] is not None:
+                idx = item["lunar_day_index"]
+                if idx > max_index:
+                    max_index = idx
+                valid_indices.append(idx)
+    if max_index == 0:
+        max_index = 350
+
+    series: List[SeasonalitySeries] = []
+    leap_month_series_map: Dict[Tuple[int, int], List[Dict]] = {}
+
+    for year in sorted(year_data.keys()):
+        index_to_value: Dict[int, float] = {}
+        leap_month_data: Dict[Tuple[int, int], Dict[int, float]] = {}
+        for item in year_data[year]:
+            if item["is_leap_month"]:
+                lm_raw = item["lunar_month"]
+                lm = abs(lm_raw) if isinstance(lm_raw, (int, float)) else (lm_raw or 1)
+                key = (item["lunar_year"], lm)
+                if key not in leap_month_data:
+                    leap_month_data[key] = {}
+                leap_index = lm * 30 + item["lunar_day"] if item.get("lunar_day") is not None else None
+                if leap_index and item["value"] is not None:
+                    leap_month_data[key][leap_index] = item["value"]
+            else:
+                if item["lunar_day_index"] is not None and item["value"] is not None:
+                    index_to_value[item["lunar_day_index"]] = item["value"]
+
+        if len(index_to_value) == 0 and len(leap_month_data) == 0:
+            continue
+        data_points = [
+            SeasonalityDataPoint(
+                year=year,
+                month_day=str(index),
+                value=index_to_value.get(index),
+                lunar_day_index=index,
+            )
+            for index in range(1, max_index + 1)
+        ]
+        if data_points:
+            series.append(SeasonalitySeries(year=year, data=data_points))
+
+        for (ly, lm_val), leap_values in leap_month_data.items():
+            key2 = (ly, lm_val)
+            if key2 not in leap_month_series_map:
+                leap_month_series_map[key2] = []
+            try:
+                from lunar_python import Lunar
+                from datetime import date as date_class
+                lunar_normal_month_first = Lunar.fromYmd(ly, lm_val, 1)
+                solar_normal_first = lunar_normal_month_first.getSolar()
+                solar_normal_date = date_class(
+                    solar_normal_first.getYear(),
+                    solar_normal_first.getMonth(),
+                    solar_normal_first.getDay(),
+                )
+                normal_first_info = solar_to_lunar(solar_normal_date)
+                base_index = normal_first_info.get("lunar_day_index")
+                fallback_base = (lm_val - 1) * 30 + 1
+                if base_index is None or (lm_val >= 2 and base_index < fallback_base):
+                    base_index = fallback_base
+            except Exception:
+                base_index = (lm_val - 1) * 30 + 1
+            for leap_idx, value in sorted(leap_values.items()):
+                day_in_month = leap_idx % 30 if leap_idx >= 30 else leap_idx
+                if day_in_month == 0:
+                    day_in_month = 30
+                aligned_index = base_index + day_in_month - 1
+                leap_month_series_map[key2].append({"index": aligned_index, "value": value})
+
+    for (lunar_year_val, leap_month_val), leap_data in leap_month_series_map.items():
+        if lunar_year_val in year_data:
+            leap_data_points = [
+                SeasonalityDataPoint(
+                    year=lunar_year_val,
+                    month_day=str(it["index"]),
+                    value=it["value"],
+                    lunar_day_index=it["index"],
+                )
+                for it in sorted(leap_data, key=lambda x: x["index"])
+            ]
+            if leap_data_points:
+                series.append(
+                    SeasonalitySeries(
+                        year=lunar_year_val,
+                        data=leap_data_points,
+                        is_leap_month=True,
+                        leap_month=leap_month_val,
+                    )
+                )
+
+    latest_date_str = rows[-1][0].isoformat()
+    x_axis_labels: Dict[int, str] = {}
+    if valid_indices and year_data:
+        sample_lunar_year = list(year_data.keys())[0]
+        try:
+            from lunar_python import Lunar
+            from datetime import date as date_class
+            lunar_new_year = Lunar.fromYmd(sample_lunar_year, 1, 1)
+            solar_new_year = lunar_new_year.getSolar()
+            new_year_date = date_class(
+                solar_new_year.getYear(),
+                solar_new_year.getMonth(),
+                solar_new_year.getDay(),
+            )
+            for idx in range(1, max_index + 1):
+                target_date = date_class.fromordinal(new_year_date.toordinal() + idx - 1 + 7)
+                li = solar_to_lunar(target_date)
+                lm2 = li.get("lunar_month")
+                ld2 = li.get("lunar_day")
+                if lm2 and ld2:
+                    x_axis_labels[idx] = f"{lm2:02d}-{ld2:02d}"
+        except Exception:
+            pass
+
+    return SlaughterLunarResponse(
+        metric_name="日度屠宰量",
+        unit="头",
+        series=series,
+        update_time=latest_date_str,
+        latest_date=latest_date_str,
+        x_axis_labels=x_axis_labels,
+    )
+
+
+@router.get("/slaughter-price-trend/solar", response_model=SlaughterPriceTrendSolarResponse)
+async def get_slaughter_price_trend_solar(
+    year: Optional[int] = Query(None, description="农历年份"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """屠宰&价格走势（阳历日期，正月初八~腊月二十八）"""
+    current_yr = date.today().year
+    candidate_years = list(range(2019, current_yr + 2))
+    year_ranges: Dict[int, Tuple[date, date]] = {}
+    for y in candidate_years:
+        r = get_lunar_year_date_range_la_ba(y)
+        if r:
+            year_ranges[y] = r
+
+    available_years: List[int] = []
+    for y in sorted(year_ranges.keys(), reverse=True):
+        sd, ed = year_ranges[y]
+        has_data = db.execute(
+            text("""
+                SELECT 1 FROM fact_slaughter_daily
+                WHERE region_code = 'NATION'
+                  AND trade_date BETWEEN :s AND :e
+                LIMIT 1
+            """),
+            {"s": sd, "e": ed},
+        ).first()
+        if not has_data:
+            has_data = db.execute(
+                text("""
+                    SELECT 1 FROM fact_price_daily
+                    WHERE price_type = '标猪均价' AND region_code = 'NATION'
+                      AND trade_date BETWEEN :s AND :e
+                    LIMIT 1
+                """),
+                {"s": sd, "e": ed},
+            ).first()
+        if has_data:
+            available_years.append(y)
+
+    if not available_years:
+        return SlaughterPriceTrendSolarResponse(
+            slaughter_data=[], price_data=[], available_years=[], update_time=None, latest_date=None
+        )
+
+    query_year = year if year is not None else available_years[0]
+    if query_year not in year_ranges:
+        raise HTTPException(status_code=400, detail=f"农历年份 {query_year} 无有效日期范围，可用：{available_years}")
+
+    sd, ed = year_ranges[query_year]
+
+    slaughter_rows = db.execute(
+        text("""
+            SELECT trade_date, volume FROM fact_slaughter_daily
+            WHERE region_code = 'NATION'
+              AND trade_date BETWEEN :s AND :e
+            ORDER BY trade_date
+        """),
+        {"s": sd, "e": ed},
+    ).fetchall()
+
+    price_rows = db.execute(
+        text("""
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = '标猪均价' AND region_code = 'NATION' AND source = 'YONGYI'
+              AND trade_date BETWEEN :s AND :e
+            ORDER BY trade_date
+        """),
+        {"s": sd, "e": ed},
+    ).fetchall()
+
+    slaughter_data = [
+        {"date": r[0].isoformat(), "value": float(r[1]) if r[1] is not None else None}
+        for r in slaughter_rows
+    ]
+    price_data = [
+        {"date": r[0].isoformat(), "value": float(r[1]) if r[1] is not None else None}
+        for r in price_rows
+    ]
+
+    latest = slaughter_rows[-1][0].isoformat() if slaughter_rows else (price_rows[-1][0].isoformat() if price_rows else None)
+
+    return SlaughterPriceTrendSolarResponse(
+        slaughter_data=slaughter_data,
+        price_data=price_data,
+        available_years=available_years,
+        start_date=sd.isoformat(),
+        end_date=ed.isoformat(),
+        update_time=latest,
+        latest_date=latest,
+    )
+
+
+@router.get("/price-changes")
+async def get_price_changes(
+    metric_type: str = Query(..., description="指标类型：price 或 spread"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """价格/价差的涨跌数据（5 日 / 10 日 / 30 日、同比）"""
+    if metric_type == "price":
+        table = "fact_price_daily"
+        type_col = "price_type"
+        type_val = "标猪均价"
+        extra = " AND source = 'YONGYI'"
+    else:
+        table = "fact_spread_daily"
+        type_col = "spread_type"
+        type_val = "fat_std_spread"
+        extra = ""
+
+    latest_row = db.execute(
+        text(f"""
+            SELECT trade_date, value FROM {table}
+            WHERE {type_col} = :tv AND region_code = 'NATION' {extra}
+            ORDER BY trade_date DESC LIMIT 1
+        """),
+        {"tv": type_val},
+    ).first()
+
+    if not latest_row:
+        return {
+            "current_value": None,
+            "latest_date": None,
+            "day5_change": None,
+            "day10_change": None,
+            "day30_change": None,
+            "yoy_change": None,
+            "unit": "元/公斤",
+        }
+
+    latest_date = latest_row[0]
+    latest_value = float(latest_row[1]) if latest_row[1] is not None else None
+
+    def _find(target_date):
+        r = db.execute(
+            text(f"""
+                SELECT value FROM {table}
+                WHERE {type_col} = :tv AND region_code = 'NATION' {extra}
+                  AND trade_date = :td LIMIT 1
+            """),
+            {"tv": type_val, "td": target_date},
+        ).first()
+        return float(r[0]) if r and r[0] is not None else None
+
+    d5 = _find(date.fromordinal(latest_date.toordinal() - 5))
+    d10 = _find(date.fromordinal(latest_date.toordinal() - 10))
+    d30 = _find(date.fromordinal(latest_date.toordinal() - 30))
+    try:
+        yoy_date = date(latest_date.year - 1, latest_date.month, latest_date.day)
+    except ValueError:
+        yoy_date = date(latest_date.year - 1, latest_date.month, latest_date.day - 1)
+    yoy = _find(yoy_date)
+
+    def _diff(a, b):
+        return (a - b) if a is not None and b is not None else None
+
+    return {
+        "current_value": latest_value,
+        "latest_date": latest_date.isoformat(),
+        "day5_change": _diff(latest_value, d5),
+        "day10_change": _diff(latest_value, d10),
+        "day30_change": _diff(latest_value, d30),
+        "yoy_change": _diff(latest_value, yoy),
+        "unit": "元/公斤",
+    }
