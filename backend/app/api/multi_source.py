@@ -138,8 +138,9 @@ ABS_COMPUTED_FIELDS: list = [
     ("cull_sow_slaughter",           "GANGLIAN",  "",  "NATION", "cull_slaughter_ganglian"),
     # 能繁母猪存栏环比 — 钢联规模场 uses _large indicator
     ("breeding_sow_inventory_large", "GANGLIAN",  "",  "NATION", "breeding_inventory_ganglian_scale"),
-    # 新生仔猪存栏环比 — YONGYI abs only
+    # 新生仔猪存栏环比 — YONGYI abs only; 钢联规模场复用 hog_inventory_large（与旧版一致）
     ("piglet_inventory",             "YONGYI",    "",  "NATION", "piglet_inventory_yongyi"),
+    ("hog_inventory_large",          "GANGLIAN",  "",  "NATION", "piglet_inventory_ganglian_scale"),
     # 生猪存栏环比 — 钢联全国/规模场 use _total/_large indicator
     ("hog_inventory_total",          "GANGLIAN",  "",  "NATION", "hog_inventory_ganglian_nation"),
     ("hog_inventory_large",          "GANGLIAN",  "",  "NATION", "hog_inventory_ganglian_scale"),
