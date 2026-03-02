@@ -125,6 +125,29 @@ mysql -uroot -proot hogprice_v3 -e "SELECT table_name, table_rows FROM informati
 
 应看到 `fact_price_daily` 等表有数据。
 
+### 4.3 初始化管理员账户
+
+> ⚠️ **必须执行此步骤**，否则登录时会出现 401 错误。
+
+先完成第 5.1 ~ 5.3 步创建并激活虚拟环境，再回来执行：
+
+```cmd
+cd D:\hogprice-insight\backend
+env\Scripts\activate
+python init_admin_user.py
+```
+
+看到以下输出表示成功：
+
+```
+✅ 初始化完成！
+==================================================
+默认登录账户：
+  用户名: admin
+  密码: Admin@123
+==================================================
+```
+
 ---
 
 ## 5. 配置并启动后端
@@ -341,7 +364,21 @@ taskkill /PID XXXX /F
 
 ---
 
-### Q7：import_data.py 预热失败（401 Unauthorized）
+### Q7：登录提示 401（用户名或密码错误）
+**原因**：未执行管理员账户初始化步骤，数据库中没有用户数据。
+
+**解决**：
+```cmd
+cd D:\hogprice-insight\backend
+env\Scripts\activate
+python init_admin_user.py
+```
+
+执行完成后重新用 `admin` / `Admin@123` 登录即可。
+
+---
+
+### Q8：import_data.py 预热失败（401 Unauthorized）
 **原因**：`backend/.env` 文件未创建或后端未重启加载配置。
 
 **解决**：
@@ -351,7 +388,7 @@ taskkill /PID XXXX /F
 
 ---
 
-### Q8：run.bat 路径错误
+### Q9：run.bat 路径错误
 用文本编辑器打开 `backend\run.bat`，将第 6 行的路径：
 ```bat
 set "PROJ=D:\Workspace\hogprice-insight\backend"
