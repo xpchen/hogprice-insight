@@ -382,13 +382,17 @@ python init_admin_user.py
 
 ---
 
-### Q8：import_data.py 预热失败（401 Unauthorized）
-**原因**：`backend/.env` 文件未创建或后端未重启加载配置。
+### Q8：import_data.bat 提示"未配置 QUICK_CHART_INTERNAL_SECRET，预热请求可能被 401 拒绝"
+**原因**：`backend\.env` 文件不存在或缺少该配置项，导入脚本无法通过后端认证，缓存预热被拒绝。
 
 **解决**：
-1. 确认 `backend/.env` 文件存在且包含 `QUICK_CHART_INTERNAL_SECRET=hogprice-internal-secret-2024`
-2. 重启后端服务
-3. 再次运行 `python import_data.py`
+1. 用记事本打开（或新建）`D:\hogprice-insight\backend\.env`
+2. 确认包含以下内容：
+   ```
+   QUICK_CHART_INTERNAL_SECRET=hogprice-internal-secret-2024
+   ```
+3. 保存后**重启后端服务**（重新运行 `run.bat`）
+4. 再次运行 `import_data.bat`
 
 ---
 
