@@ -85,13 +85,17 @@ mysql -uroot -proot -e "SELECT VERSION();"
 
 ```
 D:\hogprice-insight\
-├── backend\         ← 后端代码
-├── frontend\        ← 前端代码
-├── docs\            ← 文档与数据库备份
-└── import_data.py   ← 数据导入脚本
+├── backend\                ← 后端代码
+│   └── import_tool\        ← 数据导入工具模块（必须存在！）
+├── frontend\               ← 前端代码
+├── docs\                   ← 文档与数据库备份
+├── import_data.py          ← 数据导入脚本
+└── import_data.bat         ← Windows 数据导入脚本（双击运行）
 ```
 
 > 本手册以 `D:\hogprice-insight` 为例，请根据实际路径替换。
+
+> ⚠️ **请确认 `backend\import_tool\` 目录存在**，否则运行 `import_data.bat` 时会报错 `No module named 'import_tool'`。如果缺少该目录，请重新从最新版本获取完整项目文件。
 
 ---
 
@@ -388,7 +392,16 @@ python init_admin_user.py
 
 ---
 
-### Q9：run.bat 路径错误
+### Q9：import_data.bat 报错 `No module named 'import_tool'`
+**原因**：项目文件不完整，缺少 `backend\import_tool\` 目录。
+
+**解决**：
+- 如果使用 Git 管理项目，执行 `git pull` 拉取最新代码
+- 如果是复制的文件夹，请重新获取完整版项目，确保 `backend\import_tool\` 目录存在
+
+---
+
+### Q10：run.bat 路径错误
 用文本编辑器打开 `backend\run.bat`，将第 6 行的路径：
 ```bat
 set "PROJ=D:\Workspace\hogprice-insight\backend"
