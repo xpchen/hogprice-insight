@@ -106,8 +106,10 @@ Thumbs.db
 
 # Debug
 .cursor/
+.claude/
 debug.log
 *.log
+*_debug.txt
 
 # Temporary files
 *.tmp
