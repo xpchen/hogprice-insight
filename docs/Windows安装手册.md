@@ -270,41 +270,61 @@ npm run dev
 
 ---
 
-## 8. 日常数据更新
+## 8. 开机自动启动（可选）
+
+安装完成后，可以注册开机自启动，每次登录 Windows 后自动启动前后端服务。
+
+### 8.1 注册开机自启动
+
+双击运行项目根目录的 `install_startup.bat`，看到以下输出表示成功：
+
+```
+✅ 开机自启动注册成功！
+   快捷方式位置: C:\Users\你的用户名\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\HogPrice Insight.lnk
+```
+
+注册后，下次开机登录 Windows 时会自动：
+1. 在后台启动后端服务（端口 8000）
+2. 在后台启动前端服务（端口 5173）
+3. 自动打开浏览器访问 http://localhost:5173
+
+### 8.2 手动一键启动
+
+不想设置开机自启，也可以每次双击 `startup.bat` 手动启动。
+
+### 8.3 取消开机自启动
+
+双击运行 `uninstall_startup.bat` 即可取消。
+
+---
+
+## 9. 日常数据更新
 
 每次有新 Excel 数据文件时，运行项目根目录的 `import_data.py` 脚本来更新数据并刷新缓存。
 
-### 8.1 确保后端服务已启动
+### 9.1 确保后端服务已启动
 
-（参见第 5.6 节）
+（参见第 5.6 节，或直接双击 `startup.bat`）
 
-### 8.2 运行数据导入脚本
+### 9.2 运行数据导入脚本
 
-打开命令提示符（**不需要**激活后端虚拟环境）：
+直接双击 `import_data.bat`（推荐），或在命令提示符中运行：
 
 ```cmd
-cd D:\hogprice-insight
-
 REM 增量导入（默认目录）
-python import_data.py
+import_data.bat
 
 REM 增量导入（指定数据文件夹）
-python import_data.py D:\数据文件\生猪数据\
+import_data.bat D:\数据文件\生猪数据\
 
 REM 全量导入（清空重建，慎用）
-python import_data.py --mode bulk
+import_data.bat --bulk
 ```
 
 脚本会自动完成：
 1. ✅ 扫描并导入 9 个 Excel 数据文件（增量，只插入新数据）
 2. ✅ 清除相关页面的 API 缓存
 3. ✅ 预热 11 个关键接口缓存（需要后端运行中）
-
-> **注意**：如果提示找不到模块，需要先激活虚拟环境：
-> ```cmd
-> D:\hogprice-insight\backend\env\Scripts\activate
-> python import_data.py
-> ```
 
 ---
 
@@ -419,23 +439,22 @@ set "PROJ=D:\hogprice-insight\backend"
 
 ## 快速启动（每日使用）
 
-安装完成后，每次使用只需：
+安装完成后，每次使用只需**双击 `startup.bat`**，会自动启动前后端并打开浏览器。
 
-**第一步：启动后端**（保持此窗口不关闭）
-```cmd
-cd D:\hogprice-insight\backend
-env\Scripts\activate
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+也可以注册为开机自启动（双击 `install_startup.bat`），登录 Windows 后自动启动，无需手动操作。
 
-**第二步：启动前端**（保持此窗口不关闭）
-```cmd
-cd D:\hogprice-insight\frontend
-npm run dev
-```
-
-**第三步：打开浏览器**
-访问 http://localhost:5173
+> 如需手动分步启动：
+>
+> ```cmd
+> REM 第一步：启动后端（保持此窗口不关闭）
+> cd D:\hogprice-insight\backend
+> env\Scripts\activate
+> python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+>
+> REM 第二步：启动前端（保持此窗口不关闭）
+> cd D:\hogprice-insight\frontend
+> npm run dev
+> ```
 
 ---
 
