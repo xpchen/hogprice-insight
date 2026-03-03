@@ -109,40 +109,48 @@ def _fmt_cell(val) -> str:
 
 
 # ── 季度数据指标配置 ──
-# 按 Excel 原始列序（B-Y 列），对应 fact_quarterly_stats 中的 indicator_code
-# 每条 = (indicator_code, 中文名, 单位)
+# 与 03.统计局季度数据 Excel 列布局一致：B=季度；C-E 能繁；F-I 生猪存栏；J-O 出栏；P-T 定点屠宰；U-Y 猪肉产量；Z-AC 猪肉进口；AD-AH 猪肉供给
+# 每条 = (indicator_code, 中文名, 单位)，None 表示该列 Excel 有但 r02 未入库，显示空
 _QUARTERLY_COLUMNS = [
-    # ── B列: 季度（由 quarter_date 生成，不在这里列出） ──
-    # ── C-E: 能繁母猪 ──
-    ("breeding_sow_inventory", "能繁母猪存栏", "万头"),
-    ("breeding_sow_inventory_qoq", "能繁环比", "%"),
-    ("breeding_sow_inventory_yoy", "能繁同比", "%"),
-    # ── F-I: 生猪存栏 ──
-    ("hog_inventory", "生猪存栏", "万头"),
-    ("commercial_hog_inventory", "商品猪存栏", "万头"),
-    ("hog_inventory_qoq", "生猪环比", "%"),
-    ("hog_inventory_yoy", "生猪同比", "%"),
-    # ── J-N: 出栏 ──
-    ("hog_turnover", "季度出栏", "万头"),
-    ("hog_turnover_qoq", "出栏环比", "%"),     # Note: col K is empty in some data
-    ("hog_turnover_qoq", "出栏环比", "%"),     # placeholder to keep column alignment
-    ("hog_turnover_yoy", "出栏同比", "%"),
-    ("hog_turnover_cumulative", "累计出栏", "万头"),
-    ("hog_turnover_cumulative_yoy", "累计出栏同比", "%"),
-    # ── O-S: 定点屠宰 ──
-    ("designated_slaughter", "定点屠宰量", "万头"),
-    ("designated_slaughter_yoy", "定点屠宰同比", "%"),
-    (None, "", ""),  # placeholder for empty columns
-    (None, "", ""),
-    (None, "", ""),
-    # ── T-V: 猪肉产量 ──
-    ("pork_production", "猪肉产量", "万吨"),
-    ("pork_production_yoy", "猪肉产量同比", "%"),
-    (None, "", ""),
-    (None, "", ""),
-    # ── W-Y: 猪肉进口 ──
-    ("pork_import", "猪肉进口", "万吨"),
-    ("pork_import_yoy", "猪肉进口同比", "%"),
+    # C-E 能繁母猪：存栏量 环比 同比
+    ("breeding_sow_inventory", "存栏量", "万头"),
+    ("breeding_sow_inventory_qoq", "环比", "%"),
+    ("breeding_sow_inventory_yoy", "同比", "%"),
+    # F-I 生猪存栏：存栏量 商品猪 环比 同比
+    ("hog_inventory", "存栏量", "万头"),
+    ("commercial_hog_inventory", "商品猪", "万头"),
+    ("hog_inventory_qoq", "环比", "%"),
+    ("hog_inventory_yoy", "同比", "%"),
+    # J-O 生猪出栏：出栏量 比例 环比 同比 累计 同比
+    ("hog_turnover", "出栏量", "万头"),
+    (None, "比例", ""),
+    ("hog_turnover_qoq", "环比", "%"),
+    ("hog_turnover_yoy", "同比", "%"),
+    ("hog_turnover_cumulative", "累计", "万头"),
+    ("hog_turnover_cumulative_yoy", "同比", "%"),
+    # P-T 定点屠宰：屠宰量 同比 累计 同比 占比
+    ("designated_slaughter", "屠宰量", "万头"),
+    ("designated_slaughter_yoy", "同比", "%"),
+    ("designated_slaughter_cumulative", "累计", "万头"),
+    ("designated_slaughter_cumulative_yoy", "同比", "%"),
+    ("designated_slaughter_ratio", "占比", "%"),
+    # U-Y 猪肉产量：产量 同比 累计 同比 头均出肉
+    ("pork_production", "产量", "万吨"),
+    ("pork_production_yoy", "同比", "%"),
+    ("pork_production_cumulative", "累计", "万吨"),
+    ("pork_production_cumulative_yoy", "同比", "%"),
+    ("pork_output_per_head", "头均出肉", "kg/头"),
+    # Z-AC 猪肉进口：进口 同比 累计 同比
+    ("pork_import", "进口", "万吨"),
+    ("pork_import_yoy", "同比", "%"),
+    ("pork_import_cumulative", "累计", "万吨"),
+    ("pork_import_cumulative_yoy", "同比", "%"),
+    # AD-AH 猪肉供给（产量+进口）：供给量 环比 同比 累计 累计同比
+    ("pork_supply", "供给量", "万吨"),
+    ("pork_supply_qoq", "环比", "%"),
+    ("pork_supply_yoy", "同比", "%"),
+    ("pork_supply_cumulative", "累计", "万吨"),
+    ("pork_supply_cumulative_yoy", "累计同比", "%"),
 ]
 
 # unique indicator_codes actually stored (for SQL IN clause)
@@ -186,20 +194,21 @@ def get_quarterly_data(
         v = _to_float(r[2])
         quarter_map.setdefault(qd, {})[ic] = v
 
-    # 3. 构建表头
-    # header_row_0: 大类标题（模拟原 Excel 合并单元格）
-    # header_row_1: 每列具体指标名
-    header_row_0 = ["", "季度",
-                     "能繁母猪", "", "",
-                     "生猪存栏", "", "", "",
-                     "出栏", "", "", "", "", "",
-                     "定点屠宰", "", "", "", "",
-                     "猪肉产量", "", "", "",
-                     "猪肉进口", ""]
+    # 3. 构建表头（与 Excel B-AH 一致；每列都填大类名，避免未合并时缺列头）
+    _group_names = [
+        "能繁母猪", "能繁母猪", "能繁母猪",
+        "生猪存栏", "生猪存栏", "生猪存栏", "生猪存栏",
+        "生猪出栏", "生猪出栏", "生猪出栏", "生猪出栏", "生猪出栏", "生猪出栏",
+        "定点屠宰", "定点屠宰", "定点屠宰", "定点屠宰", "定点屠宰",
+        "猪肉产量", "猪肉产量", "猪肉产量", "猪肉产量", "猪肉产量",
+        "猪肉进口", "猪肉进口", "猪肉进口", "猪肉进口",
+        "猪肉供给（产量+进口）", "猪肉供给（产量+进口）", "猪肉供给（产量+进口）", "猪肉供给（产量+进口）", "猪肉供给（产量+进口）",
+    ]
+    header_row_0 = ["", "季度"] + _group_names
     header_row_1 = ["", "季度"] + [name for _, name, _ in _QUARTERLY_COLUMNS]
     col_count = len(header_row_1)
 
-    # 4. 构建数据行（与 _QUARTERLY_COLUMNS 对齐）
+    # 4. 构建数据行（与 _QUARTERLY_COLUMNS 对齐，按原样输出库中数值）
     data_rows = []
     for qd in sorted(quarter_map.keys()):
         period = _quarter_label(qd)
@@ -212,14 +221,15 @@ def get_quarterly_data(
                 row.append(_fmt_cell(indicator_vals.get(code)))
         data_rows.append(row)
 
-    # 5. merged_cells 描述（简化版：只描述 header_row_0 的跨列合并）
+    # 5. merged_cells（1-based）：B 季度；C-E 能繁；F-I 生猪存栏；J-O 出栏；P-T 定点；U-Y 产量；Z-AC 进口；AD-AH 供给
     merged_cells = [
-        {"min_row": 1, "min_col": 3, "max_row": 1, "max_col": 5},   # 能繁母猪
-        {"min_row": 1, "min_col": 6, "max_row": 1, "max_col": 9},   # 生猪存栏
-        {"min_row": 1, "min_col": 10, "max_row": 1, "max_col": 15}, # 出栏
-        {"min_row": 1, "min_col": 16, "max_row": 1, "max_col": 20}, # 定点屠宰
-        {"min_row": 1, "min_col": 21, "max_row": 1, "max_col": 24}, # 猪肉产量
-        {"min_row": 1, "min_col": 25, "max_row": 1, "max_col": 26}, # 猪肉进口
+        {"min_row": 1, "min_col": 3, "max_row": 1, "max_col": 5},   # 能繁母猪 C-E
+        {"min_row": 1, "min_col": 6, "max_row": 1, "max_col": 9},   # 生猪存栏 F-I
+        {"min_row": 1, "min_col": 10, "max_row": 1, "max_col": 15}, # 生猪出栏 J-O
+        {"min_row": 1, "min_col": 16, "max_row": 1, "max_col": 20}, # 定点屠宰 P-T
+        {"min_row": 1, "min_col": 21, "max_row": 1, "max_col": 25}, # 猪肉产量 U-Y
+        {"min_row": 1, "min_col": 26, "max_row": 1, "max_col": 29}, # 猪肉进口 Z-AC
+        {"min_row": 1, "min_col": 30, "max_row": 1, "max_col": 34}, # 猪肉供给 AD-AH
     ]
 
     # pad headers to same length

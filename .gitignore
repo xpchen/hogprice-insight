@@ -161,3 +161,6 @@ backend/reports/
 *.pptx
 !docs/*.docx
 !docs/*.pptx
+
+# Excluded directories (do not commit)
+old_backend/

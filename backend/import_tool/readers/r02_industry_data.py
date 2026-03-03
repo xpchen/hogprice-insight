@@ -8,6 +8,12 @@ R02 - 生猪产业数据 Reader
 
 关键 sheet 及列映射
 ─────────────────────────────────────────────────────────────
+A1供给预测 (表头约row1~3, data从row4起, 日期在B列=col1)
+  C(2)/D(3)/E(4)=能繁存栏/环比/同比, F(6)=母猪效能, G(7)/H(8)/I(9)=新生仔猪/环比/同比
+  J(10)=5月大猪, K(11)/L(12)=环比/同比, M(13)=残差率, N(14)=压栏系数
+  O(15)=生猪出栏, P(16)/Q(17)=环比/同比, R(18)=累计出栏, S(19)=累同
+  定点屠宰 AC(28)=绝对值, AD(29)=环比, AE(30)=同比（如 2020/1 为 1509.34）(source=A1)
+
 NYB (row0=大类表头, row1=子表头, data从row2起, 日期在B列=col1)
   能繁环比: C(2)=全国, D(3)=规模场, E(4)=CR26, F(5)=小散户
   新生仔猪环比: G(6)=全国, H(7)=规模场, I(8)=小散户
@@ -179,6 +185,11 @@ class IndustryDataReader(BaseSheetReader):
         except Exception:
             logger.exception("Error reading 定点屠宰 sheet")
 
+        try:
+            monthly += self._read_a1_supply_forecast(wb)
+        except Exception:
+            logger.exception("Error reading A1供给预测 sheet")
+
         wb.close()
 
         logger.info(
@@ -189,6 +200,140 @@ class IndustryDataReader(BaseSheetReader):
             "fact_monthly_indicator": monthly,
             "fact_quarterly_stats": quarterly,
         }
+
+    # ── Sheet: A1供给预测（F/N=母猪效能/压栏系数，AC-AI=生猪存栏/定点屠宰及环比同比）────────────────────
+
+    def _read_a1_supply_forecast(self, wb) -> list[dict]:
+        """A1供给预测: 日期B列, F=母猪效能, N=压栏系数, AC/AE/AF=生猪存栏/环比/同比, AG/AH/AI=定点屠宰/环比/同比 → fact_monthly_indicator (source=A1)."""
+        if "A1供给预测" not in wb.sheetnames:
+            logger.warning("Sheet 'A1供给预测' not found")
+            return []
+        ws = wb["A1供给预测"]
+        records = []
+        # 读到 AI 列(0-based 34)
+        for row in ws.iter_rows(min_row=4, max_col=35, values_only=True):
+            row = list(row)
+            if not row:
+                continue
+            month_dt = parse_month(self._cell(tuple(row), 1))
+            if month_dt is None or month_dt.year < 2015:
+                continue
+            t = tuple(row)
+
+            # C=能繁存栏, D=环比, E=同比
+            c_val = self._cv(t, 2)
+            d_val = self._cv(t, 3)
+            e_val = self._cv(t, 4)
+            if c_val is not None:
+                records.append(self._make_record(
+                    month_dt, "breeding_sow_inventory", "", "A1", float(c_val), "abs", "万头", "NATION", self.batch_id,
+                ))
+            if d_val is not None:
+                records.append(self._make_record(
+                    month_dt, "breeding_sow_inventory", "", "A1", float(d_val), "mom_pct", "%", "NATION", self.batch_id,
+                ))
+            if e_val is not None:
+                records.append(self._make_record(
+                    month_dt, "breeding_sow_inventory", "", "A1", float(e_val), "yoy_pct", "%", "NATION", self.batch_id,
+                ))
+            # G=新生仔猪, H=环比, I=同比
+            g_val = self._cv(t, 6)
+            h_val = self._cv(t, 7)
+            i_val = self._cv(t, 8)
+            if g_val is not None:
+                records.append(self._make_record(
+                    month_dt, "piglet_inventory", "", "A1", float(g_val), "abs", "万头", "NATION", self.batch_id,
+                ))
+            if h_val is not None:
+                records.append(self._make_record(
+                    month_dt, "piglet_inventory", "", "A1", float(h_val), "mom_pct", "%", "NATION", self.batch_id,
+                ))
+            if i_val is not None:
+                records.append(self._make_record(
+                    month_dt, "piglet_inventory", "", "A1", float(i_val), "yoy_pct", "%", "NATION", self.batch_id,
+                ))
+            # F=母猪效能, N=压栏系数
+            f_val = self._cv(t, 5)
+            n_val = self._cv(t, 13)
+            if f_val is not None:
+                records.append(self._make_record(
+                    month_dt, "prod_farrowing_count", "", "A1", float(f_val), "abs", "窝", "NATION", self.batch_id,
+                ))
+            if n_val is not None:
+                records.append(self._make_record(
+                    month_dt, "prod_healthy_piglets_per_litter", "", "A1", float(n_val), "abs", "头", "NATION", self.batch_id,
+                ))
+
+            # AC=定点屠宰(绝对值), AD=环比, AE=同比（用户确认：定点屠宰在 AC 列，2020/1 为 1509.34）
+            ac_val = self._cv(t, 28)
+            ad_val = self._cv(t, 29)
+            ae_val = self._cv(t, 30)
+            if ac_val is not None:
+                records.append(self._make_record(
+                    month_dt, "designated_slaughter", "", "A1", float(ac_val), "abs", "万头", "NATION", self.batch_id,
+                ))
+            if ad_val is not None:
+                records.append(self._make_record(
+                    month_dt, "designated_slaughter", "", "A1", float(ad_val), "mom_pct", "%", "NATION", self.batch_id,
+                ))
+            if ae_val is not None:
+                records.append(self._make_record(
+                    month_dt, "designated_slaughter", "", "A1", float(ae_val), "yoy_pct", "%", "NATION", self.batch_id,
+                ))
+
+            # J=5月大猪, K=环比, L=同比
+            j_val = self._cv(t, 9)
+            k_val = self._cv(t, 10)
+            l_val = self._cv(t, 11)
+            if j_val is not None:
+                records.append(self._make_record(
+                    month_dt, "medium_large_hog", "", "A1", float(j_val), "abs", "万头", "NATION", self.batch_id,
+                ))
+            if k_val is not None:
+                records.append(self._make_record(
+                    month_dt, "medium_large_hog", "", "A1", float(k_val), "mom_pct", "%", "NATION", self.batch_id,
+                ))
+            if l_val is not None:
+                records.append(self._make_record(
+                    month_dt, "medium_large_hog", "", "A1", float(l_val), "yoy_pct", "%", "NATION", self.batch_id,
+                ))
+            # M=残差率
+            m_val = self._cv(t, 12)
+            if m_val is not None:
+                records.append(self._make_record(
+                    month_dt, "supply_residual_rate", "", "A1", float(m_val), "pct", "%", "NATION", self.batch_id,
+                ))
+            # O=生猪出栏, P=环比, Q=同比, R=累计出栏, S=累同
+            o_val = self._cv(t, 14)
+            p_val = self._cv(t, 15)
+            q_val = self._cv(t, 16)
+            r_val = self._cv(t, 17)
+            s_val = self._cv(t, 18)
+            if o_val is not None:
+                records.append(self._make_record(
+                    month_dt, "hog_turnover", "", "A1", float(o_val), "abs", "万头", "NATION", self.batch_id,
+                ))
+            if p_val is not None:
+                records.append(self._make_record(
+                    month_dt, "hog_turnover", "", "A1", float(p_val), "mom_pct", "%", "NATION", self.batch_id,
+                ))
+            if q_val is not None:
+                records.append(self._make_record(
+                    month_dt, "hog_turnover", "", "A1", float(q_val), "yoy_pct", "%", "NATION", self.batch_id,
+                ))
+            if r_val is not None:
+                records.append(self._make_record(
+                    month_dt, "hog_turnover", "cumulative", "A1", float(r_val), "abs", "万头", "NATION", self.batch_id,
+                ))
+            if s_val is not None:
+                records.append(self._make_record(
+                    month_dt, "hog_turnover", "cumulative", "A1", float(s_val), "yoy_pct", "%", "NATION", self.batch_id,
+                ))
+        logger.info(
+            "A1供给预测: %d records (含能繁/新生仔猪/5月大猪/残差率/出栏/定点屠宰AC-AE等)",
+            len(records),
+        )
+        return records
 
     # ── Sheet: NYB ───────────────────────────────────────────
 
@@ -621,11 +766,8 @@ class IndustryDataReader(BaseSheetReader):
 
     def _read_statistics_bureau(self, wb) -> list[dict]:
         """统计局季度数据 -> fact_quarterly_stats
-        Row 0/1: headers. Data from row 2+, date in col B(1).
-        C(2)=能繁存栏量, D(3)=能繁环比, E(4)=能繁同比
-        F(5)=生猪存栏量, H(7)=生猪环比, I(8)=生猪同比
-        J(9)=出栏量, L(11)=出栏环比, M(12)=出栏同比, N(13)=累计出栏
-        U(20)=猪肉产量, V(21)=猪肉产量同比
+        Row 0/1: headers. Data from row 2+, date in col B(1). 列索引 0-based（A=0）.
+        C-E 能繁；F-I 生猪存栏；J-O 出栏（K=比例未入库）；P-T 定点屠宰；U-Y 猪肉产量；Z-AC 猪肉进口；AD-AH 猪肉供给
         """
         sheet_name = "03.统计局季度数据"
         if sheet_name not in wb.sheetnames:
@@ -636,7 +778,7 @@ class IndustryDataReader(BaseSheetReader):
         records = []
 
         col_map = [
-            # (col_idx, indicator_code, unit)
+            # (col_idx 0-based, indicator_code, unit)
             (2, "breeding_sow_inventory", "万头"),
             (3, "breeding_sow_inventory_qoq", "%"),
             (4, "breeding_sow_inventory_yoy", "%"),
@@ -649,12 +791,29 @@ class IndustryDataReader(BaseSheetReader):
             (12, "hog_turnover_yoy", "%"),
             (13, "hog_turnover_cumulative", "万头"),
             (14, "hog_turnover_cumulative_yoy", "%"),
+            # P-T 定点屠宰：屠宰量 同比 累计 同比 占比
             (15, "designated_slaughter", "万头"),
             (16, "designated_slaughter_yoy", "%"),
+            (17, "designated_slaughter_cumulative", "万头"),
+            (18, "designated_slaughter_cumulative_yoy", "%"),
+            (19, "designated_slaughter_ratio", "%"),
+            # U-Y 猪肉产量：产量 同比 累计 同比 头均出肉
             (20, "pork_production", "万吨"),
             (21, "pork_production_yoy", "%"),
+            (22, "pork_production_cumulative", "万吨"),
+            (23, "pork_production_cumulative_yoy", "%"),
+            (24, "pork_output_per_head", "kg/头"),
+            # Z-AC 猪肉进口：进口 同比 累计 同比
             (25, "pork_import", "万吨"),
             (26, "pork_import_yoy", "%"),
+            (27, "pork_import_cumulative", "万吨"),
+            (28, "pork_import_cumulative_yoy", "%"),
+            # AD-AH 猪肉供给：供给量 环比 同比 累计 累计同比
+            (29, "pork_supply", "万吨"),
+            (30, "pork_supply_qoq", "%"),
+            (31, "pork_supply_yoy", "%"),
+            (32, "pork_supply_cumulative", "万吨"),
+            (33, "pork_supply_cumulative_yoy", "%"),
         ]
 
         for row in ws.iter_rows(min_row=3, values_only=True):
