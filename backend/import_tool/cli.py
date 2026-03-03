@@ -57,12 +57,23 @@ INCREMENTAL_FILES = {
 
 
 def find_file(source_dir: str, filename: str) -> str | None:
-    """在 source_dir 及其子目录中查找文件"""
+    """在 source_dir 及其子目录中查找文件。若存在多份同名文件（如钢联模板），
+    优先选择路径中含 0226 或 生猪 的完整版（含仓单数据等 sheet）。"""
+    candidates = []
     for root, dirs, files in os.walk(source_dir):
         for f in files:
             if f == filename:
-                return os.path.join(root, f)
-    return None
+                path = os.path.join(root, f)
+                candidates.append(path)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    # 多份同名：优先含 0226 / 生猪 的路径（完整钢联模板通常在该类目录下）
+    for path in candidates:
+        if "0226" in path or "生猪" in path:
+            return path
+    return candidates[0]
 
 
 def file_hash(filepath: str) -> str:

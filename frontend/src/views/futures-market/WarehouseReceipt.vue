@@ -55,7 +55,7 @@
       <el-table v-else :data="rawData.rows" stripe border size="small" max-height="480">
         <el-table-column prop="date" label="日期" width="120" />
         <el-table-column
-          v-for="col in rawData.columns.slice(1)"
+          v-for="col in rawData.columns"
           :key="col"
           :prop="'values.' + col"
           :label="col"

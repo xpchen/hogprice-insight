@@ -81,7 +81,7 @@ def _get_national_monthly_price(db: Session) -> Dict[str, float]:
     if price_by_month:
         return price_by_month
 
-    # 备选：涌益标猪均价 (region_code='NATION')
+    # 备选：涌益标猪均价
     sql2 = text("""
         SELECT DATE_FORMAT(trade_date, '%Y-%m') AS ym,
                AVG(value) AS avg_price
@@ -95,6 +95,26 @@ def _get_national_monthly_price(db: Session) -> Dict[str, float]:
     """)
     rows2 = db.execute(sql2).fetchall()
     for r in rows2:
+        if r.avg_price is not None:
+            price_by_month[r.ym] = float(r.avg_price)
+
+    if price_by_month:
+        return price_by_month
+
+    # 第三备选：涌益全国均价
+    sql3 = text("""
+        SELECT DATE_FORMAT(trade_date, '%Y-%m') AS ym,
+               AVG(value) AS avg_price
+        FROM fact_price_daily
+        WHERE region_code = 'NATION'
+          AND price_type = '全国均价'
+          AND source = 'YONGYI'
+          AND value IS NOT NULL
+        GROUP BY ym
+        ORDER BY ym
+    """)
+    rows3 = db.execute(sql3).fetchall()
+    for r in rows3:
         if r.avg_price is not None:
             price_by_month[r.ym] = float(r.avg_price)
 

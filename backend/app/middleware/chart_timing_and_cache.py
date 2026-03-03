@@ -7,6 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.core.config import settings
 from app.core.quick_chart_config import (
     CHART_RESPONSE_SLOW_THRESHOLD_SEC,
     is_chart_api_path,
@@ -23,6 +24,10 @@ class ChartTimingAndCacheMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         path = request.url.path
         if not is_chart_api_path(path):
+            return await call_next(request)
+
+        # 审计对账模式：禁用缓存，直接透传请求
+        if getattr(settings, "DISABLE_CHART_CACHE", False):
             return await call_next(request)
 
         query_string = request.scope.get("query_string", b"").decode("utf-8")
@@ -59,7 +64,16 @@ class ChartTimingAndCacheMiddleware(BaseHTTPMiddleware):
                     should_cache = False
             except Exception:
                 pass
-        if should_cache:
+        # 不缓存空的波动率（避免 API 修复后仍命中旧的空缓存）
+        if should_cache and "volatility" in path:
+            try:
+                import json
+                data = json.loads(body.decode("utf-8"))
+                if isinstance(data, dict) and data.get("series") == []:
+                    should_cache = False
+            except Exception:
+                pass
+        if should_cache and not getattr(settings, "DISABLE_CHART_CACHE", False):
             db_write = SessionLocal()
             try:
                 set_cached(db_write, cache_key, body.decode("utf-8"))

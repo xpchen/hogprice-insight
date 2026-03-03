@@ -20,7 +20,7 @@ INDICATOR_ROUTING = {
     "hog_price_nation": ("fact_price_daily", "trade_date", "price_type", "标猪均价", "YONGYI"),
     "hog_price_ganglian": ("fact_price_daily", "trade_date", "price_type", "hog_price", "GANGLIAN"),
     # 日度价差
-    "spread_std_fat": ("fact_spread_daily", "trade_date", "spread_type", "std_fat_spread", "YONGYI"),
+    "spread_std_fat": ("fact_spread_daily", "trade_date", "spread_type", "fat_std_spread", "GANGLIAN"),
     "spread_mao_bai": ("fact_spread_daily", "trade_date", "spread_type", "mao_bai_spread", "YONGYI"),
     # 日度屠宰
     "slaughter_daily": ("fact_slaughter_daily", "trade_date", None, None, "YONGYI"),

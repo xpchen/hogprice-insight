@@ -126,7 +126,7 @@ const loadData = async () => {
   }
 }
 
-// 获取季节性年份（如 03-05：6月到次年2月 = 2024/2025；11-01：2月到10月 = 2025）
+// 获取季节性年份（如 03-05：6月到次年2月 = 2024/2025；11-01：2月到10月 = 2024/2025，不要单独年份）
 const getSeasonalYear = (dateStr: string, nearMonth: number, farMonth: number): string => {
   const d = new Date(dateStr)
   const year = d.getFullYear()
@@ -138,8 +138,9 @@ const getSeasonalYear = (dateStr: string, nearMonth: number, farMonth: number): 
     if (month >= startMonth) return `${year}/${year + 1}`
     if (month <= endMonth) return `${year - 1}/${year}`
   }
-  // 不跨年（如11-01：2月-10月）：统一用 year
-  return `${year}`
+  // 不跨年（如11-01：2月-10月）：统一用 year/year+1 格式，不要单独年份
+  if (month >= startMonth) return `${year}/${year + 1}`
+  return `${year - 1}/${year}`
 }
 
 const renderCharts = () => {
@@ -186,7 +187,7 @@ const renderAllDatesChart = (el: HTMLDivElement, series: CalendarSpreadResponse[
     return colors[Math.max(0, (year - 2019) % colors.length)]
   }
 
-  // 每个周期的数据按日期排序，直接绘制（周期间自然断开）
+  // 每个周期的数据按日期排序，直接绘制（跨年周期之间自然断开，不连线）
   const spreadSeriesList: any[] = seasonalYears.map((sy) => {
     const arr = seasonalMap.get(sy)!.slice().sort((a, b) => a.date.localeCompare(b.date))
     const color = getColorForSeasonalYear(sy)

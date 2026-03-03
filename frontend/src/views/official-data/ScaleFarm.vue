@@ -158,13 +158,13 @@ const displayRows = computed(() => {
   return kept.sort((a, b) => String(b?.[0] || '').localeCompare(String(a?.[0] || '')))
 })
 
-/** 根据 merged_cells 和表头构建带合并信息的表头网格，用于渲染 */
+/** 根据 merged_cells 和表头构建带合并信息的表头网格（仅两行表头，无第三行环比/同比；月度合并为一列） */
 const headerGrid = computed(() => {
   const td = tableData.value
   if (!td?.header_row_0?.length) return []
+  // 只取前两行表头，去掉第三行环比/同比
   const rows: (string[])[] = [td.header_row_0]
   if (td.header_row_1?.length) rows.push(td.header_row_1)
-  if (td.header_row_2?.length) rows.push(td.header_row_2)
   const maxCol = Math.max(...rows.map((r) => r.length), td.column_count || 0, 1)
   const merged = td.merged_cells_json || []
   type CellInfo = { value: string; rowspan: number; colspan: number }
@@ -175,6 +175,11 @@ const headerGrid = computed(() => {
       colspan: 1
     }))
   )
+  // 月度（第 1 列）合并为跨两行的一列
+  if (grid.length >= 2 && grid[0][0]) {
+    ;(grid[0][0] as CellInfo).rowspan = 2
+    grid[1][0] = null
+  }
   for (const m of merged) {
     const r0 = (m.min_row ?? 1) - 1
     const c0 = (m.min_col ?? 1) - 1
@@ -199,10 +204,11 @@ const headerGrid = computed(() => {
   return grid
 })
 
-/** 表头列背景：母猪效能/新生仔猪=黄，5月大猪=绿，残差率/定点屠宰环比=橙 */
+/** 表头列背景：月度=默认，母猪效能/新生仔猪=黄，5月大猪=绿，残差率/定点屠宰环比=橙 */
 function getHeaderCellClass(_r: number, _c: number, cell: { value: string } | null): string {
   if (!cell?.value) return ''
   const v = String(cell.value)
+  if (/^月度$/.test(v)) return 'header-month'
   if (/母猪效能|新生仔猪/i.test(v)) return 'header-yellow'
   if (/5月大猪/i.test(v)) return 'header-green'
   if ((/残差率|定点屠宰/i.test(v) && /环比/i.test(v)) || v === '环比') return 'header-orange'

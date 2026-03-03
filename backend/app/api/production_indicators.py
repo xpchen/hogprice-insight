@@ -1,17 +1,16 @@
 """
 规模场数据汇总 API  (v3 — fact tables)
 
-查询 hogprice_v3 的 fact_monthly_indicator / fact_weekly_indicator，
-替代原先从 raw_table JSON 解析的逻辑。
+查询 hogprice_v3 的 fact_monthly_indicator / fact_weekly_indicator。
 
-端点                                              原数据源
+端点                                              数据源（均为 fact 表）
 ──────────────────────────────────────────────────────────────
 /sow-efficiency                                   月度-生产指标（分娩窝数）
 /pressure-coefficient                             月度-生产指标（窝均健仔数-全国）
 /yongyi-production-indicators                     月度-生产指标（多区域窝均健仔数）
 /yongyi-production-seasonality                    月度-生产指标2（五指标季节性）
-/a1-sow-efficiency-pressure-seasonality           A1供给预测（母猪效能+压栏系数）
-/a1-supply-forecast-table                         A1供给预测表格
+/a1-sow-efficiency-pressure-seasonality           A1供给预测 F/N（母猪效能+压栏系数）
+/a1-supply-forecast-table                         fact_monthly_indicator 组装 7 列表格
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -180,7 +179,10 @@ def _to_seasonality(data_points: List[ProductionDataPoint]) -> Dict[str, Any]:
     by_year_month: Dict[tuple, float] = {}
     for dp in data_points:
         try:
-            d = datetime.strptime(dp.date[:10], "%Y-%m-%d").date()
+            s = dp.date[:10] if isinstance(dp.date, str) and len(dp.date) >= 10 else str(dp.date)
+            d = datetime.strptime(s, "%Y-%m-%d").date()
+            if d.year < 2010:
+                continue
             if dp.value is not None:
                 by_year_month[(d.year, d.month)] = dp.value
         except (ValueError, TypeError):
@@ -319,8 +321,9 @@ _PROD2_SEASONALITY_MAP = [
 async def get_yongyi_production_seasonality(db: Session = Depends(get_db)):
     """
     涌益生产指标季节性数据
-    数据源: fact_monthly_indicator，月度-生产指标2 对应 indicator_code
+    数据源: fact_monthly_indicator，月度-生产指标2 对应 indicator_code (source=YONGYI)
     五指标：窝均健仔数、产房存活率、配种分娩率、断奶成活率、育肥出栏成活率
+    当仅导入 2、【生猪产业数据】.xlsx 未导入涌益周度时，窝均健仔数回退为 A1 压栏系数，以便图表有数可显。
     """
     indicator_names = [name for name, _, _ in _PROD2_SEASONALITY_MAP]
     result: Dict[str, Dict[str, Any]] = {}
@@ -334,6 +337,16 @@ async def get_yongyi_production_seasonality(db: Session = Depends(get_db)):
             sub_category="",
             value_type="abs",
         )
+        # 窝均健仔数：无涌益数据时用 A1 压栏系数（同口径）回退
+        if not data_points and display_name == "窝均健仔数":
+            data_points = _query_monthly(
+                db,
+                indicator_code="prod_healthy_piglets_per_litter",
+                source="A1",
+                region_code="NATION",
+                sub_category="",
+                value_type="abs",
+            )
         seasonality = _to_seasonality(data_points)
         seasonality["meta"]["metric_name"] = display_name
         if unit_hint:
@@ -351,10 +364,9 @@ async def get_yongyi_production_seasonality(db: Session = Depends(get_db)):
 @router.get("/a1-sow-efficiency-pressure-seasonality", response_model=A1SeasonalityResponse)
 async def get_a1_sow_efficiency_pressure_seasonality(db: Session = Depends(get_db)):
     """
-    母猪效能(分娩窝数) + 压栏系数(窝均健仔数) 季节性
-    原A1供给预测F/N列 -> 现在查 fact_monthly_indicator:
-      - 母猪效能: prod_farrowing_count
-      - 压栏系数: prod_healthy_piglets_per_litter
+    母猪效能 + 压栏系数 季节性，数据源优先级：
+      1）A1供给预测（2、【生猪产业数据】.xlsx）F列=母猪效能、N列=压栏系数 → source=A1
+      2）若无 A1 数据则回退：涌益 月度-生产指标 → source=YONGYI
     """
     empty_seasonality = lambda name: {
         "x_values": [f"{m}月" for m in range(1, 13)],
@@ -362,30 +374,48 @@ async def get_a1_sow_efficiency_pressure_seasonality(db: Session = Depends(get_d
         "meta": {"unit": "", "freq": "M", "metric_name": name},
     }
 
-    # 母猪效能 = 分娩窝数
+    # 母猪效能：优先 A1（F列），无则 YONGYI
     sow_data = _query_monthly(
         db,
         indicator_code="prod_farrowing_count",
-        source="YONGYI",
+        source="A1",
         region_code="NATION",
         sub_category="",
         value_type="abs",
     )
+    if not sow_data:
+        sow_data = _query_monthly(
+            db,
+            indicator_code="prod_farrowing_count",
+            source="YONGYI",
+            region_code="NATION",
+            sub_category="",
+            value_type="abs",
+        )
     if sow_data:
         sow = _to_seasonality(sow_data)
         sow["meta"]["metric_name"] = "母猪效能"
     else:
         sow = empty_seasonality("母猪效能")
 
-    # 压栏系数 = 窝均健仔数
+    # 压栏系数：优先 A1（N列），无则 YONGYI
     press_data = _query_monthly(
         db,
         indicator_code="prod_healthy_piglets_per_litter",
-        source="YONGYI",
+        source="A1",
         region_code="NATION",
         sub_category="",
         value_type="abs",
     )
+    if not press_data:
+        press_data = _query_monthly(
+            db,
+            indicator_code="prod_healthy_piglets_per_litter",
+            source="YONGYI",
+            region_code="NATION",
+            sub_category="",
+            value_type="abs",
+        )
     if press_data:
         press = _to_seasonality(press_data)
         press["meta"]["metric_name"] = "压栏系数"
@@ -395,70 +425,94 @@ async def get_a1_sow_efficiency_pressure_seasonality(db: Session = Depends(get_d
     return A1SeasonalityResponse(sow_efficiency=sow, pressure_coefficient=press)
 
 
-# ── A1 供给预测 表格 ────────────────────────────────────────────
+# ── A1 供给预测 表格（仅用 fact 数据）────────────────────────────────
 
 @router.get("/a1-supply-forecast-table")
 async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
     """
-    A1供给预测表格
-
-    原来从 raw_table JSON 渲染整张 Excel 表格。
-    现在改为从 fact_monthly_indicator 查询关键供给指标并组装成表格格式，
-    保持前端所需的 header + rows + merged_cells 结构。
-
-    选取的核心指标列：
-      月度 | 能繁母猪存栏 | 新生仔猪 | 生猪存栏 | 出栏量 | 分娩窝数 | 窝均健仔数
+    规模场数据汇总表格：数据全部来自 2、【生猪产业数据】.xlsx（NYB、A1供给预测、定点屠宰 等 sheet）。
+    多列头：第 1 行「规模场供给预测」合并 17 列、「定点屠宰」合并 3 列；第 2 行为各列名；第 3 行为 环比/同比 等。
     """
-    # 定义表格列 => (显示名, indicator_code, source, sub_category, value_type, region_code)
+    # 数据仅来自 2、【生猪产业数据】.xlsx：NYB、A1、STATISTICS_BUREAU(定点屠宰 sheet)，不用 YONGYI
+    # 列：(显示名, indicator_code, sources [(source, sub_category, value_type)], 格式化)
     COLUMNS = [
-        ("能繁母猪存栏(环比%)", "breeding_sow_inventory", "NYB", "nation", "mom_pct", "NATION"),
-        ("新生仔猪(环比%)", "piglet_inventory", "NYB", "nation", "mom_pct", "NATION"),
-        ("生猪存栏(环比%)", "hog_inventory", "NYB", "nation", "mom_pct", "NATION"),
-        ("出栏(环比%)", "hog_turnover", "NYB", "nation", "mom_pct", "NATION"),
-        ("分娩窝数", "prod_farrowing_count", "YONGYI", "", "abs", "NATION"),
-        ("窝均健仔数", "prod_healthy_piglets_per_litter", "YONGYI", "", "abs", "NATION"),
+        ("能繁存栏", "breeding_sow_inventory", [("A1", "", "abs")], "abs"),
+        ("能繁环比", "breeding_sow_inventory", [("A1", "", "mom_pct"), ("NYB", "nation", "mom_pct")], "pct"),
+        ("能繁同比", "breeding_sow_inventory", [("A1", "", "yoy_pct")], "pct"),
+        ("母猪效能", "prod_farrowing_count", [("A1", "", "abs")], "abs"),
+        ("新生仔猪", "piglet_inventory", [("A1", "", "abs")], "abs"),
+        ("新生仔猪环比", "piglet_inventory", [("A1", "", "mom_pct"), ("NYB", "nation", "mom_pct")], "pct"),
+        ("新生仔猪同比", "piglet_inventory", [("A1", "", "yoy_pct")], "pct"),
+        ("5月大猪", "medium_large_hog", [("A1", "", "abs")], "abs"),
+        ("5月大猪环比", "medium_large_hog", [("NYB", "nation", "mom_pct"), ("A1", "", "mom_pct")], "pct"),
+        ("5月大猪同比", "medium_large_hog", [("A1", "", "yoy_pct")], "pct"),
+        ("残差率", "supply_residual_rate", [("A1", "", "pct")], "pct"),
+        ("生猪出栏", "hog_turnover", [("A1", "", "abs")], "abs"),
+        ("生猪出栏环比", "hog_turnover", [("NYB", "nation", "mom_pct"), ("A1", "", "mom_pct")], "pct"),
+        ("生猪出栏同比", "hog_turnover", [("A1", "", "yoy_pct")], "pct"),
+        ("累计出栏", "hog_turnover", [("A1", "cumulative", "abs")], "abs"),
+        ("累同", "hog_turnover", [("A1", "cumulative", "yoy_pct")], "pct"),
+        # 定点屠宰：A1 供给预测 AC/AD/AE（如 2020/1 为 1509.34），无则 定点屠宰 sheet
+        ("定点屠宰", "designated_slaughter", [("A1", "", "abs"), ("STATISTICS_BUREAU", "", "abs")], "abs"),
+        ("定点屠宰环比", "designated_slaughter", [("A1", "", "mom_pct")], "pct"),
+        ("定点屠宰同比", "designated_slaughter", [("A1", "", "yoy_pct")], "pct"),
     ]
-
-    # 收集所有月份
     all_months: set = set()
-    col_data: Dict[str, Dict[str, float]] = {}  # col_name -> {month_str -> value}
+    col_data: Dict[str, Dict[str, float]] = {}
 
-    for col_name, code, source, sub_cat, vtype, region in COLUMNS:
-        data_points = _query_monthly(
-            db,
-            indicator_code=code,
-            source=source,
-            region_code=region,
-            sub_category=sub_cat,
-            value_type=vtype,
-        )
+    for col_name, code, sources, _fmt in COLUMNS:
         col_map: Dict[str, float] = {}
-        for dp in data_points:
-            col_map[dp.date] = dp.value
-            all_months.add(dp.date)
+        if code and sources:
+            for source, sub_cat, vtype in sources:
+                data_points = _query_monthly(
+                    db,
+                    indicator_code=code,
+                    source=source,
+                    region_code="NATION",
+                    sub_category=sub_cat if sub_cat else None,
+                    value_type=vtype,
+                )
+                for dp in data_points:
+                    # 定点屠宰等列优先用 A1：已有日期的不再被后续 source 覆盖
+                    if dp.date not in col_map:
+                        col_map[dp.date] = dp.value
+                    all_months.add(dp.date)
         col_data[col_name] = col_map
 
-    # 排序月份
     sorted_months = sorted(all_months)
-
-    # 构建表头
-    header_row_0 = ["月度"] + [c[0] for c in COLUMNS]
-    header_row_1 = []  # 无子表头
-
-    # 构建数据行
+    n_data_cols = len(COLUMNS)  # 19
+    # 多列头：第 1 行 月度 | 规模场供给预测(合并 16 列) | 定点屠宰(合并 3 列)，共 1+16+3=20 列
+    header_row_0 = ["月度"] + ["规模场供给预测"] + [""] * 15 + ["定点屠宰"] + ["", ""]
+    # 第 2 行：各列名
+    header_row_1 = ["月度"] + [c[0] for c in COLUMNS]
+    # 第 3 行：环比/同比等
+    header_row_2 = [
+        "", "", "环比", "同比", "", "", "环比", "同比", "", "环比", "同比", "",
+        "", "环比", "同比", "", "", "", "环比", "同比",
+    ]
+    # 合并单元格（1-based）：第 1 行 第 2～17 列「规模场供给预测」，第 18～20 列「定点屠宰」
+    merged_cells_json = [
+        {"min_row": 1, "max_row": 1, "min_col": 2, "max_col": 17},
+        {"min_row": 1, "max_row": 1, "min_col": 18, "max_col": 20},
+    ]
     rows = []
     for m in sorted_months:
-        row = [m]
-        for col_name, *_ in COLUMNS:
+        row: List[Any] = [m]
+        for col_name, _code, _sources, fmt in COLUMNS:
             v = col_data.get(col_name, {}).get(m)
-            row.append(f"{v:.1f}" if v is not None else "")
+            if v is None:
+                row.append("")
+            elif fmt == "pct":
+                row.append(f"{v:.1f}")
+            else:
+                row.append(f"{v:.2f}" if abs(v) < 1000 else f"{v:.0f}")
         rows.append(row)
 
     return {
         "header_row_0": header_row_0,
         "header_row_1": header_row_1,
-        "header_row_2": [],
+        "header_row_2": header_row_2,
         "rows": rows,
-        "column_count": len(header_row_0),
-        "merged_cells_json": [],
+        "column_count": 1 + n_data_cols,
+        "merged_cells_json": merged_cells_json,
     }

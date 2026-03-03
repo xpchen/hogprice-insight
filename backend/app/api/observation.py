@@ -62,7 +62,7 @@ _METRIC_ROUTING: Dict[str, tuple] = {
     # 涌益宰前均重 - province-level only, compute average
     "YY_W_SLAUGHTER_PRELIVE_WEIGHT": ("fact_weekly_indicator", "week_end", "indicator_code", "weight_slaughter", "avg_provinces"),
     # 涌益标肥价差
-    "YY_D_STD_FAT_SPREAD": ("fact_spread_daily", "trade_date", "spread_type", "std_fat_spread", "region"),
+    "YY_D_STD_FAT_SPREAD": ("fact_spread_daily", "trade_date", "spread_type", "fat_std_spread", "region"),
     # 钢联
     "GL_D_HOG_PRICE": ("fact_price_daily", "trade_date", "price_type", "hog_price", "region"),
     "GL_W_PROFIT": ("fact_weekly_indicator", "week_end", "indicator_code", "profit_breeding_10000", "fixed_nation"),
@@ -124,6 +124,14 @@ async def query_observations(
         value_col = "volume" if is_slaughter else "value"
         unit_literal = "'头'" if is_slaughter else "unit"
 
+        # 出栏均重(weight_avg)全国：NATION 仅 2024-2026，缺少年份用各省平均补充（省均有 2018-2026）
+        is_weight_avg_nation = (
+            metric_key == "YY_W_OUT_WEIGHT"
+            and filter_val == "weight_avg"
+            and region == "NATION"
+            and (not source_code or source_code == "YONGYI")
+        )
+
         if region_mode == "avg_provinces":
             # 聚合查询：计算各省平均值作为全国数据
             sql = (
@@ -153,12 +161,21 @@ async def query_observations(
             sql += f" AND `{date_col}` <= :end"
             params["end"] = end_date
 
-        # source filter
+        # source filter: 明确指定时用用户值； slaughter 全国默认 YONGYI； spread fat_std 全国默认 GANGLIAN
+        default_src = None
+        if not source_code:
+            if is_slaughter and region == "NATION":
+                default_src = "YONGYI"
+            elif table == "fact_spread_daily" and filter_val == "fat_std_spread" and region == "NATION":
+                default_src = "GANGLIAN"
         if source_code:
             src_map = {"YONGYI": "YONGYI", "GANGLIAN": "GANGLIAN", "DCE": "DCE"}
             mapped = src_map.get(source_code, source_code)
             sql += " AND source = :src"
             params["src"] = mapped
+        elif default_src:
+            sql += " AND source = :src"
+            params["src"] = default_src
 
         if region_mode == "avg_provinces":
             sql += f" GROUP BY `{date_col}`"
@@ -168,6 +185,31 @@ async def query_observations(
         params["off"] = offset
 
         rows = db.execute(text(sql), params).fetchall()
+
+        # 出栏均重全国：NATION 仅 2024-2026，缺少年份用各省平均补充
+        if is_weight_avg_nation and (start_date or end_date):
+            have_weeks = {r[0] for r in rows}
+            fill_sql = (
+                f"SELECT `{date_col}`, ROUND(AVG({value_col}), 2) as value, "
+                f"MIN({unit_literal}) as unit, 'NATION' as region_code "
+                f"FROM `{table}` WHERE indicator_code = :fval AND region_code != 'NATION' "
+                f"AND source = 'YONGYI'"
+            )
+            fill_params: dict = {"fval": filter_val}
+            if start_date:
+                fill_sql += f" AND `{date_col}` >= :start"
+                fill_params["start"] = start_date
+            if end_date:
+                fill_sql += f" AND `{date_col}` <= :end"
+                fill_params["end"] = end_date
+            fill_sql += f" GROUP BY `{date_col}` ORDER BY `{date_col}` DESC"
+            fill_rows = db.execute(text(fill_sql), fill_params).fetchall()
+            for r in fill_rows:
+                if r[0] not in have_weeks:
+                    rows = list(rows) + [r]
+                    have_weeks.add(r[0])
+            rows = sorted(rows, key=lambda x: x[0], reverse=True)
+            rows = rows[offset : offset + limit]
 
         for i, r in enumerate(rows):
             period = "day"

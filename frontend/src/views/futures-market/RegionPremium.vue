@@ -94,7 +94,7 @@
               :key="series.contract_month"
               class="chart-wrapper"
             >
-              <h3>{{ series.contract_name }}合约升贴水</h3>
+              <h3>{{ series.contract_name }}升贴水</h3>
               <div
                 :ref="el => setChartRef(`${viewType}-${series.contract_month}`, el)"
                 class="chart"
@@ -205,7 +205,10 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     if (!yearMap.has(y)) yearMap.set(y, [])
     yearMap.get(y)!.push(p)
   })
-  const years = Array.from(yearMap.keys()).sort()
+  // 只显示有合约价格或升贴水数据的年份
+  const years = Array.from(yearMap.keys())
+    .filter(y => yearMap.get(y)!.some(d => d.futures_settle != null || d.premium != null))
+    .sort()
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
 
   const seriesData: any[] = [
@@ -249,7 +252,7 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
   })
 
   chart.setOption({
-    title: { text: `${series.contract_name}合约升贴水`, left: 'left', top: 8 },
+    title: { text: `${series.contract_name}的升贴水`, left: 'left', top: 8 },
     legend: { data: seriesData.map(s => s.name), top: 36, left: 'left', type: 'plain', icon: 'circle', itemWidth: 10, itemHeight: 10, itemGap: 18 },
     grid: { left: '3%', right: '4%', bottom: '15%', top: '22%', containLabel: true },
     tooltip: {
@@ -288,7 +291,10 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     if (!yearMap.has(y)) yearMap.set(y, [])
     yearMap.get(y)!.push(p)
   })
-  const years = Array.from(yearMap.keys()).sort()
+  // 只显示有 premium_ratio 数据的年份
+  const years = Array.from(yearMap.keys())
+    .filter(y => yearMap.get(y)!.some(d => d.premium_ratio != null))
+    .sort()
   const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3']
 
   const dateSet = new Set<string>()
@@ -327,7 +333,7 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
   })
 
   chart.setOption({
-    title: { text: `${series.contract_name}合约升贴水比率`, left: 'left', top: 8 },
+    title: { text: `${series.contract_name}升贴水比率`, left: 'left', top: 8 },
     legend: { data: seriesData.map(s => s.name), top: 36, left: 'left', type: 'plain', icon: 'circle', itemWidth: 10, itemHeight: 10, itemGap: 18 },
     grid: { left: '3%', right: '4%', bottom: '15%', top: '22%', containLabel: true },
     tooltip: {

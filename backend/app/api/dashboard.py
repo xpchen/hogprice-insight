@@ -98,8 +98,8 @@ async def get_default_dashboard(
     try:
         price = _query_daily_series(db, "fact_price_daily", "price_type", "标猪均价",
                                     start=start_date, end=end_date, source="YONGYI")
-        spread = _query_daily_series(db, "fact_spread_daily", "spread_type", "std_fat_spread",
-                                     start=start_date, end=end_date, source="YONGYI")
+        spread = _query_daily_series(db, "fact_spread_daily", "spread_type", "fat_std_spread",
+                                     start=start_date, end=end_date, source="GANGLIAN")
         cards.append(CardData(
             card_id="card_1_price_spread", title="全国出栏均价 + 标肥价差",
             chart_type="dual_axis",

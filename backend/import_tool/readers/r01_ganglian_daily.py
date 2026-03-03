@@ -229,7 +229,10 @@ class GanglianDailyReader(BaseSheetReader):
 
         for sheet_name, handler in handlers.items():
             if sheet_name not in wb.sheetnames:
-                logger.warning(f"  缺少 sheet: {sheet_name}")
+                if sheet_name == "仓单数据":
+                    logger.warning("  缺少 sheet: 仓单数据 → 前端 C4 仓单数据页将无数据，请确认钢联模板含该 sheet")
+                else:
+                    logger.warning(f"  缺少 sheet: {sheet_name}")
                 continue
             ws = wb[sheet_name]
             try:
@@ -832,6 +835,7 @@ class GanglianDailyReader(BaseSheetReader):
                 logger.debug(f"  仓单数据: 无法解析 header[{idx}]: {h_str}")
 
         records = results["fact_futures_basis"]
+        start_count = len(records)
         for row in ws.iter_rows(min_row=DATA_START_ROW, values_only=True):
             try:
                 trade_date = parse_date(row[0])
@@ -854,6 +858,10 @@ class GanglianDailyReader(BaseSheetReader):
                     })
             except Exception:
                 logger.debug(f"  仓单数据: 行解析失败 row[0]={row[0]}", exc_info=True)
+        if len(col_map) == 0:
+            logger.warning("  仓单数据: 表头未解析到「注册仓单（日）」格式，C4 仓单页将无数据；需如 DCE：猪：注册仓单（日） 或 注册仓单：库名（日）")
+        elif len(records) == start_count:
+            logger.warning("  仓单数据: 未解析到任何行数据，请检查日期列与数据列格式")
 
     # ────────────────────────────────────────────────────
     # Sheet 14: 淘汰母猪屠宰 → fact_monthly_indicator

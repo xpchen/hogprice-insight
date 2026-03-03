@@ -358,7 +358,7 @@ async def get_slaughter_price_trend_lunar_year(
     slaughter_rows = db.execute(
         text("""
             SELECT trade_date, volume FROM fact_slaughter_daily
-            WHERE region_code = 'NATION'
+            WHERE region_code = 'NATION' AND source = 'YONGYI'
               AND trade_date BETWEEN :s AND :e
             ORDER BY trade_date
         """),
@@ -374,6 +374,26 @@ async def get_slaughter_price_trend_lunar_year(
         """),
         {"s": all_start, "e": all_end},
     ).fetchall()
+    if not price_rows:
+        price_rows = db.execute(
+            text("""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = '全国均价' AND region_code = 'NATION' AND source = 'YONGYI'
+                  AND trade_date BETWEEN :s AND :e
+                ORDER BY trade_date
+            """),
+            {"s": all_start, "e": all_end},
+        ).fetchall()
+    if not price_rows:
+        price_rows = db.execute(
+            text("""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN'
+                  AND trade_date BETWEEN :s AND :e
+                ORDER BY trade_date
+            """),
+            {"s": all_start, "e": all_end},
+        ).fetchall()
 
     slaughter_data: List[Dict[str, Any]] = []
     price_data: List[Dict[str, Any]] = []
@@ -1024,10 +1044,16 @@ async def get_national_price_seasonality(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """全国猪价季节性（按年对齐）"""
+    """全国猪价季节性（按年对齐）
+    优先级：标猪均价 > 全国均价 > hog_avg_price(GANGLIAN)。
+    标猪均价仅有 2024-2026，缺少年份用全国均价补充以覆盖 2022-2026。
+    """
     _end = end_year if end_year is not None else date.today().year
     _start = start_year if start_year is not None else (_end - 5)
 
+    params = {"sy": _start, "ey": _end}
+
+    # 1. 标猪均价（优先，但仅 2024-2026 有数据）
     rows = db.execute(
         text("""
             SELECT trade_date, value FROM fact_price_daily
@@ -1035,11 +1061,32 @@ async def get_national_price_seasonality(
               AND YEAR(trade_date) BETWEEN :sy AND :ey
             ORDER BY trade_date
         """),
-        {"sy": _start, "ey": _end},
+        params,
     ).fetchall()
 
+    have_years = {r[0].year for r in rows} if rows else set()
+    wanted_years = set(range(_start, _end + 1))
+    missing_years = wanted_years - have_years
+
+    # 2. 缺少年份用全国均价补充（有 2015-2026 完整数据）
+    if missing_years:
+        fill_rows = []
+        for year in sorted(missing_years):
+            fill = db.execute(
+                text("""
+                    SELECT trade_date, value FROM fact_price_daily
+                    WHERE price_type = '全国均价' AND region_code = 'NATION' AND source = 'YONGYI'
+                      AND YEAR(trade_date) = :y
+                    ORDER BY trade_date
+                """),
+                {"y": year},
+            ).fetchall()
+            fill_rows.extend(fill)
+        rows = list(rows) + fill_rows
+        rows = sorted(rows, key=lambda r: r[0])
+
+    # 3. 若仍无数据，用钢联 hog_avg_price
     if not rows:
-        # 如果涌益没数据, 试试钢联
         rows = db.execute(
             text("""
                 SELECT trade_date, value FROM fact_price_daily
@@ -1047,7 +1094,7 @@ async def get_national_price_seasonality(
                   AND YEAR(trade_date) BETWEEN :sy AND :ey
                 ORDER BY trade_date
             """),
-            {"sy": _start, "ey": _end},
+            params,
         ).fetchall()
 
     series, latest = _rows_to_daily_seasonality(rows)
@@ -1068,15 +1115,16 @@ async def get_fat_std_spread_seasonality(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """标肥价差季节性（全国）"""
+    """标肥价差季节性（全国），NATION 仅钢联有 fat_std_spread"""
     _end = end_year if end_year is not None else date.today().year
     _start = start_year if start_year is not None else (_end - 5)
     rc = region_code or "NATION"
+    source_filter = " AND source = 'GANGLIAN'" if rc == "NATION" else ""
 
     rows = db.execute(
-        text("""
+        text(f"""
             SELECT trade_date, value FROM fact_spread_daily
-            WHERE spread_type = 'fat_std_spread' AND region_code = :rc
+            WHERE spread_type = 'fat_std_spread' AND region_code = :rc {source_filter}
               AND YEAR(trade_date) BETWEEN :sy AND :ey
             ORDER BY trade_date
         """),
@@ -1119,7 +1167,16 @@ async def get_price_and_spread(
         """),
     ).fetchall()
 
-    # fallback to GANGLIAN if YONGYI is empty
+    if not price_rows:
+        price_rows = db.execute(
+            text(f"""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = '全国均价' AND region_code = 'NATION' AND source = 'YONGYI'
+                  AND YEAR(trade_date) IN ({year_str})
+                ORDER BY trade_date
+            """),
+        ).fetchall()
+
     if not price_rows:
         price_rows = db.execute(
             text(f"""
@@ -1133,7 +1190,7 @@ async def get_price_and_spread(
     spread_rows = db.execute(
         text(f"""
             SELECT trade_date, value FROM fact_spread_daily
-            WHERE spread_type = 'fat_std_spread' AND region_code = 'NATION'
+            WHERE spread_type = 'fat_std_spread' AND region_code = 'NATION' AND source = 'GANGLIAN'
               AND YEAR(trade_date) IN ({year_str})
             ORDER BY trade_date
         """),
@@ -1178,7 +1235,7 @@ async def get_slaughter_lunar(
     rows = db.execute(
         text("""
             SELECT trade_date, volume FROM fact_slaughter_daily
-            WHERE region_code = 'NATION'
+            WHERE region_code = 'NATION' AND source = 'YONGYI'
               AND YEAR(trade_date) BETWEEN :sy AND :ey
             ORDER BY trade_date
         """),
@@ -1385,7 +1442,7 @@ async def get_slaughter_price_trend_solar(
         has_data = db.execute(
             text("""
                 SELECT 1 FROM fact_slaughter_daily
-                WHERE region_code = 'NATION'
+                WHERE region_code = 'NATION' AND source = 'YONGYI'
                   AND trade_date BETWEEN :s AND :e
                 LIMIT 1
             """),
@@ -1418,7 +1475,7 @@ async def get_slaughter_price_trend_solar(
     slaughter_rows = db.execute(
         text("""
             SELECT trade_date, volume FROM fact_slaughter_daily
-            WHERE region_code = 'NATION'
+            WHERE region_code = 'NATION' AND source = 'YONGYI'
               AND trade_date BETWEEN :s AND :e
             ORDER BY trade_date
         """),
@@ -1434,6 +1491,26 @@ async def get_slaughter_price_trend_solar(
         """),
         {"s": sd, "e": ed},
     ).fetchall()
+    if not price_rows:
+        price_rows = db.execute(
+            text("""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = '全国均价' AND region_code = 'NATION' AND source = 'YONGYI'
+                  AND trade_date BETWEEN :s AND :e
+                ORDER BY trade_date
+            """),
+            {"s": sd, "e": ed},
+        ).fetchall()
+    if not price_rows:
+        price_rows = db.execute(
+            text("""
+                SELECT trade_date, value FROM fact_price_daily
+                WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN'
+                  AND trade_date BETWEEN :s AND :e
+                ORDER BY trade_date
+            """),
+            {"s": sd, "e": ed},
+        ).fetchall()
 
     slaughter_data = [
         {"date": r[0].isoformat(), "value": float(r[1]) if r[1] is not None else None}
@@ -1473,7 +1550,7 @@ async def get_price_changes(
         table = "fact_spread_daily"
         type_col = "spread_type"
         type_val = "fat_std_spread"
-        extra = ""
+        extra = " AND source = 'GANGLIAN'"  # NATION 标肥价差仅钢联
 
     latest_row = db.execute(
         text(f"""

@@ -144,6 +144,15 @@ class EnterpriseProvinceReader(BaseSheetReader):
                         "value": total_val, "unit": "万头", "batch_id": self.batch_id,
                     })
 
+                # CR5 月度计划 (col 3)，与旧版图表「计划量」一致
+                plan_val = clean_value(ws.cell(row=row, column=3).value)
+                if plan_val is not None:
+                    records.append({
+                        "trade_date": dt, "company_code": "CR5",
+                        "region_code": "NATION", "metric_type": "planned_volume",
+                        "value": plan_val, "unit": "万头", "batch_id": self.batch_id,
+                    })
+
                 # National avg price (col 4)
                 price_val = clean_value(ws.cell(row=row, column=4).value)
                 if price_val is not None:
@@ -226,9 +235,11 @@ class EnterpriseProvinceReader(BaseSheetReader):
         METRIC_MAP = {
             3: ("SICHUAN", "listed_volume", "头"),
             4: ("SICHUAN", "actual_volume", "头"),
+            5: ("SICHUAN", "deal_rate", "%"),
             8: ("SICHUAN", "ms_price", "元/公斤"),
             9: ("GUANGXI", "listed_volume", "头"),
             10: ("GUANGXI", "actual_volume", "头"),
+            11: ("GUANGXI", "deal_rate", "%"),
             12: ("GUANGXI", "ms_price", "元/公斤"),
             13: ("GUIZHOU", "output", "头"),
             14: ("GUIZHOU", "ms_price", "元/公斤"),
@@ -245,6 +256,11 @@ class EnterpriseProvinceReader(BaseSheetReader):
                 for col, (region, metric, unit) in METRIC_MAP.items():
                     val = clean_value(ws.cell(row=row, column=col).value)
                     if val is not None:
+                        # 成交率：Excel 多为小数 0.85=85%，与 P8 一致转为 0-100 存库
+                        if metric == "deal_rate" and unit == "%":
+                            v = float(val)
+                            if 0 < v <= 1.5:
+                                val = round(v * 100, 2)
                         records.append({
                             "trade_date": dt, "company_code": "SAMPLE",
                             "region_code": region, "metric_type": metric,

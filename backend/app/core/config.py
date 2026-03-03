@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 env_path = Path(__file__).parent.parent.parent / '.env'
-load_dotenv(dotenv_path=env_path)
+load_dotenv(dotenv_path=env_path, override=True)  # override 确保 .env 覆盖已有环境变量
 
 
 class Settings(BaseSettings):
@@ -28,6 +28,8 @@ class Settings(BaseSettings):
 
     # 快速图表预计算：内部请求携带此 header 时以首名用户身份访问（仅本地使用）
     QUICK_CHART_INTERNAL_SECRET: Optional[str] = None
+    # 审计对账时暂时禁用图表缓存，保证拿到真实数据库结果。.env 中设置 DISABLE_CHART_CACHE=true 禁用
+    DISABLE_CHART_CACHE: bool = False
     # 预计算请求的 base URL（默认本机）
     BACKEND_BASE_URL: str = "http://127.0.0.1:8000"
     

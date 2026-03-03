@@ -174,10 +174,14 @@ class YongyiWeeklyReader(BaseSheetReader):
             return empty, self._parse_gender_ratio(ws)
 
         # ── Monthly: production metrics ──
-        if name == "月度-生产指标（2021.5.7新增）":
+        if name == "月度-生产指标（2021.5.7新增）" or name == "月度-生产指标":
             return empty, self._parse_production_metrics(ws)
         if name == "月度-生产指标2":
             return empty, self._parse_production_metrics2(ws)
+
+        # 销售计划：月度计划出栏量 — 本月计划销售 → fact_monthly_indicator (yongyi_planned_output)
+        if name == "月度计划出栏量":
+            return empty, self._parse_monthly_planned_output(ws)
 
         # Skip all other sheets (reference / summary / not needed)
         return empty, empty
@@ -984,6 +988,76 @@ class YongyiWeeklyReader(BaseSheetReader):
                 logger.debug("skip row monthly_old %s", indicator_code, exc_info=True)
         return records
 
+    # ── 月度计划出栏量（销售计划 D3 — 计划+实际同表同单位万头）────────────────
+    def _parse_monthly_planned_output(self, ws) -> list[dict]:
+        """
+        Sheet 月度计划出栏量：Row1 有「上月样本企业合计销售」「本月计划销售」「万头」「本月计划较上月实际销售」。
+        - 本月计划销售 → yongyi_planned_output（当月计划，万头）
+        - 上月样本企业合计销售：当行月份为 M 时表示 M-1 月实际，写入 month_date=M-1 的 yongyi_actual_sample_sales（万头），
+          这样 2026-02 行的「上月」= 2026-01 实际，与 2026-01 行的「本月计划」同口径，销售计划页 实际/计划/达成率 与旧版一致。
+        """
+        row1 = self._row_values(ws, 1, max_col=25)
+        plan_col: Optional[int] = None
+        actual_prev_col: Optional[int] = None  # 上月样本企业合计销售
+        for idx, cell in enumerate(row1):
+            if not cell:
+                continue
+            s = str(cell).strip()
+            if s == "本月计划销售":
+                plan_col = idx
+            elif s == "上月样本企业合计销售":
+                actual_prev_col = idx
+        if plan_col is None:
+            logger.warning("月度计划出栏量: 未找到「本月计划销售」列，跳过")
+            return []
+
+        records: list[dict] = []
+        for row in ws.iter_rows(min_row=3, max_col=max(plan_col + 1, actual_prev_col + 1 if actual_prev_col is not None else 0, 18), values_only=True):
+            try:
+                row = list(row)
+                month_dt = parse_month(row[0])
+                if month_dt is None:
+                    continue
+                if plan_col < len(row):
+                    val = clean_value(row[plan_col])
+                    if val is not None:
+                        records.append({
+                            "month_date": month_dt,
+                            "region_code": "NATION",
+                            "indicator_code": "yongyi_planned_output",
+                            "sub_category": "",
+                            "source": SOURCE,
+                            "value": val,
+                            "value_type": "abs",
+                            "unit": "万头",
+                            "batch_id": self.batch_id,
+                        })
+                # 上月样本企业合计销售 → 上一月的实际（万头），与旧版销售计划口径一致
+                if actual_prev_col is not None and actual_prev_col < len(row):
+                    prev_val = clean_value(row[actual_prev_col])
+                    if prev_val is not None:
+                        prev_month = month_dt.month - 1
+                        prev_year = month_dt.year
+                        if prev_month <= 0:
+                            prev_month += 12
+                            prev_year -= 1
+                        prev_month_dt = date(prev_year, prev_month, 1)
+                        records.append({
+                            "month_date": prev_month_dt,
+                            "region_code": "NATION",
+                            "indicator_code": "yongyi_actual_sample_sales",
+                            "sub_category": "",
+                            "source": SOURCE,
+                            "value": prev_val,
+                            "value_type": "abs",
+                            "unit": "万头",
+                            "batch_id": self.batch_id,
+                        })
+            except Exception:
+                logger.debug("skip row 月度计划出栏量", exc_info=True)
+        logger.info("月度计划出栏量: %d 条 (yongyi_planned_output + yongyi_actual_sample_sales)", len(records))
+        return records
+
     # ── 猪料销量 (feed sales, national, with sub-categories) ────────────
     def _parse_feed_sales(self, ws) -> list[dict]:
         """
@@ -1171,14 +1245,16 @@ class YongyiWeeklyReader(BaseSheetReader):
         """
         Row 2 = header: 日期, 基础母猪存栏, 环比涨跌, 配种数, 配种数环比,
                          分娩窝数, 分娩窝数环比, 窝均健仔数, 产房存活率, ...
+        列对应: col1=日期 col2=基础母猪 col3=环比 col4=配种数 col5=配种数环比
+               col6=分娩窝数(母猪效能) col7=分娩窝数环比 col8=窝均健仔数(压栏系数) col9=产房存活率
         Data from row 3.  National-level aggregated metrics.
         """
         COL_MAP = {
             1: ("prod_base_sow_inventory", "头"),
             3: ("prod_mating_count", "窝"),
-            5: ("prod_farrowing_count", "窝"),
-            7: ("prod_healthy_piglets_per_litter", "头"),
-            8: ("prod_farrowing_survival_rate", ""),
+            6: ("prod_farrowing_count", "窝"),   # 母猪效能：分娩窝数（原误用 col5 为配种数环比）
+            8: ("prod_healthy_piglets_per_litter", "头"),  # 压栏系数：窝均健仔数（原误用 col7 为分娩窝数环比）
+            9: ("prod_farrowing_survival_rate", ""),  # 产房存活率（原误用 col8）
         }
         records: list[dict] = []
         for row in ws.iter_rows(min_row=3, max_col=20, values_only=True):

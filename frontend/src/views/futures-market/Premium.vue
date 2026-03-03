@@ -42,12 +42,12 @@
         </div>
       </div>
 
-      <!-- 省区升贴水注释 -->
-      <div v-if="regionPremiums && Object.keys(regionPremiums).length > 0" class="region-premiums">
+      <!-- 区域升贴水（以选中区域为基准 0，元/吨） -->
+      <div class="region-premiums">
         <div class="region-premiums-title">{{ selectedRegion }}区域升贴水：</div>
         <div class="region-premiums-content">
-          <span v-for="(value, region) in regionPremiums" :key="region" class="region-item">
-            {{ region }}：{{ value }}
+          <span v-for="region in regionPremiumOrder" :key="region" class="region-item">
+            {{ region }}：{{ displayRegionPremiums[region] ?? '—' }}
           </span>
         </div>
       </div>
@@ -152,19 +152,45 @@ const errorMessage = ref<string>('')
 const chartInstances = new Map<string, echarts.ECharts>()
 const chartRefs = new Map<string, HTMLDivElement>()
 
+/** 全国均价区域升贴水展示顺序（与旧版一致） */
+const regionPremiumOrder = ['贵州', '四川', '内蒙', '广西', '云南', '江苏', '广东', '全国均价']
+
+/** 区域升贴水默认值（元/吨，以全国均价为基准 0，API 未返回时使用） */
+const DEFAULT_REGION_PREMIUMS: Record<string, number> = {
+  贵州: -300, 四川: -100, 内蒙: -300, 广西: -200, 云南: -600, 江苏: 500, 广东: 500, 全国均价: 0
+}
+
+/** 以选中区域为基准(0) 重新计算各区域升贴水：display[r] = base[r] - base[selected] */
+const displayRegionPremiums = computed(() => {
+  const base = (regionPremiums.value && Object.keys(regionPremiums.value).length > 0)
+    ? regionPremiums.value
+    : DEFAULT_REGION_PREMIUMS
+  const sel = selectedRegion.value
+  const baseVal = base[sel]
+  if (baseVal === undefined) return base
+  const result: Record<string, number> = {}
+  for (const r of regionPremiumOrder) {
+    const v = base[r]
+    if (v !== undefined) result[r] = Math.round((v - baseVal) * 100) / 100
+  }
+  return result
+})
+
 /** 左侧全部日期图：按年过滤，只显示选中年的现货价格、合约价格、升贴水 */
 const selectedAllDatesYear = ref<number | null>(null)
-/** 左侧图可选年份（从全部日期数据中汇总各合约年） */
+/** 左侧图可选年份（从全部日期数据中汇总，仅保留有数据的年份） */
 const allDatesYearOptions = computed(() => {
   const set = new Set<number>()
   premiumDataAllDates.value.series.forEach(s => {
     s.data.forEach(p => {
-      const y = getContractYear(p.date, s.contract_month)
-      set.add(y)
+      const hasData = p.spot_price != null || p.futures_settle != null || p.premium != null
+      if (hasData) {
+        const y = getContractYear(p.date, s.contract_month)
+        set.add(y)
+      }
     })
   })
-  const list = Array.from(set).sort((a, b) => a - b)
-  return list
+  return Array.from(set).sort((a, b) => a - b)
 })
 
 const contractMonths = [3, 5, 7, 9, 11, 1]
@@ -208,11 +234,16 @@ const loadData = async () => {
         if (allDatesResult.series.length > 0) {
           const years = new Set<number>()
           allDatesResult.series.forEach(s => {
-            s.data.forEach(p => { years.add(getContractYear(p.date, s.contract_month)) })
+            s.data.forEach(p => {
+              const hasData = p.spot_price != null || p.futures_settle != null || p.premium != null
+              if (hasData) years.add(getContractYear(p.date, s.contract_month))
+            })
           })
           const currentYear = new Date().getFullYear()
-          const defaultYear = years.has(currentYear) ? currentYear : Math.max(...years)
-          if (selectedAllDatesYear.value == null || !years.has(selectedAllDatesYear.value)) {
+          const defaultYear = years.size > 0
+            ? (years.has(currentYear) ? currentYear : Math.max(...years))
+            : null
+          if (selectedAllDatesYear.value == null || (years.size > 0 && !years.has(selectedAllDatesYear.value))) {
             selectedAllDatesYear.value = defaultYear
           }
         }
@@ -421,7 +452,10 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
     if (!yearMap.has(contractYear)) yearMap.set(contractYear, [])
     yearMap.get(contractYear)!.push(point)
   })
-  const years = Array.from(yearMap.keys()).sort()
+  // 只显示有 premium_ratio 数据的年份
+  const years = Array.from(yearMap.keys())
+    .filter(cy => yearMap.get(cy)!.some(d => d.premium_ratio != null))
+    .sort()
   const colors = [
     '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
     '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f', '#ffdb5c', '#c4ccd3'

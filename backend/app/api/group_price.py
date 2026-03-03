@@ -72,15 +72,33 @@ PROVINCE_SUFFIX = {
     "GZ": "贵州",
 }
 
+# 华宝/牧原白条：fact_carcass_market (source, region_code) -> 前端列名（与 r05 HUABAO_MUYUAN_COLS 一致）
+WHITE_STRIP_DISPLAY = {
+    ("HUABAO", "NATION"): "华宝白条",
+    ("MUYUAN", "EAST"): "华东",
+    ("MUYUAN", "HENAN_SHANDONG"): "河南山东",
+    ("MUYUAN", "HUBEI_SHAANXI"): "湖北陕西",
+    ("MUYUAN", "BEIJING_TIANJIN_HEBEI"): "京津冀",
+    ("MUYUAN", "NORTHEAST"): "东北",
+}
+# 表格1 白条列顺序：华宝白条 + 牧原五区域（与前端 MUYUAN_WHITE_STRIP_REGIONS 一致）
+WHITE_STRIP_COLUMN_ORDER = ["华宝白条", "华东", "河南山东", "湖北陕西", "京津冀", "东北"]
+
+# 旧版表格1 企业列顺序（省份+企业名）：吉林中粮、河南牧原、山东新希望、广东温氏、湖南唐人神、江西温氏、四川德康、贵州富之源
+FLAT_ENTERPRISE_ORDER = [
+    "吉林中粮", "河南牧原", "山东新希望", "广东温氏",
+    "湖南唐人神", "江西温氏", "四川德康", "贵州富之源",
+]
+
 
 def _parse_company_display(company_code: str) -> str:
-    """MUYUAN_HN -> 牧原(河南)"""
+    """MUYUAN_HN -> 河南牧原（旧版列名：省份+企业名）"""
     parts = company_code.split("_", 1)
     prefix = parts[0]
     suffix = parts[1] if len(parts) > 1 else ""
     name = COMPANY_PREFIX_DISPLAY.get(prefix, prefix)
     prov = PROVINCE_SUFFIX.get(suffix, "")
-    return f"{name}({prov})" if prov else name
+    return f"{prov}{name}" if prov else name
 
 
 @router.get("/group-enterprise-price", response_model=GroupPriceTableResponse)
@@ -89,9 +107,11 @@ async def get_group_enterprise_price(
     db: Session = Depends(get_db)
 ):
     """
-    获取重点集团企业生猪出栏价格
+    获取重点集团企业生猪出栏价格 + 华宝/牧原白条（与旧数据逻辑一致）
 
-    数据来源: fact_enterprise_daily (metric_type='output_price')
+    数据来源:
+    - fact_enterprise_daily (metric_type='output_price')：企业出栏价
+    - fact_carcass_market (metric_type in huabao_spread/muyuan_spread)：华宝白条、牧原白条区域列
     """
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
@@ -99,7 +119,7 @@ async def get_group_enterprise_price(
     all_data: List[GroupPriceDataPoint] = []
     found_companies: set = set()
 
-    # 查询企业出栏价 — 数据按省份存储（公司码如MUYUAN_HN）
+    # 1. 查询企业出栏价 — 数据按省份存储（公司码如MUYUAN_HN）
     enterprise_sql = text("""
         SELECT trade_date, company_code, value
         FROM fact_enterprise_daily
@@ -109,28 +129,55 @@ async def get_group_enterprise_price(
           AND value IS NOT NULL
         ORDER BY trade_date DESC
     """)
-
     rows = db.execute(enterprise_sql, {
         "start_date": start_date,
         "end_date": end_date,
     }).fetchall()
-
     for row in rows:
         trade_date, company_code, value = row
         company_name = _parse_company_display(company_code)
+        if company_name not in FLAT_ENTERPRISE_ORDER:
+            continue
         found_companies.add(company_name)
-
         all_data.append(GroupPriceDataPoint(
             date=trade_date.isoformat(),
             company=company_name,
             price=round(float(value), 2),
         ))
 
+    # 2. 查询华宝/牧原白条 — 来自 3.3、白条市场跟踪.xlsx 华宝和牧原白条 sheet（r05 写入 fact_carcass_market）
+    white_strip_sql = text("""
+        SELECT trade_date, source, region_code, value
+        FROM fact_carcass_market
+        WHERE metric_type IN ('huabao_spread', 'muyuan_spread')
+          AND trade_date >= :start_date
+          AND trade_date <= :end_date
+          AND value IS NOT NULL
+        ORDER BY trade_date DESC
+    """)
+    ws_rows = db.execute(white_strip_sql, {
+        "start_date": start_date,
+        "end_date": end_date,
+    }).fetchall()
+    for row in ws_rows:
+        trade_date, source, region_code, value = row
+        display_name = WHITE_STRIP_DISPLAY.get((source, region_code))
+        if display_name:
+            found_companies.add(display_name)
+            all_data.append(GroupPriceDataPoint(
+                date=trade_date.isoformat(),
+                company=display_name,
+                price=round(float(value), 2),
+            ))
+
     # 按日期降序排序
     all_data.sort(key=lambda x: x.date, reverse=True)
 
     latest_date = all_data[0].date if all_data else None
-    companies = sorted(found_companies)
+    # 只展示旧版列：8 个企业 + 华宝白条 + 牧原五区域，不再带其它企业
+    enterprise_in_order = [c for c in FLAT_ENTERPRISE_ORDER if c in found_companies]
+    white_strip_ordered = [c for c in WHITE_STRIP_COLUMN_ORDER if c in found_companies]
+    companies = enterprise_in_order + white_strip_ordered
 
     return GroupPriceTableResponse(
         data=all_data,
@@ -143,36 +190,49 @@ async def get_group_enterprise_price(
     )
 
 
+# 表格2 只展示「白条市场」sheet 的 8 个重点市场（与 r05 MARKET_COLUMNS、旧版/ingest 配置一致），不含 ML到货/SDY到货/BZY到货
+WHITE_STRIP_MARKET_SOURCES = [
+    "北京石门", "上海西郊", "成都点杀", "山西太原",
+    "杭州五和", "无锡天鹏", "南京众彩", "广西桂林",
+]
+
+
 @router.get("/white-strip-market", response_model=WhiteStripMarketResponse)
 async def get_white_strip_market(
     days: int = Query(15, description="显示最近N天的数据"),
     db: Session = Depends(get_db)
 ):
     """
-    获取重点市场白条到货量&价格
+    获取重点市场白条到货量&价格（仅 8 个重点市场，与旧版一致）
 
-    数据来源: fact_carcass_market
+    数据来源: fact_carcass_market（同 r05 白条市场 sheet）
     - metric_type='carcass_arrival': 到货量
     - metric_type='carcass_price': 白条均价
-    source 字段为市场名（如 上海西郊、杭州五和 等）
+    - 仅返回 source 在 WHITE_STRIP_MARKET_SOURCES 的 8 个市场，不包含 ML到货/SDY到货/BZY到货
     """
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
 
-    sql = text("""
+    # SQLAlchemy text() 的 IN 用占位符拼接（与 production_indicators 一致）
+    in_placeholders = ", ".join([f":src_{i}" for i in range(len(WHITE_STRIP_MARKET_SOURCES))])
+    sql = text(f"""
         SELECT trade_date, source, metric_type, value
         FROM fact_carcass_market
         WHERE metric_type IN ('carcass_arrival', 'carcass_price')
           AND trade_date >= :start_date
           AND trade_date <= :end_date
           AND value IS NOT NULL
+          AND source IN ({in_placeholders})
         ORDER BY trade_date DESC, source
     """)
-
-    rows = db.execute(sql, {
+    params: dict = {
         "start_date": start_date,
         "end_date": end_date,
-    }).fetchall()
+    }
+    for i, name in enumerate(WHITE_STRIP_MARKET_SOURCES):
+        params[f"src_{i}"] = name
+
+    rows = db.execute(sql, params).fetchall()
 
     # 按 (date, market) 分组
     grouped: Dict[str, Dict[str, object]] = {}

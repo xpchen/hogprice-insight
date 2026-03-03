@@ -164,3 +164,7 @@ backend/reports/
 
 # Excluded directories (do not commit)
 old_backend/
+
+# Large SQL dumps (exceed GitHub file size limit)
+Dump20260227/
+docs/hogprice_v3/

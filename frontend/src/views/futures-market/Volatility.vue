@@ -20,6 +20,9 @@
 
       <!-- 波动率季节性图 -->
       <div v-loading="loading">
+        <div v-if="!loading && volatilityData.series.length === 0" class="empty-tip">
+          暂无数据，请先导入 4.1 盘面结算价（与升贴水、月间价差同一数据源）后刷新
+        </div>
         <div v-for="series in volatilityData.series" :key="series.contract_code" style="margin-bottom: 12px">
           <div
             :ref="el => setChartRef(series.contract_month, el)"
@@ -57,10 +60,11 @@ const loadData = async () => {
   loading.value = true
   try {
     const result = await futuresApi.getVolatility({
-      contract_month: selectedContract.value || undefined,
+      contract_month: selectedContract.value ?? undefined,
       window_days: windowDays.value
     })
     volatilityData.value = result
+    await nextTick()
     await nextTick()
     renderCharts()
   } catch (error) {
@@ -282,6 +286,13 @@ onMounted(() => {
   .chart {
     width: 100%;
     height: 400px;
+  }
+
+  .empty-tip {
+    color: #909399;
+    padding: 40px;
+    text-align: center;
+    font-size: 14px;
   }
 }
 </style>

@@ -165,6 +165,7 @@ export const futuresApi = {
 
   getCalendarSpread: (params: {
     spread_pair?: string
+    region?: string
     start_year?: number
     end_year?: number
   }): Promise<CalendarSpreadResponse> => {

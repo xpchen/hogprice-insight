@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.config import settings
 from app.models.sys_user import SysUser
+from app.models.fact_futures_daily import FactFuturesDaily
 
 router = APIRouter(prefix=f"{settings.API_V1_STR}/futures", tags=["futures"])
 
@@ -171,6 +172,20 @@ def calculate_volatility(prices: List[float], current_idx: int, window_days: int
     variance = sum((r - mean_return) ** 2 for r in recent_returns) / (len(recent_returns) - 1)
     std_dev = math.sqrt(variance)
     return std_dev * math.sqrt(252) * 100
+
+
+def is_in_seasonal_range(date_obj: date, contract_month: int) -> bool:
+    """季节性范围：排除交割月。如 03 合约为 4月~次年2月。"""
+    month = date_obj.month
+    start_month = (contract_month + 1) % 12
+    if start_month == 0:
+        start_month = 12
+    end_month = contract_month - 1
+    if end_month == 0:
+        end_month = 12
+    if start_month > end_month:
+        return month >= start_month or month <= end_month
+    return start_month <= month <= end_month
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +486,7 @@ async def get_main_contract_analysis(
 
 
 # ---------------------------------------------------------------------------
-# 6. /volatility-analysis  -- volatility from fact_futures_daily settle prices
+# 6. /volatility-analysis  -- volatility，数据源与升贴水/月间价差一致
 # ---------------------------------------------------------------------------
 
 @router.get("/volatility-analysis", response_model=VolatilityResponse)
@@ -484,85 +499,78 @@ async def get_volatility_analysis(
     db: Session = Depends(get_db),
 ):
     """
-    波动率分析：基于 fact_futures_daily 的结算价计算年化波动率。
-
-    按合约月份分组，每组内按日期排序后计算滚动波动率。
-    波动率 = stdev(ln(P[i]/P[i-n])) * sqrt(252) * 100
+    波动率分析：从 fact_futures_daily 取数（raw SQL 避免表缺 instrument 等列导致 ORM 报错）。
+    - contract_code LIKE "%{月}"，按交易日分组取 open_interest 最大主力；价格用 settle（4.1 盘面仅有 settle）。
+    - 全序列连续，按 is_in_seasonal_range 排除交割月；波动率 = stdev(ln(P[i]/P[i-n])) * sqrt(252) * 100。
     """
     contract_months = [contract_month] if contract_month else [1, 3, 5, 7, 9, 11]
     all_series: List[VolatilitySeries] = []
 
     for month in contract_months:
         month_str = f"{month:02d}"
-        # Fetch all contracts for this delivery month
+        # 仅查存在的列，不依赖 instrument（部分环境表结构可能与 model 不一致）
         sql = """
-            SELECT d.trade_date, d.contract_code, d.`close` as close_price, d.settle as settle_price, d.open_interest
-            FROM fact_futures_daily d
-            WHERE d.contract_code LIKE :pattern
+            SELECT trade_date, contract_code, `close`, settle, open_interest
+            FROM fact_futures_daily
+            WHERE contract_code LIKE :pattern
         """
         params: dict = {"pattern": f"%{month_str}"}
         if from_date:
-            sql += " AND d.trade_date >= :from_date"
+            sql += " AND trade_date >= :from_date"
             params["from_date"] = from_date
         if to_date:
-            sql += " AND d.trade_date <= :to_date"
+            sql += " AND trade_date <= :to_date"
             params["to_date"] = to_date
-        sql += " ORDER BY d.trade_date, d.open_interest DESC"
-
+        sql += " ORDER BY trade_date"
         rows = db.execute(text(sql), params).fetchall()
+
         if not rows:
             continue
 
-        # For each trade_date pick the contract with the highest open_interest
-        # (rows ordered by open_interest DESC so first per date wins)
-        seen_dates: Dict[date, Any] = {}
+        # 按交易日分组，取 open_interest 最大的主力；价格用 settle（4.1 盘面 close 为空）
+        date_dict: Dict[date, List[Any]] = {}
         for r in rows:
-            if r.trade_date not in seen_dates:
-                seen_dates[r.trade_date] = r
+            td = r[0]
+            if td not in date_dict:
+                date_dict[td] = []
+            date_dict[td].append(r)
 
-        sorted_dates = sorted(seen_dates.keys())
-        prices = []
-        date_list = []
-        for d in sorted_dates:
-            r = seen_dates[d]
-            p = _safe_float(r.settle_price) or _safe_float(r.close_price)
+        sorted_dates = sorted(date_dict.keys())
+        prices: List[Optional[float]] = []
+        date_list: List[date] = []
+        best_per_date: Dict[date, Any] = {}
+
+        for trade_date in sorted_dates:
+            best = max(date_dict[trade_date], key=lambda x: (x[4] or 0))
+            best_per_date[trade_date] = best
+            # 优先 close，无则 settle（4.1 盘面只有 settle）
+            raw = best[2] if (best[2] is not None and float(best[2] or 0) > 0) else best[3]
+            p = _safe_float(raw)
             prices.append(p)
-            date_list.append(d)
+            date_list.append(trade_date)
 
-        # Group by contract year for seasonal analysis
-        by_year: Dict[int, List[int]] = {}
-        for idx, d in enumerate(date_list):
-            if d.month > month:
-                cy = d.year + 1
-            else:
-                cy = d.year
-            by_year.setdefault(cy, []).append(idx)
-
+        # 全序列连续，按 is_in_seasonal_range 排除交割月后计算年化波动率
         data_points: List[VolatilityDataPoint] = []
-        min_required = 2 * window_days + 1
-
-        for cy in sorted(by_year.keys()):
-            indices = by_year[cy]
-            if len(indices) < min_required:
+        for i in range(len(prices)):
+            if prices[i] is None or prices[i] <= 0:
                 continue
-            year_prices = [prices[i] for i in indices]
-            year_dates = [date_list[i] for i in indices]
-
-            for local_idx in range(len(year_prices)):
-                if year_prices[local_idx] is None or year_prices[local_idx] <= 0:
-                    continue
-                vol = calculate_volatility(year_prices, local_idx, window_days)
-                if vol is None:
-                    continue
-                r = seen_dates[year_dates[local_idx]]
-                data_points.append(VolatilityDataPoint(
-                    date=year_dates[local_idx].isoformat(),
-                    close_price=_safe_float(r.close_price),
-                    settle_price=_safe_float(r.settle_price),
-                    open_interest=_safe_int(r.open_interest),
-                    volatility=round(vol, 2),
-                    year=cy,
-                ))
+            if not is_in_seasonal_range(date_list[i], month):
+                continue
+            vol = calculate_volatility(prices, i, window_days)
+            if vol is None:
+                continue
+            r = best_per_date[date_list[i]]
+            d = date_list[i]
+            cy = d.year + 1 if d.month > month else d.year
+            _price = _safe_float(r[2] if (r[2] is not None and float(r[2] or 0) > 0) else r[3])
+            data_points.append(VolatilityDataPoint(
+                date=d.isoformat(),
+                close_price=_price,
+                settle_price=_safe_float(r[3]),
+                open_interest=_safe_int(r[4]),
+                volatility=round(vol, 2),
+                year=cy,
+            ))
 
         if data_points:
             data_points.sort(key=lambda x: x.date)
@@ -655,12 +663,56 @@ REGION_MAP = {
     "内蒙": "NEIMENGGU",
 }
 
+# 全国均价区域升贴水（元/吨，交割地市升贴水，来源于大商所交割规则/交割地市出栏价sheet）
+# 全国均价为基准0，各省相对全国的升贴水调整值
+REGION_PREMIUM_ADJUSTMENTS: Dict[str, float] = {
+    "全国均价": 0,
+    "贵州": -300,
+    "四川": -100,
+    "内蒙": -300,
+    "广西": -200,
+    "云南": -600,
+    "江苏": 500,
+    "广东": 500,
+}
+
 
 def _get_contract_year(d: date, contract_month: int) -> int:
     """Determine the 'contract year' for a given date and delivery month."""
     if d.month > contract_month:
         return d.year + 1
     return d.year
+
+
+def _get_national_spot_map(db: Session) -> Dict[date, float]:
+    """获取全国现货均价（元/公斤）。与旧版一致：优先钢联分省区猪价中国；缺日用涌益填补以保障整年覆盖。
+    优先级：hog_avg_price(GANGLIAN)=钢联中国 > 全国均价(YONGYI)=涌益日度汇总。"""
+    result: Dict[date, float] = {}
+    # 1. 钢联分省区猪价中国（与旧版 fact_observation 分省区猪价 中国列一致）
+    rows = db.execute(text("""
+        SELECT trade_date, value FROM fact_price_daily
+        WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN' AND value IS NOT NULL
+        ORDER BY trade_date
+    """)).fetchall()
+    for r in rows:
+        result[r[0]] = float(r[1])
+    # 2. 涌益全国均价填补钢联缺失的日期（确保 2022 等整年有数据）
+    for pt, src in [("全国均价", "YONGYI"), ("标猪均价", "YONGYI")]:
+        rows = db.execute(text("""
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = :pt AND region_code = 'NATION' AND source = :src AND value IS NOT NULL
+            ORDER BY trade_date
+        """), {"pt": pt, "src": src}).fetchall()
+        for r in rows:
+            if r[0] not in result:
+                result[r[0]] = float(r[1])
+    if result:
+        return result
+    rows = db.execute(text("""
+        SELECT trade_date, value FROM fact_price_daily
+        WHERE region_code = 'NATION' AND value IS NOT NULL ORDER BY trade_date
+    """)).fetchall()
+    return {r[0]: float(r[1]) for r in rows} if rows else {}
 
 
 @router.get("/premium/v2", response_model=PremiumResponseV2)
@@ -672,78 +724,52 @@ async def get_premium_v2(
     current_user: SysUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """升贴水 V2 — 按合约月份返回期货结算价、现货均价、升贴水"""
+    """升贴水 V2 — fact_futures_daily(4.1盘面结算价) + fact_price_daily(优先钢联分省区猪价中国，缺日用涌益填补) 实时计算"""
     contract_months = [contract_month] if contract_month else [1, 3, 5, 7, 9, 11]
     is_seasonal = view_type == "季节性"
+
+    # 现货：优先钢联分省区猪价中国，缺日用涌益全国均价填补（保障整年覆盖）
+    spot_map = _get_national_spot_map(db)
+    if not spot_map:
+        return PremiumResponseV2(series=[], region_premiums=dict(REGION_PREMIUM_ADJUSTMENTS), update_time=None)
 
     all_series: List[PremiumSeriesV2] = []
 
     for cm in contract_months:
         month_str = f"{cm:02d}"
 
-        # 1. Get settle prices from fact_futures_basis
+        # 期货结算价：fact_futures_daily（4.1 盘面结算价.xlsx），元/吨，按持仓量最大选合约
         settle_sql = """
-            SELECT trade_date, value FROM fact_futures_basis
-            WHERE indicator_code = :settle_code AND region_code = 'NATION'
-            ORDER BY trade_date
+            SELECT trade_date, contract_code, settle, open_interest
+            FROM fact_futures_daily WHERE contract_code LIKE :pat ORDER BY trade_date
         """
-        settle_rows = db.execute(text(settle_sql), {"settle_code": f"settle_{month_str}"}).fetchall()
-        settle_map = {r[0]: float(r[1]) for r in settle_rows if r[1] is not None}
+        settle_rows = db.execute(text(settle_sql), {"pat": f"%{month_str}"}).fetchall()
+        date_best: Dict[date, tuple] = {}
+        for r in settle_rows:
+            td, cc, settle_val, oi = r[0], r[1], r[2], r[3] or 0
+            if settle_val is None:
+                continue
+            if td not in date_best or oi > date_best[td][1]:
+                date_best[td] = (float(settle_val), oi)
+        # settle 元/吨 → 元/公斤 用于计算
+        settle_map = {td: v[0] / 1000.0 for td, v in date_best.items()}
 
-        # 2. Get spot avg prices from fact_futures_basis
-        spot_sql = """
-            SELECT trade_date, value FROM fact_futures_basis
-            WHERE indicator_code = :spot_code AND region_code = 'NATION'
-            ORDER BY trade_date
-        """
-        spot_rows = db.execute(text(spot_sql), {"spot_code": f"spot_avg_{month_str}"}).fetchall()
-        spot_map = {r[0]: float(r[1]) for r in spot_rows if r[1] is not None}
-
-        # Fallback: if no spot data from fact_futures_basis (e.g. LH01),
-        # use national average hog price from fact_price_daily
-        if not spot_map and settle_map:
-            spot_fallback_sql = """
-                SELECT trade_date, value FROM fact_price_daily
-                WHERE price_type = 'hog_avg_price' AND region_code = 'NATION'
-                  AND value IS NOT NULL
-                ORDER BY trade_date
-            """
-            spot_fb_rows = db.execute(text(spot_fallback_sql)).fetchall()
-            spot_map = {r[0]: float(r[1]) for r in spot_fb_rows if r[1] is not None}
-
-        # 3. Get premium from fact_futures_basis
-        premium_sql = """
-            SELECT trade_date, value FROM fact_futures_basis
-            WHERE indicator_code = :prem_code AND region_code = 'NATION'
-            ORDER BY trade_date
-        """
-        premium_rows = db.execute(text(premium_sql), {"prem_code": f"premium_{month_str}"}).fetchall()
-        premium_map = {r[0]: float(r[1]) for r in premium_rows if r[1] is not None}
-
-        # Merge all dates
-        all_dates = sorted(set(settle_map.keys()) | set(spot_map.keys()) | set(premium_map.keys()))
+        all_dates = sorted(set(settle_map.keys()) | set(spot_map.keys()))
         if not all_dates:
             continue
 
         data_points: List[PremiumDataPointV2] = []
         for d in all_dates:
-            settle_val = settle_map.get(d)
+            settle_kg = settle_map.get(d)
             spot_val = spot_map.get(d)
-            prem_val = premium_map.get(d)
-
-            # If we have settle & spot but no premium from DB, compute it
-            if prem_val is None and settle_val is not None and spot_val is not None:
-                prem_val = round(settle_val - spot_val, 2)
-
-            # Calculate premium ratio if we have both settle and spot
-            prem_ratio = None
-            if settle_val and spot_val and spot_val != 0:
-                prem_ratio = round((settle_val - spot_val) / spot_val * 100, 2)
-
+            # 升贴水 = 期货(元/公斤) - 现货(元/公斤)，实时计算
+            prem_val = round(settle_kg - spot_val, 2) if (settle_kg is not None and spot_val is not None) else None
+            # 升贴水比率 = 升贴水/现货×100%（行业标准，与参考站一致）
+            prem_ratio = round(prem_val / spot_val * 100, 2) if (spot_val and spot_val != 0 and prem_val is not None) else None
             year = _get_contract_year(d, cm)
             data_points.append(PremiumDataPointV2(
                 date=d.isoformat(),
-                futures_settle=settle_val,
+                futures_settle=settle_kg,
                 spot_price=spot_val,
                 premium=prem_val,
                 premium_ratio=prem_ratio,
@@ -752,19 +778,13 @@ async def get_premium_v2(
 
         all_series.append(PremiumSeriesV2(
             contract_month=cm,
-            contract_name=f"LH{month_str}",
+            contract_name=f"{month_str}合约",
             region=region or "全国均价",
             data=data_points,
         ))
 
-    # Region premiums (latest values)
-    region_premiums: Dict[str, float] = {}
-    for rname, rcode in REGION_MAP.items():
-        if rname == "全国均价":
-            continue
-        # Use latest premium data for each region (from fact_futures_basis)
-        # For simplicity, compute from spot_price_kg region differences
-        pass  # Region premium data not available per region in current schema
+    # 全国均价区域升贴水（交割地市升贴水，用于展示各省相对全国的调整值）
+    region_premiums: Dict[str, float] = dict(REGION_PREMIUM_ADJUSTMENTS)
 
     update_time = None
     if all_series and all_series[0].data:
@@ -862,71 +882,194 @@ class CalendarSpreadResponse(BaseModel):
     update_time: Optional[str] = None
 
 
+# 月间价差对列表（与前端展示一致：03-05、05-07、07-09、09-11、11-01、01-03）
+_CALENDAR_SPREAD_PAIRS = ["03_05", "05_07", "07_09", "09_11", "11_01", "01_03"]
+
+
+def _get_spread_date_range(near_month: int, far_month: int, year: int) -> tuple[date, date]:
+    """获取月间价差的时间范围（与旧版 101e563 一致）。
+    X-Y 价差，时间从 (Y+1)月1日 至 (X-1)月最后日。如 03-05：6月1日～次年2月末。
+    """
+    start_month = (far_month % 12) + 1  # Y+1 月
+    end_month = near_month - 1 if near_month > 1 else 12  # X-1 月
+    cross_year = start_month > end_month
+    if cross_year:
+        start_year = year - 1
+        end_year = year
+    else:
+        start_year = end_year = year
+    start_date = date(start_year, start_month, 1)
+    if end_month == 12:
+        end_date = date(end_year, 12, 31)
+    else:
+        end_date = date(end_year, end_month + 1, 1) - timedelta(days=1)
+    return start_date, end_date
+
+
+def _in_spread_range(td: date, near_month: int, far_month: int) -> bool:
+    """判断日期是否落在任意年份的价差时间范围内（跨年周期之间自然断开）。"""
+    start_month = (far_month % 12) + 1
+    end_month = near_month - 1 if near_month > 1 else 12
+    cross_year = start_month > end_month
+    y, m = td.year, td.month
+    if cross_year:
+        if m >= start_month:
+            return True  # 6-12 月
+        if m <= end_month:
+            return True  # 1-2 月
+        return False  # 3-5 月为 gap
+    return start_month <= m <= end_month
+
+
+def _parse_contract_ym(cc: str) -> int:
+    """解析合约代码为 year*12+month，如 LH2303 -> 2023*12+3"""
+    if not cc or not cc.upper().startswith("LH") or len(cc) < 6:
+        return 999999
+    try:
+        yy = int(cc[2:4])
+        mm = int(cc[4:6])
+        return (2000 + yy if yy >= 22 else 1900 + yy) * 12 + mm
+    except (ValueError, IndexError):
+        return 999999
+
+
+def _far_contract_for_spread(near_cc: str, near_month: int, far_month: int) -> str:
+    """根据近月合约推导对应的远月合约（形成有效价差对）。"""
+    ym = _parse_contract_ym(near_cc)
+    if ym >= 999999:
+        return ""
+    y = ym // 12
+    if far_month < near_month:  # 跨年如 11-01
+        yy = y + 1
+    else:
+        yy = y
+    return f"LH{str(yy)[2:4]}{far_month:02d}"
+
+
+def _build_one_spread_series(
+    db: Session,
+    spread_pair: str,
+    region_code: str,
+) -> tuple[list, Optional[str]]:
+    """月间价差：全部用 fact_futures_daily，价差 = 远月 - 近月（元/公斤），与服务器一致。
+    按持仓量最大选合约，按 get_spread_date_range 过滤，跨年周期之间自然断开。"""
+    parts = spread_pair.split("_")
+    if len(parts) != 2:
+        return [], None
+    near_month = int(parts[0])
+    far_month = int(parts[1])
+    near_str = f"{near_month:02d}"
+    far_str = f"{far_month:02d}"
+
+    # 全部用 fact_futures_daily（03-05 与其它价差对一致）
+    near_sql = """
+        SELECT trade_date, settle, open_interest FROM fact_futures_daily
+        WHERE contract_code LIKE :pat
+        ORDER BY trade_date
+    """
+    far_sql = """
+        SELECT trade_date, settle, open_interest FROM fact_futures_daily
+        WHERE contract_code LIKE :pat
+        ORDER BY trade_date
+    """
+    near_rows = db.execute(text(near_sql), {"pat": f"%{near_str}"}).fetchall()
+    far_rows = db.execute(text(far_sql), {"pat": f"%{far_str}"}).fetchall()
+
+    date_dict_near: dict = {}
+    for r in near_rows:
+        td = r[0]
+        if not _in_spread_range(td, near_month, far_month):
+            continue
+        if td not in date_dict_near:
+            date_dict_near[td] = []
+        date_dict_near[td].append({"settle": r[1], "oi": r[2] or 0})
+
+    date_dict_far: dict = {}
+    for r in far_rows:
+        td = r[0]
+        if not _in_spread_range(td, near_month, far_month):
+            continue
+        if td not in date_dict_far:
+            date_dict_far[td] = []
+        date_dict_far[td].append({"settle": r[1], "oi": r[2] or 0})
+
+    common_dates = sorted(set(date_dict_near.keys()) & set(date_dict_far.keys()))
+    data = []
+    for td in common_dates:
+        near_best = max(date_dict_near[td], key=lambda x: x["oi"])
+        far_best = max(date_dict_far[td], key=lambda x: x["oi"])
+        ns = float(near_best["settle"]) if near_best["settle"] else None
+        fs = float(far_best["settle"]) if far_best["settle"] else None
+        near_kg = ns / 1000.0 if ns is not None else None
+        far_kg = fs / 1000.0 if fs is not None else None
+        spread = (far_kg - near_kg) if (near_kg is not None and far_kg is not None) else None
+        data.append(CalendarSpreadDataPoint(
+            date=td.isoformat(),
+            near_contract_settle=near_kg,
+            far_contract_settle=far_kg,
+            spread=spread,
+        ))
+    return data, data[-1].date if data else None
+
+
 @router.get("/calendar-spread", response_model=CalendarSpreadResponse)
 async def get_calendar_spread(
-    spread_pair: Optional[str] = Query(None, description="月间价差对，如 03_05"),
+    spread_pair: Optional[str] = Query(None, description="月间价差对，如 03_05；为空则返回全部"),
+    region: Optional[str] = Query("全国均价", description="区域名称"),
     start_year: Optional[int] = Query(None),
     end_year: Optional[int] = Query(None),
     current_user: SysUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """月间价差查询"""
-    # Default spread pair
-    if not spread_pair:
-        spread_pair = "03_05"
+    """月间价差查询：无 spread_pair 时返回全部价差对（03-05、05-07 等），供前端全部日期/季节性图使用"""
+    region_code = REGION_MAP.get(region or "全国均价", "NATION")
 
-    parts = spread_pair.split("_")
-    if len(parts) != 2:
-        raise HTTPException(400, "spread_pair 格式错误，应为 MM_MM 如 03_05")
+    if spread_pair:
+        spread_pair = spread_pair.replace("-", "_")
+        parts = spread_pair.split("_")
+        if len(parts) != 2:
+            raise HTTPException(400, "spread_pair 格式错误，应为 MM_MM 或 MM-MM 如 03_05")
+        pairs_to_fetch = [spread_pair]
+    else:
+        pairs_to_fetch = _CALENDAR_SPREAD_PAIRS
 
-    near_month = int(parts[0])
-    far_month = int(parts[1])
-    indicator_code = f"spread_{spread_pair}"
+    series_list: list = []
+    latest_update: Optional[str] = None
 
-    sql = """
-        SELECT trade_date, value FROM fact_futures_basis
-        WHERE indicator_code = :code AND region_code = 'NATION'
-        ORDER BY trade_date
-    """
-    rows = db.execute(text(sql), {"code": indicator_code}).fetchall()
-
-    # Also get settle prices for near and far contracts
-    near_sql = """SELECT trade_date, value FROM fact_futures_basis
-        WHERE indicator_code = :code ORDER BY trade_date"""
-    far_sql = """SELECT trade_date, value FROM fact_futures_basis
-        WHERE indicator_code = :code ORDER BY trade_date"""
-    near_rows = db.execute(text(near_sql), {"code": f"settle_{parts[0]}"}).fetchall()
-    far_rows = db.execute(text(far_sql), {"code": f"settle_{parts[1]}"}).fetchall()
-
-    near_map = {r[0]: float(r[1]) for r in near_rows if r[1] is not None}
-    far_map = {r[0]: float(r[1]) for r in far_rows if r[1] is not None}
-
-    data = []
-    for r in rows:
-        d = r[0]
-        data.append(CalendarSpreadDataPoint(
-            date=d.isoformat(),
-            near_contract_settle=near_map.get(d),
-            far_contract_settle=far_map.get(d),
-            spread=float(r[1]) if r[1] is not None else None,
-        ))
-
-    update_time = data[-1].date if data else None
-
-    return CalendarSpreadResponse(
-        series=[CalendarSpreadSeries(
-            spread_name=f"LH{parts[0]}-LH{parts[1]}",
+    for pair in pairs_to_fetch:
+        data, update_time = _build_one_spread_series(db, pair, region_code)
+        if not data:
+            continue
+        parts = pair.split("_")
+        near_month = int(parts[0])
+        far_month = int(parts[1])
+        series_list.append(CalendarSpreadSeries(
+            spread_name=f"{parts[0]}-{parts[1]}价差",
             near_month=near_month,
             far_month=far_month,
             data=data,
-        )] if data else [],
-        update_time=update_time,
-    )
+        ))
+        if update_time and (latest_update is None or update_time > latest_update):
+            latest_update = update_time
+
+    return CalendarSpreadResponse(series=series_list, update_time=latest_update)
 
 
 # ---------------------------------------------------------------------------
 # 11. /warehouse-receipt/*  -- warehouse receipt data
 # ---------------------------------------------------------------------------
+
+# 注册仓单图例显示名：原始仓库名 -> 前端图例显示名
+WAREHOUSE_LEGEND_DISPLAY = {
+    "粮肉食库": "中粮",
+    "中粮肉食库": "中粮",
+    "德康农牧库": "德康",
+}
+
+
+def _warehouse_display_name(raw_name: str) -> str:
+    return WAREHOUSE_LEGEND_DISPLAY.get(raw_name, raw_name)
+
 
 class WarehouseReceiptChartPoint(BaseModel):
     date: str
@@ -984,16 +1127,16 @@ async def get_warehouse_receipt_chart(
             date_map[d] = {}
         date_map[d][ind] = val
 
-        # Track cumulative for top enterprises
+        # Track cumulative for top enterprises (by raw name)
         if ind != "warehouse_receipt_total":
             name = ind.replace("warehouse_receipt_", "")
             enterprise_totals[name] = enterprise_totals.get(name, 0) + val
 
-    # Find top 2 enterprises
+    # Find top 2 enterprises, 返回图例显示名（粮肉食库->中粮, 德康农牧库->德康）
     sorted_ent = sorted(enterprise_totals.items(), key=lambda x: -x[1])
-    top2 = [e[0] for e in sorted_ent[:2]]
+    top2 = [_warehouse_display_name(e[0]) for e in sorted_ent[:2]]
 
-    # Build response
+    # Build response：enterprises 使用显示名作为 key，便于图例一致
     data = []
     sorted_dates = sorted(date_map.keys())
     for d in sorted_dates:
@@ -1002,7 +1145,8 @@ async def get_warehouse_receipt_chart(
         enterprises = {}
         for k, v in entries.items():
             if k != "warehouse_receipt_total":
-                enterprises[k.replace("warehouse_receipt_", "")] = v
+                raw_name = k.replace("warehouse_receipt_", "")
+                enterprises[_warehouse_display_name(raw_name)] = v
         data.append(WarehouseReceiptChartPoint(
             date=d.isoformat(), total=total, enterprises=enterprises,
         ))
@@ -1069,6 +1213,38 @@ class WarehouseReceiptRawResponse(BaseModel):
     rows: List[WarehouseReceiptRawRow] = []
 
 
+# 企业 -> 集团汇总仓在 DB 中的名称（用于企业仓单统计「企业」列）
+ENTERPRISE_GROUP_WAREHOUSE = {
+    "德康": "德康农牧库",
+    "中粮": "粮肉食库",
+}
+# 中粮集团仓可能出现的名称（图例/数据源命名不一）
+COFCO_GROUP_NAMES = ("粮肉食库", "中粮肉食库")
+
+
+def _is_group_warehouse(wh_name: str, enterprise: str) -> bool:
+    """是否为该企业的集团汇总仓（如 德康农牧库、粮肉食库/中粮肉食库）"""
+    if not wh_name or not enterprise:
+        return False
+    if enterprise == "中粮":
+        return wh_name in COFCO_GROUP_NAMES
+    if enterprise in ENTERPRISE_GROUP_WAREHOUSE:
+        return wh_name == ENTERPRISE_GROUP_WAREHOUSE[enterprise]
+    return wh_name == f"{enterprise}农牧库" or wh_name == f"{enterprise}库"
+
+
+def _sub_warehouse_short_name(wh_name: str, enterprise: str) -> str:
+    """子仓库简称：常熟德康库 -> 常熟，江安德康库 -> 江安（按企业显示名截取地名）"""
+    if not wh_name:
+        return ""
+    # 用企业名分割，取前半作为地名；若企业名在原始名中不存在则用原始名
+    for sep in (enterprise, "德康", "中粮"):
+        if sep in wh_name:
+            before = wh_name.split(sep)[0].strip()
+            return before.rstrip("库").strip() or wh_name
+    return wh_name
+
+
 @router.get("/warehouse-receipt/raw", response_model=WarehouseReceiptRawResponse)
 async def get_warehouse_receipt_raw(
     enterprise: str = Query(..., description="企业名"),
@@ -1077,9 +1253,10 @@ async def get_warehouse_receipt_raw(
     current_user: SysUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """仓单原始数据 - 按企业名模糊匹配所有子仓库，每个仓库作为一列"""
-    # Use LIKE to match all warehouses belonging to the enterprise
-    like_pattern = f"warehouse_receipt_%{enterprise}%"
+    """仓单原始数据 - 按企业名模糊匹配，列顺序：总仓单量、企业名(集团汇总)、子仓库简称(常熟/江安/泸州等)"""
+    # 德康：匹配 德康农牧库、常熟德康库 等；中粮：匹配 粮肉食库、中粮肉食库
+    like_search = "德康" if enterprise == "德康" else ("粮肉食" if enterprise == "中粮" else (ENTERPRISE_GROUP_WAREHOUSE.get(enterprise) or enterprise))
+    like_pattern = f"warehouse_receipt_%{like_search}%"
     sql = "SELECT trade_date, indicator_code, value FROM fact_futures_basis WHERE indicator_code LIKE :pat"
     params: dict = {"pat": like_pattern}
     if start_date:
@@ -1092,7 +1269,6 @@ async def get_warehouse_receipt_raw(
 
     rows = db.execute(text(sql), params).fetchall()
 
-    # Collect all warehouse names and pivot into date → {warehouse: value}
     date_map: Dict[str, Dict[str, Optional[float]]] = {}
     warehouse_names: list = []
     for r in rows:
@@ -1105,21 +1281,34 @@ async def get_warehouse_receipt_raw(
             date_map[d] = {}
         date_map[d][wh_name] = val
 
-    # Sort warehouse names for consistent column order
-    warehouse_names = sorted(warehouse_names)
+    # 区分集团汇总仓与子仓库；子仓库按简称排序。中粮优先取「中粮肉食库」为集团仓
+    group_wh = None
+    sub_list: List[tuple] = []  # (full_name, short_name)
+    for wh in warehouse_names:
+        if _is_group_warehouse(wh, enterprise):
+            group_wh = wh
+        else:
+            short = _sub_warehouse_short_name(wh, enterprise)
+            if not short:
+                short = wh
+            sub_list.append((wh, short))
+    if enterprise == "中粮" and "中粮肉食库" in warehouse_names:
+        group_wh = "中粮肉食库"
+    sub_list.sort(key=lambda x: x[1])
 
-    # Build rows with per-warehouse values + 合计 column
+    # 列顺序：总仓单量、企业名、子仓库简称...
+    columns = ["总仓单量", enterprise] + [s[1] for s in sub_list]
+
     data = []
-    for d in sorted(date_map.keys()):
+    for d in sorted(date_map.keys(), reverse=True):
         row_vals = date_map[d]
         total = sum(v for v in row_vals.values() if v is not None)
-        values: Dict[str, Optional[float]] = {"合计": round(total, 2) if total else None}
-        for wh in warehouse_names:
-            values[wh] = row_vals.get(wh)
+        values: Dict[str, Optional[float]] = {"总仓单量": round(total, 2) if total else None}
+        values[enterprise] = float(row_vals[group_wh]) if group_wh and row_vals.get(group_wh) is not None else None
+        for full_wh, short_wh in sub_list:
+            values[short_wh] = row_vals.get(full_wh)
         data.append(WarehouseReceiptRawRow(date=d, values=values))
 
-    # columns[0] = enterprise name (skipped by frontend's slice(1)), rest = data columns
-    columns = [enterprise, "合计"] + warehouse_names
     return WarehouseReceiptRawResponse(
         enterprise=enterprise, columns=columns, rows=data,
     )
