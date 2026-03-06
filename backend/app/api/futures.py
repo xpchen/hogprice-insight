@@ -678,10 +678,29 @@ REGION_PREMIUM_ADJUSTMENTS: Dict[str, float] = {
 
 
 def _get_contract_year(d: date, contract_month: int) -> int:
-    """Determine the 'contract year' for a given date and delivery month."""
-    if d.month > contract_month:
+    """Determine the 'contract year' for a given date and delivery month (用于升贴水图例：以合约结束日所在年份)."""
+    # 合约定价周期：(contract_month+1)月1日～(contract_month-1)月最后日，如 11 合约为 12月1日～次年10月31日
+    start_m = (contract_month + 1) if contract_month < 12 else 1
+    end_m = (contract_month - 1) if contract_month > 1 else 12
+    if start_m > end_m:  # 跨年：如 11 → 12,1..10
+        if d.month == 12:
+            return d.year + 1
+        if d.month <= end_m:
+            return d.year
+        return d.year + 1  # 1..start_m-1 为上一周期末尾，这里仅 11 月会被过滤，不进入
+    else:
+        if d.month >= start_m and d.month <= end_m:
+            return d.year if contract_month != 1 else d.year + 1
         return d.year + 1
-    return d.year
+
+
+def _premium_valid_months(contract_month: int) -> set:
+    """升贴水合约定价周期内的月份集合，如 11 合约为 {12,1,2,...,10}（不含 11 月）."""
+    start_m = (contract_month + 1) if contract_month < 12 else 1
+    end_m = (contract_month - 1) if contract_month > 1 else 12
+    if start_m > end_m:
+        return set(range(1, end_m + 1)) | set(range(start_m, 13))
+    return set(range(start_m, end_m + 1))
 
 
 def _get_national_spot_map(db: Session) -> Dict[date, float]:
@@ -758,8 +777,11 @@ async def get_premium_v2(
         if not all_dates:
             continue
 
+        valid_months = _premium_valid_months(cm)
         data_points: List[PremiumDataPointV2] = []
         for d in all_dates:
+            if d.month not in valid_months:
+                continue
             settle_kg = settle_map.get(d)
             spot_val = spot_map.get(d)
             # 升贴水 = 期货(元/公斤) - 现货(元/公斤)，实时计算

@@ -311,15 +311,15 @@ const renderCharts = () => {
   }
 }
 
-// X月合约季节性区间：(X+1)月1日至(X-1)月最后日。03合约为4月1日～次年2月29日，2203即21年4月1日～22年2月29日；图例显示合约年+1
+// 合约定价周期：(contract_month+1)月1日～(contract_month-1)月最后日；图例以合约结束日所在年份显示（如 11 合约以 10 月 31 日年份）
 function getContractYear(dateStr: string, contractMonth: number): number {
   const d = new Date(dateStr)
   const month = d.getMonth() + 1
   const year = d.getFullYear()
-  const startMonth = contractMonth === 1 ? 2 : (contractMonth + 1) > 12 ? 1 : contractMonth + 1
-  const endMonth = contractMonth - 1 <= 0 ? 12 : contractMonth - 1
+  const startMonth = contractMonth === 1 ? 2 : contractMonth === 12 ? 1 : contractMonth + 1
+  const endMonth = contractMonth === 1 ? 12 : contractMonth - 1
   if (startMonth > endMonth) {
-    if (month >= startMonth && month <= 12) return year + 1
+    if (month === 12) return year + 1
     if (month >= 1 && month <= endMonth) return year
     return year + 1
   }
@@ -327,7 +327,7 @@ function getContractYear(dateStr: string, contractMonth: number): number {
   return year
 }
 function getDisplayYear(contractYear: number): number {
-  return contractYear + 1
+  return contractYear
 }
 
 // 左侧全部日期图固定三色：现货价格、合约价格、升贴水
@@ -398,7 +398,9 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       axisPointer: { type: 'cross' },
       formatter: (params: any) => {
         if (!Array.isArray(params)) return ''
-        let result = `<div style="margin-bottom: 4px;"><strong>${params[0].axisValue}</strong></div>`
+        const raw = params[0].axisValue
+        const dateLabel = raw != null ? (typeof raw === 'number' ? new Date(raw).toISOString().slice(0, 10) : String(raw).replace(/\s+\d{2}:\d{2}:\d{2}.*$/, '')) : ''
+        let result = `<div style="margin-bottom: 4px;"><strong>${dateLabel}</strong></div>`
         params.forEach((param: any) => {
           if (param.value !== null && param.value !== undefined) {
             const value = typeof param.value === 'number' ? param.value.toFixed(2) : param.value
@@ -423,7 +425,17 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       itemGap: 18
     },
     grid: { left: '3%', right: '4%', bottom: '15%', top: '22%', containLabel: true },
-    xAxis: { type: 'time', boundaryGap: false },
+    xAxis: {
+      type: 'time',
+      boundaryGap: false,
+      axisLabel: {
+        formatter: (value: string | number) => {
+          if (value == null) return ''
+          const str = typeof value === 'number' ? new Date(value).toISOString().slice(0, 10) : String(value).slice(0, 10)
+          return str
+        }
+      }
+    },
     yAxis: [
       { type: 'value', name: '价格', position: 'left', scale: true, ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } },
       { type: 'value', name: '升贴水', position: 'right', ...yAxisHideMinMaxLabel, axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) } }
@@ -448,7 +460,7 @@ const renderSeasonalChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
   const contractMonth = series.contract_month
   const yearMap = new Map<number, Array<typeof series.data[0]>>()
   series.data.forEach(point => {
-    const contractYear = getContractYear(point.date, contractMonth)
+    const contractYear = point.year != null ? point.year : getContractYear(point.date, contractMonth)
     if (!yearMap.has(contractYear)) yearMap.set(contractYear, [])
     yearMap.get(contractYear)!.push(point)
   })

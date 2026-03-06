@@ -536,7 +536,28 @@ async def get_region_spread_seasonality(
             {"st": spread_type_exact2},
         ).first()
     if not st_row:
-        # 降级到 LIKE
+        # 兼容历史错误拼写：spread_type 曾为 VARCHAR(32)，重庆被存成 CHONGQIN
+        if (r1_code, r2_code) == ("GUANGDONG", "CHONGQING"):
+            st_row = db.execute(
+                text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = 'region_spread_GUANGDONG_CHONGQIN' LIMIT 1"),
+            ).first()
+        elif (r2_code, r1_code) == ("GUANGDONG", "CHONGQING"):
+            st_row = db.execute(
+                text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = 'region_spread_CHONGQIN_GUANGDONG' LIMIT 1"),
+            ).first()
+    if not st_row:
+        # 前缀匹配：兼容其它拼写变体
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type LIKE :stl LIMIT 1"),
+            {"stl": f"region_spread_{r1_code}_{r2_code}%"},
+        ).first()
+    if not st_row:
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type LIKE :stl LIMIT 1"),
+            {"stl": f"region_spread_{r2_code}_{r1_code}%"},
+        ).first()
+    if not st_row:
+        # 降级到 LIKE 含两省 code
         spread_type_like = f"region_spread_%{r1_code}%{r2_code}%"
         st_row = db.execute(
             text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type LIKE :stl LIMIT 1"),
@@ -593,6 +614,24 @@ async def get_region_spread_changes(
         st_row = db.execute(
             text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = :st LIMIT 1"),
             {"st": spread_type_exact2},
+        ).first()
+    if not st_row and (r1_code, r2_code) == ("GUANGDONG", "CHONGQING"):
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = 'region_spread_GUANGDONG_CHONGQIN' LIMIT 1"),
+        ).first()
+    if not st_row and (r2_code, r1_code) == ("GUANGDONG", "CHONGQING"):
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type = 'region_spread_CHONGQIN_GUANGDONG' LIMIT 1"),
+        ).first()
+    if not st_row:
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type LIKE :stl LIMIT 1"),
+            {"stl": f"region_spread_{r1_code}_{r2_code}%"},
+        ).first()
+    if not st_row:
+        st_row = db.execute(
+            text("SELECT DISTINCT spread_type FROM fact_spread_daily WHERE spread_type LIKE :stl LIMIT 1"),
+            {"stl": f"region_spread_{r2_code}_{r1_code}%"},
         ).first()
     if not st_row:
         raise HTTPException(status_code=404, detail=f"未找到区域价差指标：{region_pair}")

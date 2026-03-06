@@ -164,13 +164,15 @@ const displayData = computed(() => {
   return filtered
 })
 
+// 固定区域顺序：与数据源一致（汇总→涌益/钢联→省份），避免表格列顺序紊乱
+const REGION_ORDER = ['全国CR20', '全国CR5', '涌益', '钢联', '广东', '四川', '贵州']
+
 const regionColumns = computed(() => {
   const set = new Set<string>()
   allData.value.forEach(item => set.add(item.region))
   return Array.from(set).sort((a, b) => {
-    const order = ['涌益', '钢联', '全国CR20', '全国CR5', '广东', '四川', '贵州']
-    const ia = order.indexOf(a)
-    const ib = order.indexOf(b)
+    const ia = REGION_ORDER.indexOf(a)
+    const ib = REGION_ORDER.indexOf(b)
     if (ia >= 0 && ib >= 0) return ia - ib
     if (ia >= 0) return -1
     if (ib >= 0) return 1
@@ -208,13 +210,8 @@ const regionMetricColumns = computed(() => {
   return cols
 })
 
-// 全部+全部时只显示到「贵州-计划完成率」（计划达成率），其后列不展示
-const displayRegionMetricColumns = computed(() => {
-  const cols = regionMetricColumns.value
-  const stopIndex = cols.findIndex(c => c.label === '贵州-计划完成率')
-  if (stopIndex === -1) return cols
-  return cols.slice(0, stopIndex + 1)
-})
+// 全部+全部时按固定区域顺序展示所有「区域-指标」列，不截断
+const displayRegionMetricColumns = computed(() => regionMetricColumns.value)
 
 const pivotedByRegionMetric = computed(() => {
   if (!isModeB.value) return []

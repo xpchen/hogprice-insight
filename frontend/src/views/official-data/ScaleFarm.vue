@@ -147,7 +147,7 @@ function isStandardDateCell(val: unknown): boolean {
   return !!s && /^\d{4}-\d{2}-\d{2}/.test(s)
 }
 
-/** 规范数据行：遇到格式不同的行（如 能繁-仔猪、大猪、出栏 等）则切断，后面全部不显示；时间倒序 */
+/** 规范数据行：遇到格式不同的行（如 能繁-仔猪、大猪、出栏 等）则切断，后面全部不显示；时间正序 */
 const displayRows = computed(() => {
   const rows = tableData.value?.rows ?? []
   const kept: (string | number | null)[][] = []
@@ -155,7 +155,7 @@ const displayRows = computed(() => {
     if (!isStandardDateCell(row?.[0])) break
     kept.push(row)
   }
-  return kept.sort((a, b) => String(b?.[0] || '').localeCompare(String(a?.[0] || '')))
+  return kept.sort((a, b) => String(a?.[0] || '').localeCompare(String(b?.[0] || '')))
 })
 
 /** 根据 merged_cells 和表头构建带合并信息的表头网格（仅两行表头，无第三行环比/同比；月度合并为一列） */

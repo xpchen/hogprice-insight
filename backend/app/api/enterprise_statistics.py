@@ -188,12 +188,14 @@ async def get_sichuan_daily(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """四川重点企业日度出栏。与 CR5/西南一致：优先用 西南汇总 sheet 的 实际成交(actual_volume)、成交率(deal_rate)，计划出栏仍用 四川 sheet 汇总。"""
+    """四川重点企业日度出栏。数据来自 西南汇总：D列=实际成交(日度出栏)、E列=成交率、F列=计划日均(计划出栏)。"""
     sd = _compute_start_date(months)
     output_rows = _query_aggregate(db, "SAMPLE", "actual_volume", "SICHUAN", sd)
     if not output_rows:
         output_rows = _query_region_sum(db, "SICHUAN", "actual_sales", sd)
-    plan_rows = _query_region_sum(db, "SICHUAN", "planned_volume", sd)
+    plan_rows = _query_aggregate(db, "SAMPLE", "planned_daily", "SICHUAN", sd)
+    if not plan_rows:
+        plan_rows = _query_region_sum(db, "SICHUAN", "planned_volume", sd)
     deal_rows = _query_aggregate(db, "SAMPLE", "deal_rate", "SICHUAN", sd)
     if not deal_rows:
         deal_rows = _query_region_avg(db, "SICHUAN", "deal_rate", sd)

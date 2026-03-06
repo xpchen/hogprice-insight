@@ -73,6 +73,15 @@ class ChartTimingAndCacheMiddleware(BaseHTTPMiddleware):
                     should_cache = False
             except Exception:
                 pass
+        # 不缓存空的毛白价差（避免导入新数据后仍返回旧缓存）
+        if should_cache and "/live-white-spread/dual-axis" in path:
+            try:
+                import json
+                data = json.loads(body.decode("utf-8"))
+                if isinstance(data, dict) and (not data.get("spread_data") and not data.get("ratio_data")):
+                    should_cache = False
+            except Exception:
+                pass
         if should_cache and not getattr(settings, "DISABLE_CHART_CACHE", False):
             db_write = SessionLocal()
             try:

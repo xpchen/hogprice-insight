@@ -41,6 +41,7 @@ QUICK_CHART_PRECOMPUTE_URLS = [
     {"path": "/api/v1/price-display/slaughter-price-trend/solar", "params": {}},
     {"path": "/api/v1/price-display/slaughter-price-trend/lunar-year", "params": {}},
     {"path": "/api/v1/price-display/region-spread/seasonality", "params": {}},
+    {"path": "/api/v1/price-display/live-white-spread/dual-axis", "params": {}},
     {"path": "/api/v1/price-display/industry-chain/seasonality", "params": {}},
     {"path": "/api/futures/premium/v2", "params": {}},
     {"path": "/api/futures/volatility", "params": {}},

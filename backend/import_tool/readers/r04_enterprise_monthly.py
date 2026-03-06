@@ -119,18 +119,20 @@ class EnterpriseMonthlyReader(BaseSheetReader):
         汇总: Row1=region groups; Row2=metric headers per region
         Row3+: col1=period(上旬/中旬/月度), col2=date, col3..=values
 
-        Region / metric columns:
+        D2 重点省份出栏统计仅录入 广东、四川、贵州，数据范围 B列:Q列（列2=日期，列3-17=三省指标）。
+        全国CR20(18-20)、全国CR5(21-22) 不录入。
+
+        Region / metric columns (仅录入 col3..17):
           广东 (col3..7): 出栏计划(3), 实际出栏量(4), 计划完成率(5), 均重(6), 销售均价(7)
           四川 (col8..12): 出栏计划(8), 实际出栏量(9), 计划完成率(10), 均重(11), 计划均重(12)
           贵州 (col13..17): 计划出栏量(13), 实际出栏量(14), 计划达成率(15), 实际均重(16), 计划均重(17)
-          全国CR20 (col18..20): 计划出栏量(18), 实际出栏量(19), 计划完成率(20)
-          全国CR5 (col21..22): 计划出栏量(21), 实际出栏量(22)
         """
         if "汇总" not in wb.sheetnames:
             return []
         ws = wb["汇总"]
         records = []
 
+        # 仅广东、四川、贵州，对应 Excel B:Q（列2为日期，列3-17为数据）
         COL_MAP = {
             3:  ("GUANGDONG", "TOTAL", "planned_output", "万头"),
             4:  ("GUANGDONG", "TOTAL", "actual_output", "万头"),
@@ -147,11 +149,6 @@ class EnterpriseMonthlyReader(BaseSheetReader):
             15: ("GUIZHOU", "TOTAL", "plan_completion_rate", "%"),
             16: ("GUIZHOU", "TOTAL", "avg_weight", "公斤"),
             17: ("GUIZHOU", "TOTAL", "planned_avg_weight", "公斤"),
-            18: ("NATION", "CR20", "planned_output", "万头"),
-            19: ("NATION", "CR20", "actual_output", "万头"),
-            20: ("NATION", "CR20", "plan_completion_rate", "%"),
-            21: ("NATION", "CR5", "planned_output", "万头"),
-            22: ("NATION", "CR5", "actual_output", "万头"),
         }
 
         for row in range(3, ws.max_row + 1):

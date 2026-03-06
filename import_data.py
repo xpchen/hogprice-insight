@@ -54,21 +54,7 @@ CACHE_PREFIXES_TO_CLEAR = [
     "/api/futures/calendar-spread",
 ]
 
-# ── 预热 URL：导入后需要重新计算并缓存的接口 ──
-WARM_UP_URLS = [
-    {"path": "/api/v1/price-display/national-price/seasonality", "params": {}},
-    {"path": "/api/v1/price-display/fat-std-spread/seasonality", "params": {}},
-    {"path": "/api/v1/price-display/price-and-spread", "params": {}},
-    {"path": "/api/v1/price-display/price-changes", "params": {"metric_type": "price"}},
-    {"path": "/api/v1/price-display/price-changes", "params": {"metric_type": "spread"}},
-    {"path": "/api/v1/price-display/slaughter/lunar", "params": {}},
-    {"path": "/api/v1/price-display/slaughter-price-trend/solar", "params": {}},
-    {"path": "/api/v1/price-display/slaughter-price-trend/lunar-year", "params": {}},
-    # region-spread/seasonality 和 industry-chain/seasonality 需要用户选择参数，不预热
-    {"path": "/api/futures/premium/v2", "params": {}},
-    {"path": "/api/futures/volatility", "params": {}},
-    {"path": "/api/futures/calendar-spread", "params": {}},
-]
+# 预热由后端内部 API 完成，URL 列表见 backend/app/core/quick_chart_config.py QUICK_CHART_PRECOMPUTE_URLS
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -185,7 +171,7 @@ def _http_get(url: str, timeout: float = 120.0, headers: dict | None = None) -> 
             req.add_header(k, v)
     try:
         resp = urlopen(req, timeout=timeout)
-        _ = resp.read()  # 读完响应体以触发服务端缓存写入
+        _ = resp.read()
         return resp.status
     except HTTPError as e:
         return e.code
@@ -194,57 +180,39 @@ def _http_get(url: str, timeout: float = 120.0, headers: dict | None = None) -> 
 
 
 def warm_up_cache():
-    """通过 HTTP 请求本地后端来预热缓存"""
-    from urllib.parse import urlencode
-
-    # 构建内部认证 header
+    """通过内部 API 在后台直接刷新缓存（清空后按配置重新计算并写入），无需通过 Web。"""
     secret = _get_internal_secret()
-    auth_headers = {"X-Quick-Chart-Secret": secret} if secret else {}
-
-    print(f"\n  预热缓存 (后端: {BASE_URL})...")
+    print(f"\n  刷新缓存 (后端: {BASE_URL}, 内部 API)...")
     if not secret:
-        print("    ⚠ 未配置 QUICK_CHART_INTERNAL_SECRET，预热请求可能被 401 拒绝")
+        print("    ⚠ 未配置 QUICK_CHART_INTERNAL_SECRET，无法调用内部 API，跳过预热")
+        return 0
 
-    # 先测试后端是否可达
     try:
         _http_get(f"{BASE_URL}/health", timeout=5.0)
     except Exception:
-        print("    ⚠ 后端不可达，跳过缓存预热")
+        print("    ⚠ 后端不可达，跳过缓存刷新")
         print(f"    请确保后端已启动: cd backend && uvicorn main:app --port 8000")
         return 0
 
-    success = 0
-    errors = 0
-    total = len(WARM_UP_URLS)
-
-    for idx, item in enumerate(WARM_UP_URLS, 1):
-        path = item["path"]
-        params = item.get("params") or {}
-        display = path
-        if params:
-            display += "?" + urlencode(params)
-
-        url = f"{BASE_URL}{path}"
-        if params:
-            url += "?" + urlencode(params)
-
+    url = f"{BASE_URL}/api/internal/refresh-chart-cache"
+    req = __import__("urllib.request", fromlist=["Request"]).Request(
+        url, data=None, method="POST", headers={"X-Quick-Chart-Secret": secret}
+    )
+    try:
         t1 = time.time()
-        try:
-            status = _http_get(url, timeout=120.0, headers=auth_headers)
-            elapsed = time.time() - t1
-            if 200 <= status < 300:
-                print(f"    [{idx}/{total}] {display} ✓ ({elapsed:.1f}s)")
-                success += 1
-            else:
-                print(f"    [{idx}/{total}] {display} ✗ HTTP {status} ({elapsed:.1f}s)")
-                errors += 1
-        except Exception as e:
-            elapsed = time.time() - t1
-            print(f"    [{idx}/{total}] {display} ✗ ({elapsed:.1f}s) {e}")
-            errors += 1
-
-    print(f"    预热完成: {success} 成功, {errors} 失败")
-    return success
+        resp = __import__("urllib.request", fromlist=["urlopen"]).urlopen(req, timeout=120.0)
+        body = resp.read().decode("utf-8")
+        elapsed = time.time() - t1
+        if 200 <= resp.status < 300:
+            import json
+            data = json.loads(body)
+            print(f"    清除 {data.get('cleared', 0)} 条，重新计算 {data.get('computed', 0)} 条 ({elapsed:.1f}s)")
+            return data.get("computed", 0)
+        print(f"    ✗ HTTP {resp.status} ({elapsed:.1f}s)")
+        return 0
+    except Exception as e:
+        print(f"    调用刷新接口失败: {e}")
+        return 0
 
 
 def main():

@@ -243,6 +243,17 @@ class GanglianDailyReader(BaseSheetReader):
 
         wb.close()
 
+        # 毛白价差：每次导入前删除库中已有钢联毛白价差，再插入本次读取的数据，使「同日期数据更新」能生效（增量导入不会覆盖已有日期）
+        if results["fact_spread_daily"]:
+            from sqlalchemy import text
+            with self.engine.connect() as conn:
+                deleted = conn.execute(
+                    text("DELETE FROM fact_spread_daily WHERE source = 'GANGLIAN' AND spread_type = 'mao_bai_spread'")
+                )
+                conn.commit()
+                if deleted.rowcount and deleted.rowcount > 0:
+                    logger.info(f"  已清除库中钢联毛白价差 {deleted.rowcount} 条，将插入本次读取数据")
+
         # 汇总日志
         for tbl, recs in results.items():
             logger.info(f"  {tbl}: {len(recs)} records")

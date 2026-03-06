@@ -234,8 +234,9 @@ class EnterpriseProvinceReader(BaseSheetReader):
 
         METRIC_MAP = {
             3: ("SICHUAN", "listed_volume", "头"),
-            4: ("SICHUAN", "actual_volume", "头"),
-            5: ("SICHUAN", "deal_rate", "%"),
+            4: ("SICHUAN", "actual_volume", "头"),   # D列 实际成交 → 日度出栏
+            5: ("SICHUAN", "deal_rate", "%"),       # E列 成交率
+            6: ("SICHUAN", "planned_daily", "头"),  # F列 计划日均 → 计划出栏
             8: ("SICHUAN", "ms_price", "元/公斤"),
             9: ("GUANGXI", "listed_volume", "头"),
             10: ("GUANGXI", "actual_volume", "头"),

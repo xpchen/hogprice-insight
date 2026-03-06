@@ -101,20 +101,54 @@ def _parse_company_display(company_code: str) -> str:
     return f"{prov}{name}" if prov else name
 
 
+def _get_national_price_by_date(db: Session, start_date: date, end_date: date) -> Dict[date, float]:
+    """全国现货均价（元/公斤）按日期。优先钢联中国，缺日用涌益全国均价/标猪均价填补。"""
+    result: Dict[date, float] = {}
+    rows = db.execute(text("""
+        SELECT trade_date, value FROM fact_price_daily
+        WHERE price_type = 'hog_avg_price' AND region_code = 'NATION' AND source = 'GANGLIAN'
+          AND trade_date >= :sd AND trade_date <= :ed AND value IS NOT NULL
+        ORDER BY trade_date
+    """), {"sd": start_date, "ed": end_date}).fetchall()
+    for r in rows:
+        result[r[0]] = float(r[1])
+    for pt, src in [("全国均价", "YONGYI"), ("标猪均价", "YONGYI")]:
+        rows = db.execute(text("""
+            SELECT trade_date, value FROM fact_price_daily
+            WHERE price_type = :pt AND region_code = 'NATION' AND source = :src
+              AND trade_date >= :sd AND trade_date <= :ed AND value IS NOT NULL
+            ORDER BY trade_date
+        """), {"pt": pt, "src": src, "sd": start_date, "ed": end_date}).fetchall()
+        for r in rows:
+            if r[0] not in result:
+                result[r[0]] = float(r[1])
+    if result:
+        return result
+    rows = db.execute(text("""
+        SELECT trade_date, value FROM fact_price_daily
+        WHERE region_code = 'NATION' AND trade_date >= :sd AND trade_date <= :ed AND value IS NOT NULL
+        ORDER BY trade_date
+    """), {"sd": start_date, "ed": end_date}).fetchall()
+    return {r[0]: float(r[1]) for r in rows} if rows else {}
+
+
 @router.get("/group-enterprise-price", response_model=GroupPriceTableResponse)
 async def get_group_enterprise_price(
     days: int = Query(15, description="显示最近N天的数据"),
     db: Session = Depends(get_db)
 ):
     """
-    获取重点集团企业生猪出栏价格 + 华宝/牧原白条（与旧数据逻辑一致）
+    获取重点集团企业生猪出栏价格 + 华宝/牧原白条。升贴水 = 企业价格 - 全国均价（元/公斤）。
 
     数据来源:
     - fact_enterprise_daily (metric_type='output_price')：企业出栏价
     - fact_carcass_market (metric_type in huabao_spread/muyuan_spread)：华宝白条、牧原白条区域列
+    - fact_price_daily：全国均价（用于计算升贴水）
     """
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
+
+    national_by_date = _get_national_price_by_date(db, start_date, end_date)
 
     all_data: List[GroupPriceDataPoint] = []
     found_companies: set = set()
@@ -139,10 +173,14 @@ async def get_group_enterprise_price(
         if company_name not in FLAT_ENTERPRISE_ORDER:
             continue
         found_companies.add(company_name)
+        price_val = round(float(value), 2)
+        nation = national_by_date.get(trade_date)
+        prem = round(price_val - nation, 2) if nation is not None else None
         all_data.append(GroupPriceDataPoint(
             date=trade_date.isoformat(),
             company=company_name,
-            price=round(float(value), 2),
+            price=price_val,
+            premium_discount=prem,
         ))
 
     # 2. 查询华宝/牧原白条 — 来自 3.3、白条市场跟踪.xlsx 华宝和牧原白条 sheet（r05 写入 fact_carcass_market）
@@ -159,15 +197,19 @@ async def get_group_enterprise_price(
         "start_date": start_date,
         "end_date": end_date,
     }).fetchall()
+    # 华宝/牧原白条在 fact_carcass_market 中存的是 元/头 的价差(spread)，不是 元/公斤 的绝对价格，不能与全国均价(元/公斤)做差算升贴水
     for row in ws_rows:
         trade_date, source, region_code, value = row
         display_name = WHITE_STRIP_DISPLAY.get((source, region_code))
         if display_name:
             found_companies.add(display_name)
+            price_val = round(float(value), 2)
+            prem = None  # 白条列为 元/头 价差，不计算升贴水
             all_data.append(GroupPriceDataPoint(
                 date=trade_date.isoformat(),
                 company=display_name,
-                price=round(float(value), 2),
+                price=price_val,
+                premium_discount=prem,
             ))
 
     # 按日期降序排序

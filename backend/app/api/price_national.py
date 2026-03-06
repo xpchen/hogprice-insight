@@ -477,11 +477,17 @@ async def get_slaughter_lunar(
     update_time = latest_obs.obs_date.isoformat()
     x_axis_labels: Dict[int, str] = {}
     if valid_indices and year_data:
-        sample_lunar_year = list(year_data.keys())[0]
+        # 用「索引达到 max_index」的农历年做参考，避免短农历年导致腊月数据被标成十一月
+        def _max_index_for_year(ly: int) -> int:
+            indices = [it["lunar_day_index"] for it in year_data[ly] if it.get("lunar_day_index") is not None]
+            return max(indices) if indices else 0
+        reference_lunar_year = max(year_data.keys(), key=_max_index_for_year)
+        if _max_index_for_year(reference_lunar_year) < max_index:
+            reference_lunar_year = list(year_data.keys())[0]
         try:
             from lunar_python import Lunar
             from datetime import date as date_class
-            lunar_new_year = Lunar.fromYmd(sample_lunar_year, 1, 1)
+            lunar_new_year = Lunar.fromYmd(reference_lunar_year, 1, 1)
             solar_new_year = lunar_new_year.getSolar()
             new_year_date = date_class(
                 solar_new_year.getYear(),
@@ -493,8 +499,10 @@ async def get_slaughter_lunar(
                 lunar_info = solar_to_lunar(target_date)
                 lunar_month = lunar_info.get("lunar_month")
                 lunar_day = lunar_info.get("lunar_day")
-                if lunar_month and lunar_day:
+                if lunar_month is not None and lunar_day is not None:
                     x_axis_labels[idx] = f"{lunar_month:02d}-{lunar_day:02d}"
+                elif idx not in x_axis_labels:
+                    x_axis_labels[idx] = f"{idx}"
         except Exception:
             pass
 

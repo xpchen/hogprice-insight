@@ -1,76 +1,49 @@
-# -*- coding: utf-8 -*-
-"""检查数据库中区域价差数据"""
+#!/usr/bin/env python3
+"""
+检查 fact_spread_daily 中区域价差数据，重点核查广东-重庆等。
+若 Excel（docs/0306_生猪/生猪/1、价格：钢联自动更新模板.xlsx）有对应列但库中无数据，
+说明需使用该 Excel 所在目录重新执行导入。
+"""
+import os
 import sys
-import io
-from pathlib import Path
 
-# 设置UTF-8编码输出
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BACKEND)
 
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+def main():
+    from sqlalchemy import text
+    from import_tool.db import get_engine
 
-from sqlalchemy.orm import Session
-from app.core.database import get_db
-from app.models.dim_metric import DimMetric
-from app.models.fact_observation import FactObservation
+    engine = get_engine()
+    with engine.connect() as conn:
+        # 所有区域价差类型
+        rows = conn.execute(text("""
+            SELECT spread_type, COUNT(*) AS cnt, MIN(trade_date) AS min_d, MAX(trade_date) AS max_d
+            FROM fact_spread_daily
+            WHERE spread_type LIKE 'region_spread_%'
+            GROUP BY spread_type
+            ORDER BY spread_type
+        """)).fetchall()
 
-db = next(get_db())
+        print("fact_spread_daily region_spread_* summary:")
+        if not rows:
+            print("  (no region_spread data)")
+        else:
+            for r in rows:
+                print(f"  {r[0]}: {r[1]} rows, {r[2]} ~ {r[3]}")
 
-try:
-    # 查询所有区域价差指标
-    metrics = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "区域价差"
-    ).all()
-    
-    print(f"找到 {len(metrics)} 个区域价差指标：")
-    for metric in metrics:
-        print(f"  - ID: {metric.id}")
-        print(f"    指标名称: {metric.metric_name}")
-        print(f"    原始列名: {metric.raw_header}")
-        print(f"    Sheet: {metric.sheet_name}")
-        
-        # 查询该指标的数据数量
-        obs_count = db.query(FactObservation).filter(
-            FactObservation.metric_id == metric.id
-        ).count()
-        print(f"    数据条数: {obs_count}")
-        
-        # 查询最新数据
-        latest_obs = db.query(FactObservation).filter(
-            FactObservation.metric_id == metric.id
-        ).order_by(FactObservation.obs_date.desc()).first()
-        if latest_obs:
-            print(f"    最新日期: {latest_obs.obs_date}, 最新值: {latest_obs.value}")
-        print()
-    
-    # 测试查询"区域价差：广东-广西"
-    test_pair = "广东-广西"
-    test_metric_name = f"区域价差：{test_pair}"
-    print(f"\n测试查询指标名称: '{test_metric_name}'")
-    test_metric = db.query(DimMetric).filter(
-        DimMetric.sheet_name == "区域价差",
-        DimMetric.metric_name == test_metric_name
-    ).first()
-    
-    if test_metric:
-        print(f"✓ 找到指标: {test_metric.metric_name}")
-        obs_count = db.query(FactObservation).filter(
-            FactObservation.metric_id == test_metric.id
-        ).count()
-        print(f"  数据条数: {obs_count}")
-    else:
-        print(f"✗ 未找到指标")
-        # 尝试模糊查询
-        print("\n尝试模糊查询:")
-        similar_metrics = db.query(DimMetric).filter(
-            DimMetric.sheet_name == "区域价差",
-            DimMetric.metric_name.like(f"%{test_pair}%")
-        ).all()
-        for m in similar_metrics:
-            print(f"  - {m.metric_name}")
-            
-finally:
-    db.close()
+        target = "region_spread_GUANGDONG_CHONGQING"
+        one = conn.execute(
+            text("SELECT COUNT(*), MIN(trade_date), MAX(trade_date) FROM fact_spread_daily WHERE spread_type = :st"),
+            {"st": target},
+        ).fetchone()
+        print(f"\nGuangdong-Chongqing ({target}):")
+        if one and one[0] and one[0] > 0:
+            print(f"  OK: {one[0]} rows, {one[1]} ~ {one[2]}")
+        else:
+            print("  MISSING. Re-import from: docs/0306_生猪/生猪/  using file 1、价格：钢联自动更新模板.xlsx")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

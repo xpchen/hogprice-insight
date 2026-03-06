@@ -119,7 +119,7 @@
           </el-menu-item>
           <el-menu-item index="/enterprise-statistics/group-price">
             <el-icon><DataAnalysis /></el-icon>
-            <template #title>D4. 集团价格</template>
+            <template #title>D5. 集团价格</template>
           </el-menu-item>
         </el-sub-menu>
 

@@ -3,7 +3,7 @@
     <el-card>
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
-          <span>D4. 集团价格</span>
+          <span>D5. 集团价格</span>
           <DataSourceInfo
             v-if="table1Data && (table1Data.latest_date || table1Data.date_range?.end)"
             source-name="钢联模板"
@@ -27,7 +27,7 @@
           </el-select>
         </div>
 
-        <!-- 价格表格：牧原白条为多表头，下属华东、河南山东、湖北陕西、京津冀、东北 -->
+        <!-- 价格表格：列头与以前一致（日期 + 企业名列 + 牧原白条及下属区域），无升贴水行 -->
         <div class="table-container">
           <el-table
             :data="table1DisplayData"
@@ -45,17 +45,21 @@
             <el-table-column
               v-for="company in table1FlatColumns"
               :key="company"
-              :label="getColumnLabel(company)"
               min-width="68"
               align="right"
               header-align="center"
             >
+              <template #header>
+                <div class="header-with-pd">
+                  <span>{{ getColumnLabel(company) }}</span>
+                  <span v-if="getHeaderPremiumDiscount(company) !== null" class="header-pd">{{ formatHeaderPremiumDiscount(getHeaderPremiumDiscount(company)) }}</span>
+                </div>
+              </template>
               <template #default="{ row }">
                 <span v-if="getCompanyPrice(row, company) !== null">{{ formatCompanyPrice(company, getCompanyPrice(row, company)!) }}</span>
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <!-- 牧原白条 多表头：始终展示，一级「牧原白条」，二级 华东、河南山东、湖北陕西、京津冀、东北（来源：3.3、白条市场跟踪.xlsx） -->
             <el-table-column
               label="牧原白条"
               align="center"
@@ -64,12 +68,17 @@
               <el-table-column
                 v-for="region in MUYUAN_WHITE_STRIP_REGIONS"
                 :key="region"
-                :label="region"
                 :prop="region"
                 min-width="62"
                 align="right"
                 header-align="center"
               >
+                <template #header>
+                  <div class="header-with-pd">
+                    <span>{{ region }}</span>
+                    <span v-if="getHeaderPremiumDiscount(region) !== null" class="header-pd">{{ formatHeaderPremiumDiscount(getHeaderPremiumDiscount(region)) }}</span>
+                  </div>
+                </template>
                 <template #default="{ row }">
                   <span v-if="getCompanyPrice(row, region) !== null">{{ formatPrice(getCompanyPrice(row, region), region) }}</span>
                   <span v-else>-</span>
@@ -115,7 +124,7 @@
           </el-select>
         </div>
 
-        <!-- 白条市场表格 -->
+        <!-- 白条市场表格：市场在行上，列为各日期的到货量/价格（日期正序） -->
         <div class="table-container">
           <el-table
             :data="table2DisplayData"
@@ -125,23 +134,31 @@
             style="width: 100%"
             max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="date" label="日期" width="88" fixed="left">
-              <template #default="{ row }">
-                {{ formatDate(row.date) }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="market" label="市场" min-width="72" fixed="left">
-            </el-table-column>
-            <el-table-column prop="arrival_volume" label="到货量" min-width="68" align="right">
-              <template #default="{ row }">
-                {{ formatValue(row.arrival_volume) }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="price" label="价格" min-width="68" align="right">
-              <template #default="{ row }">
-                {{ formatPrice(row.price) }}
-              </template>
-            </el-table-column>
+            <el-table-column prop="market" label="市场" min-width="88" fixed="left" align="center" />
+            <template v-for="date in table2DateList" :key="date">
+              <el-table-column :label="formatDate(date)" align="center">
+                <el-table-column
+                  :label="'到货量'"
+                  :prop="'arrival_'+date"
+                  min-width="72"
+                  align="right"
+                >
+                  <template #default="{ row }">
+                    {{ row['arrival_'+date] != null ? formatValue(row['arrival_'+date]) : '-' }}
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="'价格'"
+                  :prop="'price_'+date"
+                  min-width="72"
+                  align="right"
+                >
+                  <template #default="{ row }">
+                    {{ row['price_'+date] != null ? formatPrice(row['price_'+date]) : '-' }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+            </template>
           </el-table>
         </div>
       </div>
@@ -153,7 +170,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getGroupEnterprisePrice, getWhiteStripMarket } from '@/api/group-price'
-import type { GroupPriceTableResponse, WhiteStripMarketResponse } from '@/api/group-price'
+import type { GroupPriceTableResponse, WhiteStripMarketResponse, GroupPriceDataPoint } from '@/api/group-price'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
 
 const loading1 = ref(false)
@@ -180,37 +197,60 @@ const table1FlatColumns = computed(() => {
   )
 })
 
-// 表格1显示数据（按日期分组）
+// 表格1显示数据（按日期分组，含价格与升贴水）
 const table1DisplayData = computed(() => {
   if (!table1Data.value || !table1Data.value.data.length) return []
   
-  // 按日期分组
   const dateMap: Record<string, Record<string, number | null>> = {}
   const dates = new Set<string>()
   
-  table1Data.value.data.forEach(item => {
+  table1Data.value.data.forEach((item: GroupPriceDataPoint) => {
     if (!dateMap[item.date]) {
       dateMap[item.date] = {}
       dates.add(item.date)
     }
-    dateMap[item.date][item.company] = item.price
+    dateMap[item.date][item.company] = item.price ?? null
+    const pdKey = item.company + '_pd'
+    dateMap[item.date][pdKey] = item.premium_discount ?? null
   })
   
-  return Array.from(dates).sort().reverse().map(date => ({
+  return Array.from(dates).sort().map(date => ({
     date,
     ...dateMap[date]
   }))
 })
 
-// 表格2显示数据
+// 表格2：市场在行上，日期正序；每行一个市场，列为各日期的到货量/价格
+const table2DateList = computed(() => {
+  if (!table2Data.value?.data?.length) return []
+  const set = new Set<string>()
+  table2Data.value.data.forEach((d: { date: string }) => set.add(d.date))
+  return Array.from(set).sort()
+})
+
+// 表格2 市场顺序（与后端 WHITE_STRIP_MARKET_SOURCES 一致，参照原表）
+const TABLE2_MARKET_ORDER = ['北京石门', '上海西郊', '成都点杀', '山西太原', '杭州五和', '无锡天鹏', '南京众彩', '广西桂林']
+
 const table2DisplayData = computed(() => {
-  if (!table2Data.value || !table2Data.value.data) {
-    console.log('table2DisplayData: 无数据')
-    return []
-  }
-  const sorted = [...table2Data.value.data].sort((a, b) => b.date.localeCompare(a.date))
-  console.log('table2DisplayData: 排序后数据条数:', sorted.length)
-  return sorted
+  if (!table2Data.value || !table2Data.value.data.length) return []
+  const dates = table2DateList.value
+  const marketsOrdered = TABLE2_MARKET_ORDER.filter((m: string) => (table2Data.value?.markets || []).includes(m))
+  const byMarketDate: Record<string, Record<string, { arrival_volume?: number; price?: number }>> = {}
+  table2Data.value.data.forEach((d: WhiteStripMarketDataPoint) => {
+    if (!byMarketDate[d.market]) byMarketDate[d.market] = {}
+    if (!byMarketDate[d.market][d.date]) byMarketDate[d.market][d.date] = {}
+    if (d.arrival_volume != null) byMarketDate[d.market][d.date].arrival_volume = d.arrival_volume
+    if (d.price != null) byMarketDate[d.market][d.date].price = d.price
+  })
+  return marketsOrdered.map((market: string) => {
+    const row: Record<string, string | number | null> = { market }
+    dates.forEach((date: string) => {
+      const v = byMarketDate[market]?.[date]
+      row[`arrival_${date}`] = v?.arrival_volume ?? null
+      row[`price_${date}`] = v?.price ?? null
+    })
+    return row
+  })
 })
 
 // 获取企业价格
@@ -218,18 +258,27 @@ const getCompanyPrice = (row: any, company: string): number | null => {
   return row[company] ?? null
 }
 
-// 获取升贴水（从API返回的数据中获取）
-const getPremiumDiscount = (company: string): number | null => {
-  if (!table1Data.value) return null
-  const dataPoint = table1Data.value.data.find(d => d.company === company)
-  return dataPoint?.premium_discount ?? null
+// 获取企业升贴水（同行、同列）
+const getCompanyPremiumDiscount = (row: any, company: string): number | null => {
+  const v = row[company + '_pd']
+  return v != null ? v : null
 }
 
-// 列标题：企业名称 + 升贴水（括号内），升贴水移至标题行
-const getColumnLabel = (company: string): string => {
-  const pd = getPremiumDiscount(company)
-  if (pd != null && pd !== 0) return `${company} (${formatPremiumDiscount(pd)})`
-  return company
+// 列标题：仅企业名称
+const getColumnLabel = (company: string): string => company
+
+// 表头升贴水：取最新一行的该企业升贴水。API 为 元/公斤，表头按 元/吨 显示：(＋200) / (－300)
+const getHeaderPremiumDiscount = (company: string): number | null => {
+  const rows = table1DisplayData.value
+  if (!rows.length) return null
+  const last = rows[rows.length - 1]
+  const v = last[company + '_pd']
+  return v != null ? v : null
+}
+const formatHeaderPremiumDiscount = (v: number | null | undefined): string => {
+  if (v == null) return ''
+  const yuanPerTon = Math.round(v * 1000) // 元/公斤 -> 元/吨
+  return yuanPerTon >= 0 ? `(+${yuanPerTon})` : `(${yuanPerTon})`
 }
 
 // 加载表格1数据
@@ -411,5 +460,19 @@ onMounted(() => {
   :deep(.el-table th) { padding: 2px 4px; font-weight: 600; background-color: #f5f7fa; }
   :deep(.el-table td) { padding: 1px 4px; }
   .date-cell { white-space: nowrap; }
+  .header-with-pd { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+  .header-pd { font-size: 10px; color: #909399; }
+
+  .group-price-table-wrap table.group-price-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    th, td { border: 1px solid #ebeef5; padding: 4px 8px; }
+    th { background: #f5f7fa; font-weight: 600; }
+    .th-date, .td-date { min-width: 100px; text-align: center; }
+    .th-premium { text-align: center; }
+    .th-company, .th-muyuan, .th-sub { text-align: center; }
+    .td-num { text-align: right; min-width: 64px; }
+  }
 }
 </style>

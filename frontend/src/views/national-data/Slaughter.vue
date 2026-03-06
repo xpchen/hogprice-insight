@@ -290,17 +290,19 @@ const renderSlaughterLunarChart = () => {
   
   slaughterLunarChart = echarts.init(slaughterLunarChartRef.value)
   
-  // X 轴：仅用后端 x_axis_labels 的索引（1..max_index），保证标签与农历日期一致，闰月曲线按对齐索引叠加
+  // X 轴：用后端 x_axis_labels 的农历日期（MM-DD）作为刻度，保证坐标轴显示日期而非索引数字
   const labels = slaughterLunarData.value.x_axis_labels
   const validRange = (n: number) => n >= 1 && n <= 400
   let xAxisData: string[]
+  let orderedIndices: number[]
   if (labels && Object.keys(labels).length > 0) {
-    const indices = Object.keys(labels)
+    orderedIndices = Object.keys(labels)
       .map((k) => parseInt(k, 10))
       .filter((n) => !isNaN(n) && validRange(n))
       .sort((a, b) => a - b)
-    xAxisData = indices.map((i) => String(i))
+    xAxisData = orderedIndices.map((i) => (labels as Record<number, string>)[i] ?? String(i))
   } else {
+    orderedIndices = []
     const allMonthDays = new Set<string>()
     slaughterLunarData.value.series.forEach((s) => {
       s.data.forEach((d) => {
@@ -309,11 +311,11 @@ const renderSlaughterLunarChart = () => {
         if (!isNaN(n) && validRange(n)) allMonthDays.add(String(n))
       })
     })
-    xAxisData = Array.from(allMonthDays)
+    orderedIndices = Array.from(allMonthDays)
       .map((a) => parseInt(a, 10))
       .filter((n) => validRange(n))
       .sort((a, b) => a - b)
-      .map(String)
+    xAxisData = orderedIndices.map(String)
   }
 
   // 从 x_axis_labels 找到某农历月初一对应的 X 轴索引（用于闰月按「日」对齐）
@@ -371,7 +373,8 @@ const renderSlaughterLunarChart = () => {
       }
       if (key != null) valueMap.set(key, d.value ?? null)
     })
-    let values = xAxisData.map((md) => valueMap.get(md) ?? valueMap.get(normKey(md) ?? '') ?? null)
+    // 按 X 轴顺序（orderedIndices）取值，valueMap 的键为数字索引字符串
+    let values = orderedIndices.map((i) => valueMap.get(String(i)) ?? valueMap.get(normKey(String(i)) ?? '') ?? null)
     // 闰月兜底：若当前映射后全为空且后端传的是「月初日 1–29」或 MM-DD，按对应正常月对齐
     const hasAny = values.some((v) => v != null)
     if (isLeapMonth && leapMonth >= 1 && leapMonth <= 12 && !hasAny && s.data.length > 0 && labels) {
@@ -388,7 +391,7 @@ const renderSlaughterLunarChart = () => {
           }
           if (day >= 1 && day <= 30) remap.set(String(baseIdx + day - 1), d.value ?? null)
         })
-        if (remap.size > 0) values = xAxisData.map((md) => remap.get(md) ?? null)
+        if (remap.size > 0) values = orderedIndices.map((i) => remap.get(String(i)) ?? null)
       }
     }
     
@@ -428,12 +431,8 @@ const renderSlaughterLunarChart = () => {
       axisPointer: { type: 'cross' },
       formatter: (params: any) => {
         if (!Array.isArray(params)) return ''
-        // 获取X轴值（索引），转换为农历日期标签（MM-dd格式）
-        const index = parseInt(params[0].axisValue) || 0
-        let axisLabel = params[0].axisValue
-        if (slaughterLunarData.value.x_axis_labels && slaughterLunarData.value.x_axis_labels[index]) {
-          axisLabel = slaughterLunarData.value.x_axis_labels[index]
-        }
+        // X 轴刻度已是农历 MM-DD 或索引数字，直接使用
+        const axisLabel = params[0].axisValue as string
         
         let result = `<div style="margin-bottom: 4px;"><strong>${axisLabel}</strong></div>`
         params.forEach((param: any) => {
@@ -473,14 +472,8 @@ const renderSlaughterLunarChart = () => {
       name: '',
       axisLabel: {
         rotate: 45,
-        interval: 'auto',
-        formatter: (value: string) => {
-          const index = parseInt(value)
-          if (slaughterLunarData.value.x_axis_labels && slaughterLunarData.value.x_axis_labels[index]) {
-            return slaughterLunarData.value.x_axis_labels[index]
-          }
-          return value
-        }
+        interval: 'auto'
+        // data 已是农历 MM-DD，无需 formatter
       }
     },
     yAxis: {

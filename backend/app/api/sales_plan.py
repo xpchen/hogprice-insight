@@ -51,13 +51,12 @@ class SalesPlanResponse(BaseModel):
 
 
 def _get_ganglian_sales_plan(db: Session) -> List[SalesPlanDataPoint]:
-    """钢联：fact_monthly_indicator 月度数据 sheet — 猪：计划出栏量、猪：出栏数（实际）。当月环比/计划环比由本月与上月绝对值计算。"""
+    """钢联：fact_monthly_indicator 月度数据 sheet B列/C列 — 猪：计划出栏量、猪：出栏数（实际）。不限制 value_type 以兼容不同导入。"""
     sql = text("""
         SELECT month_date, indicator_code, value
         FROM fact_monthly_indicator
         WHERE source = 'GANGLIAN'
           AND indicator_code IN ('hog_planned_output', 'hog_slaughter_count')
-          AND value_type = 'abs'
           AND value IS NOT NULL
         ORDER BY month_date ASC
     """)
@@ -71,7 +70,7 @@ def _get_ganglian_sales_plan(db: Session) -> List[SalesPlanDataPoint]:
             by_month[month_str]["plan"] = float(r[2])
         elif r[1] == "hog_slaughter_count":
             by_month[month_str]["actual"] = float(r[2])
-    # 按月份升序计算环比（当月环比=本月实际/上月实际-1，计划环比=本月计划/上月计划-1）
+    # 环比与文档一致：当月环比=本月实际/上月实际-1，计划环比=当月计划/上月实际出栏-1，计划达成率=当月出栏/当月计划
     sorted_months = sorted(by_month.keys())
     out: List[SalesPlanDataPoint] = []
     for i, month_str in enumerate(sorted_months):
@@ -80,9 +79,8 @@ def _get_ganglian_sales_plan(db: Session) -> List[SalesPlanDataPoint]:
         actual_val = v.get("actual")
         prev = by_month.get(sorted_months[i - 1]) if i > 0 else None
         prev_actual = prev.get("actual") if prev else None
-        prev_plan = prev.get("plan") if prev else None
         mom = (actual_val / prev_actual - 1) if actual_val and prev_actual and prev_actual != 0 else None
-        pop = (plan_val / prev_plan - 1) if plan_val and prev_plan and prev_plan != 0 else None
+        pop = (plan_val / prev_actual - 1) if plan_val and prev_actual and prev_actual != 0 else None
         compl = (actual_val / plan_val) if (actual_val and plan_val and plan_val != 0) else None
         out.append(SalesPlanDataPoint(
             date=month_str, region="钢联", source="钢联",
@@ -121,17 +119,17 @@ def _get_yongyi_sales_plan(db: Session) -> List[SalesPlanDataPoint]:
             v = float(r[2]) / 10000.0
             if by_month[month_str]["actual_wan"] is None:
                 by_month[month_str]["actual_wan"] = v
+    # 计划环比=当月计划/上月实际出栏-1（与文档一致）
     sorted_months = sorted(by_month.keys())
     out: List[SalesPlanDataPoint] = []
     for i, month_str in enumerate(sorted_months):
         v = by_month[month_str]
         plan_val = v.get("plan")
-        actual_wan = v.get("actual_wan")  # 万头，与旧版展示一致
+        actual_wan = v.get("actual_wan")
         prev = by_month.get(sorted_months[i - 1]) if i > 0 else None
         prev_actual = prev.get("actual_wan") if prev else None
-        prev_plan = prev.get("plan") if prev else None
         mom = (actual_wan / prev_actual - 1) if actual_wan and prev_actual and prev_actual != 0 else None
-        pop = (plan_val / prev_plan - 1) if plan_val and prev_plan and prev_plan != 0 else None
+        pop = (plan_val / prev_actual - 1) if plan_val and prev_actual and prev_actual != 0 else None
         compl = (actual_wan / plan_val) if (actual_wan and plan_val and plan_val != 0) else None
         out.append(SalesPlanDataPoint(
             date=month_str, region="涌益", source="涌益",
@@ -247,7 +245,7 @@ async def get_sales_plan_data(
         plan_completion = compl / 100.0 if compl is not None else (
             actual_val / plan_val if actual_val and plan_val else None)
         mom = (actual_val / prev_actual - 1) if actual_val and prev_actual and prev_actual != 0 else None
-        pop = (plan_val / prev_plan - 1) if plan_val and prev_plan and prev_plan != 0 else None
+        pop = (plan_val / prev_actual - 1) if plan_val and prev_actual and prev_actual != 0 else None  # 计划环比=当月计划/上月实际
 
         data_points.append(SalesPlanDataPoint(
             date=item["month"], region=item["name"], source="企业集团出栏跟踪",
