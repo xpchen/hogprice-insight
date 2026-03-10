@@ -1,0 +1,19 @@
+Region spread sheet: first 3 rows (first 8 cells each):
+  Row1: ['钢联数据', None, None, None, None, None, None, None]
+  Row2: ['指标名称', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：广西（日）', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：四川（日）', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：重庆（日）', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：贵州（日）', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：江西（日）', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：湖南（日）', '商品猪：出栏均价：广东（日） - 商品猪：出栏均价：河南（日）']
+  Row3: ['单位', None, None, None, None, None, None, None]
+
+Using row 2 as header. Column check:
+  Col1: OK -> 广东-广西 -> region_spread_GUANGDONG_GUANGXI
+  Col2: OK -> 广东-四川 -> region_spread_GUANGDONG_SICHUAN
+  Col3: OK -> 广东-重庆 -> region_spread_GUANGDONG_CHONGQING
+  Col4: OK -> 广东-贵州 -> region_spread_GUANGDONG_GUIZHOU
+  Col5: OK -> 广东-江西 -> region_spread_GUANGDONG_JIANGXI
+  Col6: OK -> 广东-湖南 -> region_spread_GUANGDONG_HUNAN
+  Col7: OK -> 广东-河南 -> region_spread_GUANGDONG_HENAN
+  Col8: OK -> 四川-山西 -> region_spread_SICHUAN_SHANXI
+  Col9: OK -> 四川-陕西 -> region_spread_SICHUAN_SHAANXI
+  Col10: OK -> 四川-山东 -> region_spread_SICHUAN_SHANDONG
+  Col11: OK -> 四川-河南 -> region_spread_SICHUAN_HENAN
+  Col12: OK -> 浙江-河南 -> region_spread_ZHEJIANG_HENAN
+  Col13: OK -> 浙江-江西 -> region_spread_ZHEJIANG_JIANGXI

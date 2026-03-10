@@ -153,7 +153,7 @@ class YongyiWeeklyReader(BaseSheetReader):
         if name == "月度-能繁母猪存栏量":
             return empty, self._parse_monthly_inventory_old(ws, "breeding_sow_inventory_old", "头")
         if name == "月度-商品猪出栏量":
-            return empty, self._parse_monthly_inventory_old(ws, "hog_output_volume", "头")
+            return empty, self._parse_monthly_inventory_old(ws, "hog_output_volume", "头", include_mom_col=True)
         if name == "月度-小猪（50公斤以下）存栏":
             return empty, self._parse_monthly_inventory_old(ws, "piglet_inventory_old", "头")
 
@@ -937,15 +937,18 @@ class YongyiWeeklyReader(BaseSheetReader):
         return records
 
     # ── Old-sample monthly inventory ────────────────────────────────────
-    def _parse_monthly_inventory_old(self, ws, indicator_code: str, unit: str) -> list[dict]:
+    def _parse_monthly_inventory_old(
+        self, ws, indicator_code: str, unit: str, include_mom_col: bool = False
+    ) -> list[dict]:
         """
         Sheets like 月度-能繁母猪存栏量, 月度-商品猪出栏量, 月度-小猪（50公斤以下）存栏.
         Header row 2 pattern: 日期, 全国, 环比, 同比, 较非瘟前, 日期, 华北, 环比, 同比, 较非瘟前, ...
         Each group has 5 fields.  Data starts at row 3.
+        When include_mom_col=True, also read the column after value (环比) and write as value_type='mom_pct'.
         """
         header = self._row_values(ws, 2, max_col=40)
 
-        # Find region columns
+        # Find region columns: (value_col, region_code); 环比 is at value_col+1
         region_cols: list[tuple[int, str]] = []
         i = 0
         while i < len(header):
@@ -984,6 +987,20 @@ class YongyiWeeklyReader(BaseSheetReader):
                         "unit": unit,
                         "batch_id": self.batch_id,
                     })
+                    if include_mom_col and val_col + 1 < len(row):
+                        mom_val = clean_value(row[val_col + 1])
+                        if mom_val is not None:
+                            records.append({
+                                "month_date": month_dt,
+                                "region_code": rc,
+                                "indicator_code": indicator_code,
+                                "sub_category": "",
+                                "source": SOURCE,
+                                "value": mom_val,
+                                "value_type": "mom_pct",
+                                "unit": "%",
+                                "batch_id": self.batch_id,
+                            })
             except Exception:
                 logger.debug("skip row monthly_old %s", indicator_code, exc_info=True)
         return records

@@ -1267,18 +1267,33 @@ async def get_slaughter_lunar(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """日度屠宰量（农历对齐）"""
+    """日度屠宰量（农历对齐）。农历年按正月初八～腊月二十八的阳历区间取数（如 2024 农历年 = 2024-02-17 ～ 2025-01-27）。"""
     _end = end_year if end_year is not None else date.today().year
     _start = start_year if start_year is not None else (_end - 5)
+
+    # 按农历年定义：正月初八～腊月二十八 的阳历区间查询，避免按公历 YEAR 截断导致缺年末数据
+    range_start = None
+    range_end = None
+    for ly in [_start, _end]:
+        dr = get_lunar_year_date_range_la_ba(ly)
+        if dr:
+            s, e = dr
+            if range_start is None or s < range_start:
+                range_start = s
+            if range_end is None or e > range_end:
+                range_end = e
+    if range_start is None or range_end is None:
+        range_start = date(_start, 1, 1)
+        range_end = date(_end, 12, 31)
 
     rows = db.execute(
         text("""
             SELECT trade_date, volume FROM fact_slaughter_daily
             WHERE region_code = 'NATION' AND source = 'YONGYI'
-              AND YEAR(trade_date) BETWEEN :sy AND :ey
+              AND trade_date >= :range_start AND trade_date <= :range_end
             ORDER BY trade_date
         """),
-        {"sy": _start, "ey": _end},
+        {"range_start": range_start, "range_end": range_end},
     ).fetchall()
 
     if not rows:
@@ -1427,12 +1442,19 @@ async def get_slaughter_lunar(
                 )
 
     latest_date_str = rows[-1][0].isoformat()
+    # X 轴只显示 正月初八～腊月二十八，不出现下一年的正月；用参考农历年的区间长度截断标签
     x_axis_labels: Dict[int, str] = {}
     if valid_indices and year_data:
         sample_lunar_year = list(year_data.keys())[0]
         try:
             from lunar_python import Lunar
             from datetime import date as date_class
+            dr = get_lunar_year_date_range_la_ba(sample_lunar_year)
+            if dr:
+                _start_la_ba, _end_la_ba = dr
+                max_label_index = (_end_la_ba - _start_la_ba).days + 1  # 仅 01-08 到 12-28
+            else:
+                max_label_index = max_index
             lunar_new_year = Lunar.fromYmd(sample_lunar_year, 1, 1)
             solar_new_year = lunar_new_year.getSolar()
             new_year_date = date_class(
@@ -1440,7 +1462,7 @@ async def get_slaughter_lunar(
                 solar_new_year.getMonth(),
                 solar_new_year.getDay(),
             )
-            for idx in range(1, max_index + 1):
+            for idx in range(1, min(max_index, max_label_index) + 1):
                 target_date = date_class.fromordinal(new_year_date.toordinal() + idx - 1 + 7)
                 li = solar_to_lunar(target_date)
                 lm2 = li.get("lunar_month")

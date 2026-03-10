@@ -18,6 +18,8 @@ export interface GroupPriceTableResponse {
     end: string
   }
   latest_date?: string | null
+  /** 表格二：重点市场白条到货量&价格（旧版同接口返回） */
+  white_strip_market?: WhiteStripMarketResponse | null
 }
 
 export interface WhiteStripMarketDataPoint {

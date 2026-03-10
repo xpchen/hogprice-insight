@@ -36,7 +36,7 @@ def main():
 
     try:
         import httpx
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=900.0) as client:
             r = client.post(url, headers={"X-Quick-Chart-Secret": secret})
             r.raise_for_status()
             data = r.json()

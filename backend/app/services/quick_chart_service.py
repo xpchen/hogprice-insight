@@ -84,7 +84,7 @@ def regenerate_cache_sync(db: Session) -> dict:
     computed = 0
     errors = []
     base = getattr(settings, "BACKEND_BASE_URL", None) or BASE_URL
-    timeout = 120.0
+    timeout = getattr(settings, "QUICK_CHART_PRECOMPUTE_TIMEOUT", 900.0)
 
     for item in QUICK_CHART_PRECOMPUTE_URLS:
         path = item["path"]

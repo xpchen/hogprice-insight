@@ -200,7 +200,7 @@ def warm_up_cache():
     )
     try:
         t1 = time.time()
-        resp = __import__("urllib.request", fromlist=["urlopen"]).urlopen(req, timeout=120.0)
+        resp = __import__("urllib.request", fromlist=["urlopen"]).urlopen(req, timeout=900.0)
         body = resp.read().decode("utf-8")
         elapsed = time.time() - t1
         if 200 <= resp.status < 300:

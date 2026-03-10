@@ -120,10 +120,27 @@ def _get_cr20_month_on_month(db: Session) -> List[StructureDataPoint]:
 
 
 # ---------------------------------------------------------------------------
-# 涌益 出栏环比 — compute MoM from abs values in fact_monthly_indicator
+# 涌益 出栏环比 — 优先使用「月度-商品猪出栏量」C列环比(mom_pct)，无则用 B 列绝对值计算
 # ---------------------------------------------------------------------------
 def _get_yongyi_month_on_month(db: Session) -> List[StructureDataPoint]:
-    sql = text("""
+    sql_mom = text("""
+        SELECT month_date, value
+        FROM fact_monthly_indicator
+        WHERE source = 'YONGYI'
+          AND indicator_code = 'hog_output_volume'
+          AND value_type = 'mom_pct'
+          AND COALESCE(region_code, 'NATION') = 'NATION'
+          AND value IS NOT NULL
+        ORDER BY month_date
+    """)
+    rows_mom = db.execute(sql_mom).fetchall()
+    if rows_mom:
+        return [
+            StructureDataPoint(date=r[0].isoformat(), source="涌益", value=_safe_float(r[1]))
+            for r in rows_mom
+            if _safe_float(r[1]) is not None
+        ]
+    sql_abs = text("""
         SELECT month_date, value
         FROM fact_monthly_indicator
         WHERE source = 'YONGYI'
@@ -133,7 +150,7 @@ def _get_yongyi_month_on_month(db: Session) -> List[StructureDataPoint]:
           AND value IS NOT NULL
         ORDER BY month_date
     """)
-    rows = db.execute(sql).fetchall()
+    rows = db.execute(sql_abs).fetchall()
     labeled = [(r[0], r[1], "涌益") for r in rows]
     return _compute_mom(labeled)
 

@@ -18,11 +18,11 @@
           <span class="filter-label">指标：</span>
           <el-radio-group v-model="selectedIndicator" @change="handleFilterChange">
             <el-radio-button label="全部">全部</el-radio-button>
-            <el-radio-button label="实际出栏量">实际出栏量</el-radio-button>
-            <el-radio-button label="计划出栏量">计划出栏量</el-radio-button>
+            <el-radio-button label="当月出栏量">当月出栏量</el-radio-button>
+            <el-radio-button label="当月计划">当月计划</el-radio-button>
             <el-radio-button label="当月环比">当月环比</el-radio-button>
             <el-radio-button label="计划环比">计划环比</el-radio-button>
-            <el-radio-button label="计划完成率">计划完成率</el-radio-button>
+            <el-radio-button label="计划达成率">计划达成率</el-radio-button>
           </el-radio-group>
         </div>
         <div class="filter-row">
@@ -105,10 +105,10 @@
           <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
             <template #default="{ row }">{{ formatDate(row.date) }}</template>
           </el-table-column>
-          <el-table-column prop="actual_output" label="实际出栏量" min-width="110" align="right">
+          <el-table-column prop="actual_output" label="当月出栏量" min-width="110" align="right">
             <template #default="{ row }">{{ formatValue(row.actual_output) }}</template>
           </el-table-column>
-          <el-table-column prop="plan_output" label="计划出栏量" min-width="110" align="right">
+          <el-table-column prop="plan_output" label="当月计划" min-width="110" align="right">
             <template #default="{ row }">{{ formatValue(row.plan_output) }}</template>
           </el-table-column>
           <el-table-column prop="month_on_month" label="当月环比" min-width="90" align="right">
@@ -117,7 +117,7 @@
           <el-table-column prop="plan_on_plan" label="计划环比" min-width="90" align="right">
             <template #default="{ row }">{{ formatPercent(row.plan_on_plan) }}</template>
           </el-table-column>
-          <el-table-column prop="plan_completion_rate" label="计划完成率" min-width="100" align="right">
+          <el-table-column prop="plan_completion_rate" label="计划达成率" min-width="100" align="right">
             <template #default="{ row }">{{ formatPercent(row.plan_completion_rate) }}</template>
           </el-table-column>
         </el-table>
@@ -139,14 +139,14 @@ const loading = ref(false)
 const tableData = ref<SalesPlanResponse | null>(null)
 const allData = ref<SalesPlanDataPoint[]>([])
 
-// 与旧版/Excel 列头一一对应（中文）
-const METRICS = ['实际出栏量', '计划出栏量', '当月环比', '计划环比', '计划完成率'] as const
+// 全部模式下表头：当月出栏量、当月计划、当月环比、计划环比、计划达成率（与旧版 UI 一致）
+const METRICS = ['当月出栏量', '当月计划', '当月环比', '计划环比', '计划达成率'] as const
 const METRIC_KEYS: Record<string, keyof SalesPlanDataPoint> = {
-  '实际出栏量': 'actual_output',
-  '计划出栏量': 'plan_output',
+  '当月出栏量': 'actual_output',
+  '当月计划': 'plan_output',
   '当月环比': 'month_on_month',
   '计划环比': 'plan_on_plan',
-  '计划完成率': 'plan_completion_rate'
+  '计划达成率': 'plan_completion_rate'
 }
 
 const isModeA = computed(() => selectedIndicator.value !== '全部' && selectedRegion.value === '全部')
@@ -164,7 +164,9 @@ const displayData = computed(() => {
   return filtered
 })
 
-// 固定区域顺序：与数据源一致（汇总→涌益/钢联→省份），避免表格列顺序紊乱
+// 全部模式（指标=全部、区域=全部）仅展示涌益、钢联两列数据，列顺序固定
+const REGION_ORDER_FOR_ALL = ['涌益', '钢联'] as const
+// 单指标+全部区域等其它模式用：汇总→涌益/钢联→省份
 const REGION_ORDER = ['全国CR20', '全国CR5', '涌益', '钢联', '广东', '四川', '贵州']
 
 const regionColumns = computed(() => {
@@ -210,14 +212,24 @@ const regionMetricColumns = computed(() => {
   return cols
 })
 
-// 全部+全部时按固定区域顺序展示所有「区域-指标」列，不截断
-const displayRegionMetricColumns = computed(() => regionMetricColumns.value)
+// 全部+全部时仅展示：日期 + 涌益-当月出栏量/当月计划/当月环比/计划环比/计划达成率 + 钢联-同上（旧版 UI）
+const displayRegionMetricColumns = computed(() => {
+  if (!isModeB.value) return regionMetricColumns.value
+  const cols: { key: string; label: string; metric: string }[] = []
+  REGION_ORDER_FOR_ALL.forEach(r => {
+    METRICS.forEach(m => {
+      cols.push({ key: `${r}-${m}`, label: `${r}-${m}`, metric: m })
+    })
+  })
+  return cols
+})
 
 const pivotedByRegionMetric = computed(() => {
   if (!isModeB.value) return []
-  const regions = regionColumns.value
+  const regions = [...REGION_ORDER_FOR_ALL]
   const byDate = new Map<string, Record<string, any>>()
   displayData.value.forEach(item => {
+    if (!REGION_ORDER_FOR_ALL.includes(item.region as any)) return
     if (!byDate.has(item.date)) {
       const row: Record<string, any> = { date: item.date }
       regions.forEach(r => METRICS.forEach(m => { row[`${r}-${m}`] = null }))
@@ -251,13 +263,13 @@ const formatPercent = (v: number | null | undefined): string => {
 
 const formatCell = (v: number | null | undefined): string => {
   if (v == null) return '-'
-  if (selectedIndicator.value === '实际出栏量' || selectedIndicator.value === '计划出栏量') return formatValue(v)
+  if (selectedIndicator.value === '当月出栏量' || selectedIndicator.value === '当月计划') return formatValue(v)
   return formatPercent(v)
 }
 
 const formatCellByMetric = (v: number | null | undefined, metric: string): string => {
   if (v == null) return '-'
-  if (metric === '实际出栏量' || metric === '计划出栏量') return formatValue(v)
+  if (metric === '当月出栏量' || metric === '当月计划') return formatValue(v)
   return formatPercent(v)
 }
 
@@ -276,10 +288,21 @@ const handleFilterChange = () => {
   loadData()
 }
 
+// 前端展示用「当月出栏量/当月计划/计划达成率」，请求后端时映射为后端字段名
+const indicatorToApi = (indicator: string): string => {
+  const map: Record<string, string> = {
+    '当月出栏量': '实际出栏量',
+    '当月计划': '计划出栏量',
+    '计划达成率': '计划完成率'
+  }
+  return map[indicator] ?? indicator
+}
+
 const loadData = async () => {
   loading.value = true
   try {
-    const data = await getSalesPlanData(selectedIndicator.value, selectedRegion.value)
+    const apiIndicator = indicatorToApi(selectedIndicator.value)
+    const data = await getSalesPlanData(apiIndicator, selectedRegion.value)
     tableData.value = data
     allData.value = data.data || []
   } catch (error: any) {

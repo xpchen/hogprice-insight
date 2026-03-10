@@ -26,14 +26,6 @@ class GroupPriceDataPoint(BaseModel):
     premium_discount: Optional[float] = None  # 升贴水
 
 
-class GroupPriceTableResponse(BaseModel):
-    """集团价格表格响应"""
-    data: List[GroupPriceDataPoint]
-    companies: List[str]  # 企业列表
-    date_range: Dict[str, str]  # 日期范围 {start: "YYYY-MM-DD", end: "YYYY-MM-DD"}
-    latest_date: Optional[str] = None
-
-
 class WhiteStripMarketDataPoint(BaseModel):
     """白条市场数据点"""
     date: str  # 日期 YYYY-MM-DD
@@ -47,6 +39,15 @@ class WhiteStripMarketResponse(BaseModel):
     data: List[WhiteStripMarketDataPoint]
     markets: List[str]  # 市场列表
     latest_date: Optional[str] = None
+
+
+class GroupPriceTableResponse(BaseModel):
+    """集团价格表格响应（含表格一 + 表格二白条到货量&价格，旧版单接口）"""
+    data: List[GroupPriceDataPoint]
+    companies: List[str]  # 企业列表
+    date_range: Dict[str, str]  # 日期范围 {start: "YYYY-MM-DD", end: "YYYY-MM-DD"}
+    latest_date: Optional[str] = None
+    white_strip_market: Optional[WhiteStripMarketResponse] = None  # 表格二：重点市场白条到货量&价格
 
 
 # company_code prefix -> 显示名称 映射（output_price公司码带省份后缀如MUYUAN_HN）
@@ -221,6 +222,9 @@ async def get_group_enterprise_price(
     white_strip_ordered = [c for c in WHITE_STRIP_COLUMN_ORDER if c in found_companies]
     companies = enterprise_in_order + white_strip_ordered
 
+    # 表格二：同一接口返回重点市场白条到货量&价格（旧版单接口 /group-enterprise-price?days=90）
+    white_strip_market = _fetch_white_strip_market(db, start_date, end_date)
+
     return GroupPriceTableResponse(
         data=all_data,
         companies=companies,
@@ -229,6 +233,7 @@ async def get_group_enterprise_price(
             "end": end_date.isoformat(),
         },
         latest_date=latest_date,
+        white_strip_market=white_strip_market,
     )
 
 
@@ -237,6 +242,59 @@ WHITE_STRIP_MARKET_SOURCES = [
     "北京石门", "上海西郊", "成都点杀", "山西太原",
     "杭州五和", "无锡天鹏", "南京众彩", "广西桂林",
 ]
+
+
+def _fetch_white_strip_market(
+    db: Session, start_date: date, end_date: date
+) -> WhiteStripMarketResponse:
+    """查询表格二：重点市场白条到货量&价格（与 white-strip-market 接口同逻辑、同数据源）。"""
+    in_placeholders = ", ".join([f":src_{i}" for i in range(len(WHITE_STRIP_MARKET_SOURCES))])
+    sql = text(f"""
+        SELECT trade_date, source, metric_type, value
+        FROM fact_carcass_market
+        WHERE metric_type IN ('carcass_arrival', 'carcass_price')
+          AND trade_date >= :start_date
+          AND trade_date <= :end_date
+          AND value IS NOT NULL
+          AND source IN ({in_placeholders})
+        ORDER BY trade_date DESC, source
+    """)
+    params: dict = {"start_date": start_date, "end_date": end_date}
+    for i, name in enumerate(WHITE_STRIP_MARKET_SOURCES):
+        params[f"src_{i}"] = name
+    rows = db.execute(sql, params).fetchall()
+
+    grouped: Dict[str, Dict[str, object]] = {}
+    markets_set: set = set()
+    for row in rows:
+        trade_date, source, metric_type, value = row
+        date_str = trade_date.isoformat()
+        market_name = source
+        markets_set.add(market_name)
+        key = f"{date_str}|{market_name}"
+        if key not in grouped:
+            grouped[key] = {"date": date_str, "market": market_name}
+        if metric_type == "carcass_arrival":
+            grouped[key]["arrival_volume"] = round(float(value), 2)
+        elif metric_type == "carcass_price":
+            grouped[key]["price"] = round(float(value), 2)
+
+    all_data = [
+        WhiteStripMarketDataPoint(
+            date=v["date"],
+            market=v["market"],
+            arrival_volume=v.get("arrival_volume"),
+            price=v.get("price"),
+        )
+        for v in grouped.values()
+    ]
+    all_data.sort(key=lambda x: x.date, reverse=True)
+    latest_date = all_data[0].date if all_data else None
+    return WhiteStripMarketResponse(
+        data=all_data,
+        markets=sorted(list(markets_set)),
+        latest_date=latest_date,
+    )
 
 
 @router.get("/white-strip-market", response_model=WhiteStripMarketResponse)

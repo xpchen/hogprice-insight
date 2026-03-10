@@ -910,33 +910,36 @@ const renderSlaughterLunarChart = () => {
   
   slaughterLunarChart = echarts.init(slaughterLunarChartRef.value)
   
-  // 收集所有唯一的month_day作为X轴（农历日期索引）
-  const allMonthDays = new Set<string>()
-  slaughterLunarData.value.series.forEach(s => {
-    s.data.forEach(d => {
-      if (d.month_day) allMonthDays.add(d.month_day)
+  // X 轴：优先用后端 x_axis_labels（01-08～12-28），保证不出现腊月后正月
+  const labels = slaughterLunarData.value.x_axis_labels
+  const validRange = (n: number) => n >= 1 && n <= 400
+  let xAxisData: string[]
+  let orderedIndices: number[]
+  if (labels && typeof labels === 'object' && Object.keys(labels).length > 0) {
+    orderedIndices = Object.keys(labels)
+      .map((k) => parseInt(k, 10))
+      .filter((n) => !isNaN(n) && validRange(n))
+      .sort((a, b) => a - b)
+    xAxisData = orderedIndices.map((i) => (labels as Record<number, string>)[i] ?? String(i))
+  } else {
+    const allMonthDays = new Set<string>()
+    slaughterLunarData.value.series.forEach(s => {
+      s.data.forEach(d => {
+        if (d.month_day) allMonthDays.add(d.month_day)
+      })
     })
-  })
-  const xAxisData = Array.from(allMonthDays).sort((a, b) => {
-    // 按数字排序（month_day是农历日期索引字符串）
-    const numA = parseInt(a) || 0
-    const numB = parseInt(b) || 0
-    return numA - numB
-  })
+    orderedIndices = Array.from(allMonthDays).map((a) => parseInt(a, 10)).filter((n) => !isNaN(n) && validRange(n)).sort((a, b) => a - b)
+    xAxisData = orderedIndices.map(String)
+  }
   
-  
-  // 为每个年份构建数据，对齐到X轴
+  // 为每个年份构建数据，对齐到 X 轴（按 lunar_day_index 或 month_day 数字）
   const series = slaughterLunarData.value.series.map(s => {
-    // 创建month_day到value的映射
     const valueMap = new Map<string, number | null>()
     s.data.forEach(d => {
-      if (d.month_day) {
-        valueMap.set(d.month_day, d.value)
-      }
+      const k = d.lunar_day_index != null ? String(d.lunar_day_index) : (d.month_day ?? '')
+      if (k) valueMap.set(k, d.value ?? null)
     })
-    
-    // 按照X轴顺序提取值
-    const values = xAxisData.map(md => valueMap.get(md) ?? null)
+    const values = orderedIndices.map((i) => valueMap.get(String(i)) ?? null)
     
     // 判断是否为闰月系列
     const isLeapMonth = s.is_leap_month === true

@@ -124,7 +124,7 @@
           </el-select>
         </div>
 
-        <!-- 白条市场表格：市场在行上，列为各日期的到货量/价格（日期正序） -->
+        <!-- 白条市场表格：旧版布局，固定四列 日期 / 市场 / 到货量 / 价格，每行一条记录 -->
         <div class="table-container">
           <el-table
             :data="table2DisplayData"
@@ -134,31 +134,20 @@
             style="width: 100%"
             max-height="calc(100vh - 320px)"
           >
-            <el-table-column prop="market" label="市场" min-width="88" fixed="left" align="center" />
-            <template v-for="date in table2DateList" :key="date">
-              <el-table-column :label="formatDate(date)" align="center">
-                <el-table-column
-                  :label="'到货量'"
-                  :prop="'arrival_'+date"
-                  min-width="72"
-                  align="right"
-                >
-                  <template #default="{ row }">
-                    {{ row['arrival_'+date] != null ? formatValue(row['arrival_'+date]) : '-' }}
-                  </template>
-                </el-table-column>
-                <el-table-column
-                  :label="'价格'"
-                  :prop="'price_'+date"
-                  min-width="72"
-                  align="right"
-                >
-                  <template #default="{ row }">
-                    {{ row['price_'+date] != null ? formatPrice(row['price_'+date]) : '-' }}
-                  </template>
-                </el-table-column>
-              </el-table-column>
-            </template>
+            <el-table-column prop="date" label="日期" min-width="110" align="center">
+              <template #default="{ row }">{{ formatDate(row.date) }}</template>
+            </el-table-column>
+            <el-table-column prop="market" label="市场" min-width="88" align="center" />
+            <el-table-column prop="arrival_volume" label="到货量" min-width="90" align="right">
+              <template #default="{ row }">
+                {{ row.arrival_volume != null ? formatValue(row.arrival_volume) : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="price" label="价格" min-width="90" align="right">
+              <template #default="{ row }">
+                {{ row.price != null ? formatPrice(row.price) : '-' }}
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </div>
@@ -169,14 +158,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getGroupEnterprisePrice, getWhiteStripMarket } from '@/api/group-price'
+import { getGroupEnterprisePrice } from '@/api/group-price'
 import type { GroupPriceTableResponse, WhiteStripMarketResponse, GroupPriceDataPoint } from '@/api/group-price'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
 
 const loading1 = ref(false)
 const loading2 = ref(false)
 const table1Data = ref<GroupPriceTableResponse | null>(null)
-const table2Data = ref<WhiteStripMarketResponse | null>(null)
+const table2Data = ref<WhiteStripMarketResponse | null>(null) // 来自 group-enterprise-price 的 white_strip_market
 
 const selectedDays = ref(90)
 const selectedDays2 = ref(90)
@@ -220,37 +209,23 @@ const table1DisplayData = computed(() => {
   }))
 })
 
-// 表格2：市场在行上，日期正序；每行一个市场，列为各日期的到货量/价格
-const table2DateList = computed(() => {
-  if (!table2Data.value?.data?.length) return []
-  const set = new Set<string>()
-  table2Data.value.data.forEach((d: { date: string }) => set.add(d.date))
-  return Array.from(set).sort()
-})
-
-// 表格2 市场顺序（与后端 WHITE_STRIP_MARKET_SOURCES 一致，参照原表）
+// 表格2 市场顺序（与后端一致，用于排序）
 const TABLE2_MARKET_ORDER = ['北京石门', '上海西郊', '成都点杀', '山西太原', '杭州五和', '无锡天鹏', '南京众彩', '广西桂林']
 
+// 表格2：旧版布局，每行一条记录（日期、市场、到货量、价格），按日期升序、同日期内按市场顺序
 const table2DisplayData = computed(() => {
   if (!table2Data.value || !table2Data.value.data.length) return []
-  const dates = table2DateList.value
-  const marketsOrdered = TABLE2_MARKET_ORDER.filter((m: string) => (table2Data.value?.markets || []).includes(m))
-  const byMarketDate: Record<string, Record<string, { arrival_volume?: number; price?: number }>> = {}
-  table2Data.value.data.forEach((d: WhiteStripMarketDataPoint) => {
-    if (!byMarketDate[d.market]) byMarketDate[d.market] = {}
-    if (!byMarketDate[d.market][d.date]) byMarketDate[d.market][d.date] = {}
-    if (d.arrival_volume != null) byMarketDate[d.market][d.date].arrival_volume = d.arrival_volume
-    if (d.price != null) byMarketDate[d.market][d.date].price = d.price
+  const list = [...table2Data.value.data]
+  const marketIdx = (m: string) => {
+    const i = TABLE2_MARKET_ORDER.indexOf(m)
+    return i >= 0 ? i : TABLE2_MARKET_ORDER.length
+  }
+  list.sort((a, b) => {
+    const d = a.date.localeCompare(b.date)
+    if (d !== 0) return d
+    return marketIdx(a.market) - marketIdx(b.market)
   })
-  return marketsOrdered.map((market: string) => {
-    const row: Record<string, string | number | null> = { market }
-    dates.forEach((date: string) => {
-      const v = byMarketDate[market]?.[date]
-      row[`arrival_${date}`] = v?.arrival_volume ?? null
-      row[`price_${date}`] = v?.price ?? null
-    })
-    return row
-  })
+  return list
 })
 
 // 获取企业价格
@@ -295,15 +270,12 @@ const loadTable1Data = async () => {
   }
 }
 
-// 加载表格2数据
+// 加载表格2数据（旧版同接口：/api/v1/group-price/group-enterprise-price?days=90）
 const loadTable2Data = async () => {
   loading2.value = true
   try {
-    const response = await getWhiteStripMarket(selectedDays2.value)
-    console.log('表格2数据加载成功:', response)
-    table2Data.value = response
-    console.log('table2Data.value:', table2Data.value)
-    console.log('table2DisplayData:', table2DisplayData.value)
+    const response = await getGroupEnterprisePrice(selectedDays2.value)
+    table2Data.value = response.white_strip_market ?? null
   } catch (error: any) {
     console.error('加载数据失败:', error)
     ElMessage.error('加载数据失败: ' + (error.message || '未知错误'))

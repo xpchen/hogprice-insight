@@ -265,6 +265,20 @@ const calculateSlaughterChanges = async () => {
   }
 }
 
+/** 将后端返回的农历月-日 "MM-DD" 转为中文农历显示，如 "01-08" → "正月初八" */
+function formatLunarMonthDay(mmdd: string): string {
+  const m = /^(\d{1,2})-(\d{1,2})$/.exec(String(mmdd).trim())
+  if (!m) return mmdd
+  const month = parseInt(m[1], 10)
+  const day = parseInt(m[2], 10)
+  if (month < 1 || month > 12 || day < 1 || day > 30) return mmdd
+  const monthNames = ['正月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '冬月', '腊月']
+  const dayNames = ['初一', '初二', '初三', '初四', '初五', '初六', '初七', '初八', '初九', '初十',
+    '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十',
+    '廿一', '廿二', '廿三', '廿四', '廿五', '廿六', '廿七', '廿八', '廿九', '三十']
+  return monthNames[month - 1] + dayNames[day - 1]
+}
+
 // 渲染农历日度屠宰量图表
 const renderSlaughterLunarChart = () => {
   if (!slaughterLunarChartRef.value || !slaughterLunarData.value || slaughterLunarData.value.series.length === 0) {
@@ -290,7 +304,7 @@ const renderSlaughterLunarChart = () => {
   
   slaughterLunarChart = echarts.init(slaughterLunarChartRef.value)
   
-  // X 轴：用后端 x_axis_labels 的农历日期（MM-DD）作为刻度，保证坐标轴显示日期而非索引数字
+  // X 轴：后端 x_axis_labels 为农历 MM-DD，转为中文农历显示（正月初八、二月十五等）
   const labels = slaughterLunarData.value.x_axis_labels
   const validRange = (n: number) => n >= 1 && n <= 400
   let xAxisData: string[]
@@ -300,7 +314,10 @@ const renderSlaughterLunarChart = () => {
       .map((k) => parseInt(k, 10))
       .filter((n) => !isNaN(n) && validRange(n))
       .sort((a, b) => a - b)
-    xAxisData = orderedIndices.map((i) => (labels as Record<number, string>)[i] ?? String(i))
+    xAxisData = orderedIndices.map((i) => {
+      const raw = (labels as Record<number, string>)[i] ?? String(i)
+      return formatLunarMonthDay(raw)
+    })
   } else {
     orderedIndices = []
     const allMonthDays = new Set<string>()

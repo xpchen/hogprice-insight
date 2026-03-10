@@ -28,6 +28,8 @@ class Settings(BaseSettings):
 
     # 快速图表预计算：内部请求携带此 header 时以首名用户身份访问（仅本地使用）
     QUICK_CHART_INTERNAL_SECRET: Optional[str] = None
+    # 预计算单次请求超时（秒），农历等计算较久时可调大，默认 15 分钟
+    QUICK_CHART_PRECOMPUTE_TIMEOUT: float = 900.0
     # 审计对账时暂时禁用图表缓存，保证拿到真实数据库结果。.env 中设置 DISABLE_CHART_CACHE=true 禁用
     DISABLE_CHART_CACHE: bool = False
     # 预计算请求的 base URL（默认本机）

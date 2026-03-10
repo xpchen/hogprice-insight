@@ -310,9 +310,26 @@ function toSeasonalityDataMonthDay(res: SeasonalityResponse | null): Seasonality
   return { x_values, series, meta: { unit: res.unit || '', freq: 'D', metric_name: res.metric_name || '' } }
 }
 
-/** 日度屠宰量（农历，lunar_day_index 或 month_day）→ SeasonalityData */
+/** 日度屠宰量（农历）→ SeasonalityData。优先用 x_axis_labels（01-08～12-28）作为 X 轴，保证不出现腊月后正月。 */
 function toSeasonalityDataLunar(res: SeasonalityResponse | null): SeasonalityData | null {
   if (!res?.series?.length) return null
+  const labels = (res as any).x_axis_labels as Record<number, string> | undefined
+  if (labels && typeof labels === 'object' && Object.keys(labels).length > 0) {
+    const indices = Object.keys(labels)
+      .map((k) => parseInt(k, 10))
+      .filter((n) => !isNaN(n) && n >= 1 && n <= 400)
+      .sort((a, b) => a - b)
+    const x_values = indices.map((i) => labels[i] ?? String(i))
+    const series = res.series.map((s: any) => {
+      const valueMap = new Map<number, number | null>()
+      ;(s.data || []).forEach((d: any) => {
+        const idx = d.lunar_day_index != null ? d.lunar_day_index : parseInt(String(d.month_day), 10)
+        if (!isNaN(idx)) valueMap.set(idx, d.value ?? null)
+      })
+      return { year: s.year, values: indices.map((i) => valueMap.get(i) ?? null) }
+    })
+    return { x_values, series, meta: { unit: res.unit || '头', freq: 'D', metric_name: res.metric_name || '日度屠宰量' } }
+  }
   const allKeys = new Set<string>()
   res.series.forEach((s: any) => {
     (s.data || []).forEach((d: any) => {
@@ -327,13 +344,9 @@ function toSeasonalityDataLunar(res: SeasonalityResponse | null): SeasonalityDat
       const k = d.month_day ?? (d.lunar_day_index != null ? String(d.lunar_day_index) : '')
       if (k) valueMap.set(k, d.value ?? null)
     })
-    return { year: s.year, values: x_values.map(k => valueMap.get(k) ?? null) }
+    return { year: s.year, values: x_values.map((k) => valueMap.get(k) ?? null) }
   })
-  return {
-    x_values,
-    series,
-    meta: { unit: res.unit || '头', freq: 'D', metric_name: res.metric_name || '日度屠宰量' }
-  }
+  return { x_values, series, meta: { unit: res.unit || '头', freq: 'D', metric_name: res.metric_name || '日度屠宰量' } }
 }
 
 function toSeasonalityDataRegion(res: SeasonalityResponse | null): SeasonalityData | null {
