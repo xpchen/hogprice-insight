@@ -204,11 +204,12 @@ const headerGrid = computed(() => {
   return grid
 })
 
-/** 表头列背景：月度=默认，母猪效能/新生仔猪=黄，5月大猪=绿，残差率/定点屠宰环比=橙 */
+/** 表头列背景与列宽：月度=默认，能繁存栏=收缩，母猪效能/新生仔猪=黄，5月大猪=绿，残差率/定点屠宰环比=橙 */
 function getHeaderCellClass(_r: number, _c: number, cell: { value: string } | null): string {
   if (!cell?.value) return ''
   const v = String(cell.value)
   if (/^月度$/.test(v)) return 'header-month'
+  if (/能繁存栏|能繁/i.test(v)) return 'header-narrow'
   if (/母猪效能|新生仔猪/i.test(v)) return 'header-yellow'
   if (/5月大猪/i.test(v)) return 'header-green'
   if ((/残差率|定点屠宰/i.test(v) && /环比/i.test(v)) || v === '环比') return 'header-orange'
@@ -226,7 +227,7 @@ function getParentHeader(colIdx: number): string {
   return String(td.header_row_0?.[colIdx] ?? '').trim()
 }
 
-/** 数据单元格：负值红色、环比/同比列、残差率/定点屠宰环比列橙色 */
+/** 数据单元格：负值红色、环比/同比列、残差率/定点屠宰环比列橙色、能繁存栏列收缩 */
 function getDataCellClass(colIdx: number, _cell: unknown): string {
   const td = tableData.value
   if (!td) return ''
@@ -237,6 +238,7 @@ function getDataCellClass(colIdx: number, _cell: unknown): string {
   if (isMomYoy) cls.push('cell-mom-yoy')
   const parent = getParentHeader(colIdx)
   if ((/残差率|定点屠宰/.test(parent)) && /环比/.test(String(h2))) cls.push('cell-orange')
+  if (/能繁存栏|能繁/.test(parent) || /能繁存栏|能繁/.test(String(td.header_row_0?.[colIdx] ?? ''))) cls.push('cell-narrow')
   const num = typeof _cell === 'number' ? _cell : parseFloat(String(_cell ?? ''))
   if (Number.isFinite(num) && num < 0) cls.push('cell-negative')
   return cls.join(' ')
@@ -248,18 +250,20 @@ function formatCell(val: unknown): string {
   return String(val).trim() || ''
 }
 
-/** 环比/同比列显示括号格式如 (0.3) */
+/** 数据格：第一列为年份-月度；所有列负数均加括号并红色（与 Excel 一致） */
 function formatDataCell(colIdx: number, val: unknown): string {
+  if (colIdx === 0 && val != null && String(val).trim() !== '') {
+    const str = String(val).trim()
+    const match = str.match(/^(\d{4})-(\d{1,2})/)
+    if (match) return `${match[1]}-${match[2].padStart(2, '0')}`
+    return str
+  }
   const s = formatCell(val)
   if (!s || s === '-') return s
-  const td = tableData.value
-  const h1 = td?.header_row_1?.[colIdx] ?? ''
-  const h2 = td?.header_row_2?.[colIdx] ?? ''
-  const isMomYoy = /环比|同比/.test(String(h1)) || /环比|同比/.test(String(h2))
-  if (!isMomYoy) return s
   const num = parseFloat(s)
-  if (!Number.isFinite(num)) return s
-  return `(${num})`
+  if (Number.isFinite(num) && num < 0) return `(${Math.abs(num)})`
+  if (Number.isFinite(num)) return String(num)
+  return s
 }
 
 async function loadTable() {
@@ -363,16 +367,32 @@ onMounted(() => {
 .raw-excel-table th,
 .raw-excel-table td {
   border: 1px solid #e4e7ed;
-  padding: 6px 10px;
+  padding: 6px 8px;
   text-align: center;
 }
-/* 日期列（第一列）：不换行、宽度加大 */
+/* 第一列（月度）：年份-月度格式，列宽收缩，左侧固定 */
 .raw-excel-table th:first-child,
 .raw-excel-table td:first-child {
   white-space: nowrap;
-  min-width: 110px;
+  min-width: 72px;
+  max-width: 72px;
+  width: 72px;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: #f5f7fa;
+  box-shadow: 1px 0 0 #e4e7ed;
 }
-/* 固定表头：整个 thead 作为一块粘性定位，滚动时无空隙 */
+.raw-excel-table tbody td:first-child {
+  background: #fff;
+}
+.raw-excel-table tbody tr:nth-child(even) td:first-child {
+  background: #fafafa;
+}
+.raw-excel-table thead th:first-child {
+  z-index: 11;
+}
+/* 固定表头：整个 thead 作为一块粘性定位 */
 .raw-excel-table thead {
   position: sticky;
   top: 0;
@@ -393,6 +413,14 @@ onMounted(() => {
 }
 .raw-excel-table thead th.header-orange {
   background-color: #fff3e0;
+}
+.raw-excel-table thead th.header-narrow,
+.raw-excel-table tbody td.cell-narrow {
+  max-width: 64px;
+  min-width: 64px;
+  width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .raw-excel-table tbody td {
   text-align: right;

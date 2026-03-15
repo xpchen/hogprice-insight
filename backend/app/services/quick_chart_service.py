@@ -72,29 +72,46 @@ def clear_cached_by_prefix(db: Session, prefix: str) -> int:
     return n
 
 
+def _fetch_url_get(base: str, path: str, params: dict, headers: dict, timeout: float) -> str:
+    """使用标准库 urllib 发起 GET，返回响应正文。非 2xx 抛出异常。"""
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+
+    qs = urlencode(params) if params else ""
+    url = f"{base.rstrip('/')}{path}" + (f"?{qs}" if qs else "")
+    req = Request(url, headers=headers or {}, method="GET")
+    with urlopen(req, timeout=timeout) as resp:
+        code = getattr(resp, "status", None) or resp.getcode()
+        if code >= 400:
+            raise HTTPError(url, code, getattr(resp, "reason", ""), resp.headers, resp)
+        return resp.read().decode("utf-8", errors="replace")
+
+
 def regenerate_cache_sync(db: Session) -> dict:
     """
     同步预计算：清空缓存后按 QUICK_CHART_PRECOMPUTE_URLS 请求并写入缓存。
-    使用 httpx 请求本地 BASE_URL，需在进程内调用（无 auth 时可请求无需登录的接口）。
+    使用 urllib 请求本地 BASE_URL，无需额外依赖。
     返回 {"cleared": n, "computed": k, "errors": [...]}。
     """
-    import httpx
-
-    cleared = clear_all_cached(db)
-    computed = 0
     errors = []
+    try:
+        cleared = clear_all_cached(db)
+    except Exception as e:
+        logger.warning("clear_all_cached failed: %s", e)
+        cleared = 0
+        errors.append({"error": f"clear_all_cached: {e}"})
+
+    computed = 0
     base = getattr(settings, "BACKEND_BASE_URL", None) or BASE_URL
     timeout = getattr(settings, "QUICK_CHART_PRECOMPUTE_TIMEOUT", 900.0)
+    headers = _internal_headers()
 
     for item in QUICK_CHART_PRECOMPUTE_URLS:
         path = item["path"]
         params = item.get("params") or {}
         cache_key = build_cache_key(path, urlencode(params) if params else "")
         try:
-            with httpx.Client(base_url=base, timeout=timeout) as client:
-                r = client.get(path, params=params, headers=_internal_headers())
-                r.raise_for_status()
-                body = r.text
+            body = _fetch_url_get(base, path, params, headers, timeout)
             set_cached(db, cache_key, body)
             computed += 1
         except Exception as e:

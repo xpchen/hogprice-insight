@@ -3,10 +3,11 @@
 一键数据导入 + 缓存刷新脚本
 
 用法:
-    python import_data.py                                    # 使用默认目录增量导入
+    python import_data.py                                    # 全量导入默认目录并刷新缓存
     python import_data.py /path/to/data                      # 指定数据目录
-    python import_data.py --mode bulk                        # 全量导入（TRUNCATE + INSERT）
+    python import_data.py --mode incremental                 # 改为增量导入
     python import_data.py --files "涌益咨询日度数据.xlsx"      # 只导入指定文件
+    python import_data.py --skip-warmup                      # 导入后不预热缓存
 """
 import argparse
 import os
@@ -28,8 +29,9 @@ from import_tool.cli import (
     run_bulk,
 )
 
-# ── 默认数据目录 ──
-DEFAULT_SOURCE_DIR = "/Volumes/DEV/workspace/hogprice-insight/docs/生猪 2/"
+# ── 默认数据目录（项目根下的 docs，可改为 docs/0306_生猪/生猪 等） ──
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_SOURCE_DIR = os.path.join(_PROJECT_ROOT, "docs")
 
 # ── 需要清除缓存的 API 前缀（覆盖 dashboard / price / slaughter 页） ──
 CACHE_PREFIXES_TO_CLEAR = [
@@ -206,8 +208,22 @@ def warm_up_cache():
         if 200 <= resp.status < 300:
             import json
             data = json.loads(body)
-            print(f"    清除 {data.get('cleared', 0)} 条，重新计算 {data.get('computed', 0)} 条 ({elapsed:.1f}s)")
-            return data.get("computed", 0)
+            cleared = data.get("cleared", 0)
+            computed = data.get("computed", 0)
+            errors = data.get("errors") or []
+            print(f"    清除 {cleared} 条，重新计算 {computed} 条 ({elapsed:.1f}s)")
+            if not data.get("ok", True) or errors:
+                for err in errors[:10]:
+                    if isinstance(err, dict):
+                        msg = err.get("error") or err.get("path") or str(err)
+                        if err.get("path"):
+                            msg = f"{err.get('path')}: {msg}"
+                        print(f"    预计算错误: {msg}")
+                    else:
+                        print(f"    预计算错误: {err}")
+                if len(errors) > 10:
+                    print(f"    ... 共 {len(errors)} 条错误")
+            return computed
         print(f"    ✗ HTTP {resp.status} ({elapsed:.1f}s)")
         return 0
     except Exception as e:
@@ -221,9 +237,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python import_data.py                                    # 增量导入默认目录
-  python import_data.py /path/to/data                      # 增量导入指定目录
-  python import_data.py --mode bulk                        # 全量导入（清空+重导）
+  python import_data.py                                    # 全量导入默认目录并刷新缓存
+  python import_data.py /path/to/data                      # 全量导入指定目录
+  python import_data.py --mode incremental                 # 改为增量导入
   python import_data.py --files "涌益咨询日度数据.xlsx"      # 只导入指定文件
   python import_data.py --skip-warmup                      # 导入后不预热缓存
         """,
@@ -237,8 +253,8 @@ def main():
     parser.add_argument(
         "--mode",
         choices=["incremental", "bulk"],
-        default="incremental",
-        help="导入模式: incremental=增量(默认) | bulk=全量(TRUNCATE+INSERT)",
+        default="bulk",
+        help="导入模式: bulk=全量(默认, TRUNCATE+INSERT) | incremental=增量",
     )
     parser.add_argument(
         "--files",

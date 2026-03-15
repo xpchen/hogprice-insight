@@ -119,10 +119,10 @@ class EnterpriseMonthlyReader(BaseSheetReader):
         汇总: Row1=region groups; Row2=metric headers per region
         Row3+: col1=period(上旬/中旬/月度), col2=date, col3..=values
 
-        D2 重点省份出栏统计仅录入 广东、四川、贵州，数据范围 B列:Q列（列2=日期，列3-17=三省指标）。
-        全国CR20(18-20)、全国CR5(21-22) 不录入。
+        D2 重点省份出栏统计：与 Excel 汇总 sheet 一一对应，一行（A 旬度 + B 日期 + C:Q 值）→ 多条 DB 记录，同一行共享 (month_date, period_tag)。
+        仅录入 广东、四川、贵州，B:Q；全国CR20/CR5 不录入。
 
-        Region / metric columns (仅录入 col3..17):
+        Region / metric columns (col3..17):
           广东 (col3..7): 出栏计划(3), 实际出栏量(4), 计划完成率(5), 均重(6), 销售均价(7)
           四川 (col8..12): 出栏计划(8), 实际出栏量(9), 计划完成率(10), 均重(11), 计划均重(12)
           贵州 (col13..17): 计划出栏量(13), 实际出栏量(14), 计划达成率(15), 实际均重(16), 计划均重(17)
@@ -156,19 +156,19 @@ class EnterpriseMonthlyReader(BaseSheetReader):
                 period = ws.cell(row=row, column=1).value
                 if not period:
                     continue
-                period_str = str(period).strip()
+                period_str = str(period).strip().replace("\u3000", "").replace(" ", "")
 
                 dt = parse_date(ws.cell(row=row, column=2).value)
                 if not dt:
                     continue
                 month_dt = dt.replace(day=1)
 
-                # Build indicator suffix from period
-                if period_str == "月度":
+                # 旬度统一为 first_10d / mid_10d / monthly，避免 A 列编码或空格导致只存月度
+                if "月度" in period_str or period_str == "月度":
                     period_tag = "monthly"
-                elif period_str == "上旬":
+                elif "上旬" in period_str or period_str == "上旬":
                     period_tag = "first_10d"
-                elif period_str == "中旬":
+                elif "中旬" in period_str or period_str == "中旬":
                     period_tag = "mid_10d"
                 else:
                     period_tag = period_str
@@ -176,6 +176,7 @@ class EnterpriseMonthlyReader(BaseSheetReader):
                 for col, (region, company, metric, unit) in COL_MAP.items():
                     val = clean_value(ws.cell(row=row, column=col).value)
                     if val is not None:
+                        # 原样入库，不做完成率等换算
                         indicator = f"{metric}_{period_tag}"
                         records.append({
                             "month_date": month_dt,
@@ -239,6 +240,8 @@ class EnterpriseMonthlyReader(BaseSheetReader):
                 full_indicator = f"{indicator}_{period}"
 
                 for col, code in company_map.items():
+                    if code == "TOTAL":
+                        continue  # 广东/四川/贵州 仅用汇总 sheet，分省 sheet 不写合计
                     val = clean_value(ws.cell(row=row, column=col).value)
                     if val is not None:
                         records.append({
@@ -311,6 +314,8 @@ class EnterpriseMonthlyReader(BaseSheetReader):
                 full_indicator = f"{indicator}_{period}"
 
                 for col, code in company_map.items():
+                    if code == "TOTAL":
+                        continue  # 广东/四川/贵州 仅用汇总 sheet，分省 sheet 不写合计
                     val = clean_value(ws.cell(row=row, column=col).value)
                     if val is not None:
                         records.append({
@@ -374,6 +379,8 @@ class EnterpriseMonthlyReader(BaseSheetReader):
                     unit = "万头"
 
                 for col, code in company_map.items():
+                    if code == "TOTAL":
+                        continue  # 广东/四川/贵州 仅用汇总 sheet，分省 sheet 不写合计
                     val = clean_value(ws.cell(row=row, column=col).value)
                     if val is not None:
                         records.append({

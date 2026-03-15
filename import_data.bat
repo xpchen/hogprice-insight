@@ -2,20 +2,24 @@
 setlocal
 
 REM ============================================================
-REM  HogPrice Data Import (Windows)
+REM  HogPrice Data Import (Windows) - Full import
 REM  Usage:
-REM    Double-click                 -> incremental import (default dir)
-REM    import_data.bat D:\data\     -> incremental import (custom dir)
-REM    import_data.bat --bulk       -> full import (truncate + insert)
+REM    Double-click                 -> full import (data dir: docs)
+REM    import_data.bat D:\data\     -> full import (custom dir)
+REM ============================================================
+REM  Full import = truncate fact tables then insert from Excel;
+REM  includes 3.2 enterprise monthly.
+REM  Default data dir: docs\0306_*\* (e.g. docs\0306_??\??) via short path, no Chinese in file.
 REM ============================================================
 
 set "PROJ=%~dp0"
 set "PROJ=%PROJ:~0,-1%"
 set "VENV=%PROJ%\backend\env\Scripts\activate.bat"
-set "DATA_DIR=%PROJ%\docs\生猪 2"
+set "DATA_DIR=%PROJ%\docs"
+for /d %%A in ("%PROJ%\docs\0306_*") do for /d %%B in ("%%A\*") do set "DATA_DIR=%%~sB"
 
 echo ============================================================
-echo   HogPrice Data Import
+echo   HogPrice Data Import (full)
 echo   Project: %PROJ%
 echo ============================================================
 
@@ -30,36 +34,21 @@ if not exist "%VENV%" (
 
 call "%VENV%"
 
-set "MODE_ARG="
-set "DIR_ARG="
+set "DIR_ARG=%DATA_DIR%"
+if not "%~1"=="" set "DIR_ARG=%~1"
 
-if "%~1"=="--bulk" (
-    set "MODE_ARG=--mode bulk"
-) else if not "%~1"=="" (
-    set "DIR_ARG=%~1"
-) else (
-    set "DIR_ARG=%DATA_DIR%"
-)
-
-if not "%DIR_ARG%"=="" (
-    if not exist "%DIR_ARG%" (
-        echo.
-        echo [ERROR] Data directory not found: %DIR_ARG%
-        echo.
-        pause
-        exit /b 1
-    )
+if not exist "%DIR_ARG%" (
+    echo.
+    echo [ERROR] Data directory not found: %DIR_ARG%
+    echo.
+    pause
+    exit /b 1
 )
 
 cd /d "%PROJ%"
 
-if "%DIR_ARG%"=="" (
-    echo Running: python import_data.py %MODE_ARG%
-    python import_data.py %MODE_ARG%
-) else (
-    echo Running: python import_data.py "%DIR_ARG%" %MODE_ARG%
-    python import_data.py "%DIR_ARG%" %MODE_ARG%
-)
+echo Running: python import_data.py "%DIR_ARG%" --mode bulk
+python import_data.py "%DIR_ARG%" --mode bulk
 
 echo.
 if %ERRORLEVEL%==0 (

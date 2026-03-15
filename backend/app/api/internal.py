@@ -32,10 +32,21 @@ def refresh_chart_cache(
     在后台直接更新缓存，无需通过 Web 操作。
     调用方需在请求头携带 X-Quick-Chart-Secret（与 .env 中 QUICK_CHART_INTERNAL_SECRET 一致）。
     """
-    result = regenerate_cache_sync(db)
-    return {
-        "ok": True,
-        "cleared": result["cleared"],
-        "computed": result["computed"],
-        "errors": result.get("errors", []),
-    }
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        result = regenerate_cache_sync(db)
+        return {
+            "ok": True,
+            "cleared": result["cleared"],
+            "computed": result["computed"],
+            "errors": result.get("errors", []),
+        }
+    except Exception as e:
+        logger.exception("refresh-chart-cache failed")
+        return {
+            "ok": False,
+            "cleared": 0,
+            "computed": 0,
+            "errors": [{"error": str(e)}],
+        }

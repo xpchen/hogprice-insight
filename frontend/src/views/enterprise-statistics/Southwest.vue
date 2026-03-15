@@ -12,23 +12,13 @@
         </div>
       </template>
 
-      <!-- 时间范围 + 旬度筛选 -->
+      <!-- 全部 / 近4个月（无日期筛选） + 旬度筛选 -->
       <div class="filter-row">
-        <div class="date-range-selector">
-          <el-date-picker
-            v-model="dateRange"
-            type="daterange"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            format="YYYY-MM-DD"
-            value-format="YYYY-MM-DD"
-            size="small"
-            @change="handleDateRangeChange"
-          />
-          <el-button type="primary" size="small" @click="loadDefaultRange">
-            最近4个月
-          </el-button>
+        <div class="scope-buttons">
+          <el-radio-group v-model="scope" size="small" @change="loadData">
+            <el-radio-button label="all">全部</el-radio-button>
+            <el-radio-button label="recent_4_months">近4个月</el-radio-button>
+          </el-radio-group>
         </div>
         <div class="period-filter">
           <span class="filter-label">旬度筛选：</span>
@@ -85,7 +75,10 @@
         </el-table>
       </div>
 
-      <!-- 滚动提示 -->
+      <!-- 与 Excel 一一对应说明 + 滚动提示 -->
+      <div class="data-hint">
+        表格与「集团企业月度数据跟踪」Excel 汇总 sheet 一一对应（日期、旬度、三省指标）；请保持旬度筛选全选以查看完整行。
+      </div>
       <div v-if="filteredRows.length > 12" class="scroll-hint">
         <el-icon><ArrowRight /></el-icon>
         <span>表格共 {{ filteredRows.length }} 行数据，表头固定可滚动查看</span>
@@ -109,8 +102,8 @@ const loading = ref(false)
 const tableData = ref<ProvinceSummaryTableResponse | null>(null)
 const allRows = ref<any[]>([])
 
-// 日期范围（默认最近4个月）
-const dateRange = ref<[string, string] | null>(null)
+// 范围：全部（默认）/ 近4个月，无日期筛选
+const scope = ref<'all' | 'recent_4_months'>('all')
 
 // 旬度筛选（默认全选）
 const periodTypeFilter = ref<string[]>(['上旬', '中旬', '月度'])
@@ -126,31 +119,29 @@ const filteredRows = computed(() => {
 })
 
 
-// 格式化日期
+// 日期原样显示：接口已返回 yyyy/MM/dd，直接展示
 const formatDate = (dateStr: string): string => {
   if (!dateStr) return ''
+  if (dateStr.includes('/')) return dateStr
   const date = new Date(dateStr)
+  const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
-  return `${month}-${day}`
+  return `${year}/${month}/${day}`
 }
 
-// 格式化数值
+// 数值原样显示（与 Excel 一致，不做换算）
 const formatValue = (value: number | null | undefined, columnKey?: string): string => {
   if (value === null || value === undefined) return '-'
-  
-  // 如果是百分比（计划完成率），显示2位小数
+  // 完成率/达成率：Excel 可能为小数(0.98)或百分数(98)，原样显示并加 %
   if (columnKey && (columnKey.includes('完成率') || columnKey.includes('达成率'))) {
-    return (value * 100).toFixed(2) + '%'
+    const pct = value <= 2 ? (value * 100).toFixed(2) : value.toFixed(2)
+    return pct + '%'
   }
-  
-  // 如果是价格或均重，显示2位小数
   if (columnKey && (columnKey.includes('均价') || columnKey.includes('均重'))) {
     return value.toFixed(2)
   }
-  
-  // 其他数值显示整数
-  return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 }
 
 // 格式化更新日期
@@ -207,44 +198,16 @@ const provinceHeaderGroups = computed(() => {
   }))
 })
 
-// 加载默认时间范围（最近4个月）
-// 不传日期范围，让后端自动使用数据的最新日期
-const loadDefaultRange = async () => {
-  // 不设置dateRange，让后端自动计算
-  dateRange.value = null
-  
-  await handleDateRangeChange(null)
-}
-
-// 日期范围变化
-const handleDateRangeChange = async (range: [string, string] | null) => {
+// 加载数据：全部 或 近4个月（无日期筛选）
+const loadData = async () => {
   loading.value = true
-  
   try {
-    // 如果传入了日期范围，使用传入的日期；否则不传参数，让后端自动使用数据的最新日期
-    const startDate = range && range.length === 2 ? range[0] : undefined
-    const endDate = range && range.length === 2 ? range[1] : undefined
-    
-    const data = await getProvinceSummaryTable(startDate, endDate)
+    const data = await getProvinceSummaryTable(scope.value)
     tableData.value = data
-    // 确保rows中包含period_type字段
     allRows.value = (data.rows || []).map(row => ({
       ...row,
-      period_type: row.period_type || '月度'  // 如果没有旬度信息，默认为月度
+      period_type: row.period_type || '月度'
     }))
-    
-    // 如果后端返回了latest_date，更新dateRange显示
-    if (data.latest_date && !range) {
-      // 从latest_date往前推4个月
-      const latestDate = new Date(data.latest_date)
-      const startDate = new Date(latestDate)
-      startDate.setMonth(startDate.getMonth() - 4)
-      
-      dateRange.value = [
-        startDate.toISOString().split('T')[0],
-        latestDate.toISOString().split('T')[0]
-      ]
-    }
   } catch (error: any) {
     console.error('加载数据失败:', error)
     ElMessage.error('加载数据失败: ' + (error.message || '未知错误'))
@@ -254,8 +217,7 @@ const handleDateRangeChange = async (range: [string, string] | null) => {
 }
 
 onMounted(() => {
-  // 默认加载最近4个月的数据
-  loadDefaultRange()
+  loadData()
 })
 </script>
 
@@ -280,10 +242,9 @@ onMounted(() => {
   margin-bottom: 4px;
 }
 
-.date-range-selector {
+.scope-buttons {
   display: flex;
   align-items: center;
-  gap: 6px;
 }
 
 .period-filter {
@@ -305,6 +266,11 @@ onMounted(() => {
   overflow: hidden;
 }
 
+.data-hint {
+  margin-top: 4px;
+  color: #606266;
+  font-size: 12px;
+}
 .scroll-hint {
   margin-top: 4px;
   text-align: center;

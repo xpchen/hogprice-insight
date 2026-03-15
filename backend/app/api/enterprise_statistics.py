@@ -323,139 +323,185 @@ def _period_start(d: date) -> date:
         return d.replace(day=21)
 
 
+# 汇总 sheet（集团企业月度）indicator 后缀 -> 旬度显示
+_INDICATOR_PERIOD_TO_LABEL = {"first_10d": "上旬", "mid_10d": "中旬", "monthly": "月度"}
+
+# 汇总 sheet：region_code + indicator 前缀 -> 前端列名（与 Excel 汇总 B:Q 一致）
+_PROVINCE_SUMMARY_COL_MAP = [
+    ("GUANGDONG", "planned_output", "广东", "出栏计划"),
+    ("GUANGDONG", "actual_output", "广东", "实际出栏量"),
+    ("GUANGDONG", "plan_completion_rate", "广东", "计划完成率"),
+    ("GUANGDONG", "avg_weight", "广东", "均重"),
+    ("GUANGDONG", "avg_price", "广东", "均价"),
+    ("SICHUAN", "planned_output", "四川", "出栏计划"),
+    ("SICHUAN", "actual_output", "四川", "实际出栏量"),
+    ("SICHUAN", "plan_completion_rate", "四川", "计划完成率"),
+    ("SICHUAN", "avg_weight", "四川", "均重"),
+    ("SICHUAN", "planned_avg_weight", "四川", "计划均重"),
+    ("GUIZHOU", "planned_output", "贵州", "计划出栏量"),
+    ("GUIZHOU", "actual_output", "贵州", "实际出栏量"),
+    ("GUIZHOU", "plan_completion_rate", "贵州", "计划达成率"),
+    ("GUIZHOU", "avg_weight", "贵州", "实际均重"),
+    ("GUIZHOU", "planned_avg_weight", "贵州", "计划均重"),
+]
+# 中文 indicator 前缀 -> 英文 base，保证库里有中文时也能 1:1 展示
+_METRIC_CN_TO_BASE = {
+    "出栏计划": "planned_output", "计划出栏量": "planned_output",
+    "实际出栏量": "actual_output",
+    "计划完成率": "plan_completion_rate", "计划达成率": "plan_completion_rate",
+    "均重": "avg_weight", "实际均重": "avg_weight", "计划均重": "planned_avg_weight",
+    "均价": "avg_price", "销售均价": "avg_price",
+}
+
+
+def _display_date_for_period(month_dt: date, period_tag: str) -> date:
+    """汇总 上旬/中旬/月度 对应显示日期（与 Excel 汇总 sheet B 列一致）"""
+    if period_tag == "first_10d":
+        return month_dt.replace(day=10) if month_dt.month != 2 else month_dt.replace(day=min(10, 28))
+    if period_tag == "mid_10d":
+        return month_dt.replace(day=20) if month_dt.month != 2 else month_dt.replace(day=min(20, 28))
+    # monthly: 月末
+    if month_dt.month == 12:
+        return month_dt.replace(day=31)
+    from calendar import monthrange
+    _, last = monthrange(month_dt.year, month_dt.month)
+    return month_dt.replace(day=last)
+
+
+def _date_to_yyyy_mm_dd(d: date) -> str:
+    """日期原样输出格式：yyyy/MM/dd"""
+    return d.strftime("%Y/%m/%d")
+
+
 @router.get("/province-summary-table", response_model=ProvinceSummaryTableResponse)
 async def get_province_summary_table(
+    scope: Optional[str] = Query(None, description="all=全部, recent_4_months=近4个月"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """重点省份旬度汇总表格"""
-    # Determine date range — default to latest 4 months
-    if not end_date:
-        r = db.execute(text(
-            "SELECT MAX(trade_date) FROM fact_enterprise_daily "
-            "WHERE metric_type IN ('actual_sales','planned_volume')"
-        )).scalar()
-        ed = r if r else date.today()
-    else:
-        ed = date.fromisoformat(end_date)
+    """重点省份旬度汇总表格。数据来源：集团企业月度数据跟踪 - 汇总 sheet（B:Q 列）。
+    与 Excel 一一对应：接口按库内 (month_date, period_tag) 原样返回，每行对应 Excel 汇总的一行（日期+旬度+三省指标）。"""
+    # 取库内 month_date 范围
+    min_max = db.execute(text(
+        "SELECT MIN(month_date), MAX(month_date) FROM fact_enterprise_monthly "
+        "WHERE company_code = 'TOTAL' AND region_code IN ('GUANGDONG','SICHUAN','GUIZHOU')"
+    )).fetchone()
+    db_min, db_max = (min_max[0], min_max[1]) if min_max and min_max[0] else (None, None)
 
-    if not start_date:
-        sd = ed - timedelta(days=120)
-    else:
+    if scope == "recent_4_months":
+        ed = db_max if db_max else date.today()
+        ed_first = ed.replace(day=1) if ed.day != 1 else ed
+        y, m = ed_first.year, ed_first.month
+        m -= 3
+        if m <= 0:
+            m += 12
+            y -= 1
+        sd = date(y, m, 1)
+    elif start_date and end_date:
         sd = date.fromisoformat(start_date)
+        ed = date.fromisoformat(end_date)
+    else:
+        # 全部：不传或 scope=all，用库内最小/最大
+        sd = db_min if db_min else date(2020, 1, 1)
+        ed = db_max if db_max else date.today()
 
-    # Query data per province（广东、四川、贵州；不含广西）
-    region_codes = [code for _, code in PROVINCE_SUMMARY_REGIONS]
+    # 查询 汇总 sheet 写入的数据：company_code=TOTAL，广东/四川/贵州
     sql = """
-        SELECT trade_date, region_code, metric_type, SUM(value) AS v
-        FROM fact_enterprise_daily
-        WHERE region_code IN :region_codes
-          AND metric_type IN ('actual_sales','planned_volume')
-          AND trade_date BETWEEN :sd AND :ed
+        SELECT month_date, region_code, indicator, value
+        FROM fact_enterprise_monthly
+        WHERE company_code = 'TOTAL'
+          AND region_code IN ('GUANGDONG','SICHUAN','GUIZHOU')
+          AND month_date >= :sd AND month_date <= :ed
           AND value IS NOT NULL
-          AND company_code != 'SAMPLE'
-        GROUP BY trade_date, region_code, metric_type
-        ORDER BY trade_date
+        ORDER BY month_date, region_code, indicator
     """
-    # IN 子句用占位符展开
-    placeholders = ", ".join([f":rc_{i}" for i in range(len(region_codes))])
-    sql_fixed = sql.replace("IN :region_codes", f"IN ({placeholders})")
-    params = {"sd": sd, "ed": ed}
-    for i, rc in enumerate(region_codes):
-        params[f"rc_{i}"] = rc
-    rows = db.execute(text(sql_fixed), params).fetchall()
+    rows = db.execute(text(sql), {"sd": sd, "ed": ed}).fetchall()
 
-    # Also get MS average price per province
-    price_sql = f"""
-        SELECT trade_date, region_code, value
-        FROM fact_enterprise_daily
-        WHERE region_code IN ({placeholders})
-          AND metric_type = 'ms_avg_price'
-          AND company_code = 'MS'
-          AND trade_date BETWEEN :sd AND :ed
-          AND value IS NOT NULL
-        ORDER BY trade_date
-    """
-    price_rows = db.execute(text(price_sql), params).fetchall()
-
-    # Build period-level aggregation: (period_start, region) -> {metric: sum}
-    region_name_map = {code: name for name, code in PROVINCE_SUMMARY_REGIONS}
-    period_data: Dict[tuple, Dict[str, float]] = {}  # (period_start, period_type) -> {col: val}
-
+    # 与 Excel 1:1：每个 (month_date, period_tag) 对应汇总 sheet 一行
+    # indicator 格式为 {metric}_{period_tag}，period_tag 可能为 first_10d / mid_10d / monthly 或 上旬/中旬/月度
+    # 注意：first_10d 用最后 _ 分割会得到 suffix="10d"，需用倒数第二段 first/mid 还原
+    _PERIOD_NORMALIZE = {"上旬": "first_10d", "中旬": "mid_10d", "月度": "monthly"}
+    period_data: Dict[tuple, Dict[str, Any]] = {}  # (month_date, period_tag) -> {列名: 值}
     for r in rows:
-        td, rgn, mt, val = r[0], r[1], r[2], float(r[3])
-        prov_name = region_name_map.get(rgn, rgn)
-        ps = _period_start(td)
-        pt = _get_period_type(td)
-        key = (ps, pt)
+        month_dt, region_code, indicator, val = r[0], r[1], r[2], float(r[3])
+        if "_" not in indicator:
+            continue
+        parts = indicator.rsplit("_", 1)
+        metric_base, period_tag_raw = parts[0], parts[1]
+        if period_tag_raw == "10d" and metric_base.endswith("_first"):
+            period_tag = "first_10d"
+            metric_base = metric_base[:-6]  # 去掉 _first
+        elif period_tag_raw == "10d" and metric_base.endswith("_mid"):
+            period_tag = "mid_10d"
+            metric_base = metric_base[:-4]  # 去掉 _mid
+        else:
+            period_tag = _PERIOD_NORMALIZE.get(period_tag_raw, period_tag_raw)
+        period_label = _INDICATOR_PERIOD_TO_LABEL.get(period_tag)
+        if not period_label:
+            continue
+        key = (month_dt, period_tag)
         if key not in period_data:
             period_data[key] = {}
-        col = f"{prov_name}-{'出栏计划' if mt == 'planned_volume' else '实际出栏量'}"
-        period_data[key][col] = period_data[key].get(col, 0) + val
+        base_to_try = metric_base if metric_base in ("planned_output", "actual_output", "plan_completion_rate", "avg_weight", "planned_avg_weight", "avg_price") else _METRIC_CN_TO_BASE.get(metric_base, metric_base)
+        for reg, base, prov_name, col_label in _PROVINCE_SUMMARY_COL_MAP:
+            if reg != region_code or base != base_to_try:
+                continue
+            col_key = f"{prov_name}-{col_label}"
+            period_data[key][col_key] = val
+            break
 
-    # Aggregate prices: average over the period
-    price_agg: Dict[tuple, Dict[str, list]] = {}
-    for r in price_rows:
-        td, rgn, val = r[0], r[1], float(r[2])
-        prov_name = region_name_map.get(rgn, rgn)
-        ps = _period_start(td)
-        pt = _get_period_type(td)
-        key = (ps, pt)
-        col = f"{prov_name}-均价"
-        if key not in price_agg:
-            price_agg[key] = {}
-        if col not in price_agg[key]:
-            price_agg[key][col] = []
-        price_agg[key][col].append(val)
-
-    for key, cols in price_agg.items():
-        if key not in period_data:
-            period_data[key] = {}
-        for col, vals in cols.items():
-            period_data[key][col] = round(sum(vals) / len(vals), 2)
-
-    # Compute completion rates
-    for key, cols in period_data.items():
-        for prov_name, _ in PROVINCE_SUMMARY_REGIONS:
-            plan_col = f"{prov_name}-出栏计划"
-            actual_col = f"{prov_name}-实际出栏量"
-            rate_col = f"{prov_name}-计划完成率"
-            plan = cols.get(plan_col, 0)
-            actual = cols.get(actual_col, 0)
-            if plan and plan > 0:
-                cols[rate_col] = round(actual / plan, 4)
-
-    # Build columns
+    # 表头列顺序：日期、旬度，再按 广东/四川/贵州 及指标顺序
     columns = ["日期", "旬度"]
-    for prov_name, _ in PROVINCE_SUMMARY_REGIONS:
-        columns.extend([
-            f"{prov_name}-出栏计划",
-            f"{prov_name}-实际出栏量",
-            f"{prov_name}-计划完成率",
-            f"{prov_name}-均价",
-        ])
+    for _, _, prov_name, col_label in _PROVINCE_SUMMARY_COL_MAP:
+        columns.append(f"{prov_name}-{col_label}")
 
-    # 排序：先按日期（年月）倒序，同月内按 上旬、中旬、月度
-    PERIOD_ORDER = {"上旬": 0, "中旬": 1, "月度": 2}
+    # 去重列名（保持顺序）
+    seen = set()
+    columns_ordered = []
+    for c in columns:
+        if c not in seen:
+            seen.add(c)
+            columns_ordered.append(c)
+    columns = columns_ordered
+
+    # 与 Excel 一致：按日期升序，同月内 上旬→中旬→月度
+    PERIOD_ORDER = {"first_10d": 0, "mid_10d": 1, "monthly": 2}
 
     def sort_key(item):
-        ps, pt = item
-        return (-ps.year, -ps.month, PERIOD_ORDER.get(pt, 3))
+        month_dt, period_tag = item
+        return (month_dt.year, month_dt.month, PERIOD_ORDER.get(period_tag, 3))
 
     sorted_keys = sorted(period_data.keys(), key=sort_key)
     result_rows = []
-    for ps, pt in sorted_keys:
-        row: Dict[str, Any] = {"date": ps.isoformat(), "period_type": pt}
-        row.update(period_data[(ps, pt)])
+    for month_dt, period_tag in sorted_keys:
+        cell_values = period_data[(month_dt, period_tag)]
+        # 与 Excel 一致：只显示至少有一个非空值的行（汇总 sheet 该行 C:Q 至少一格有数）
+        if not any(v is not None and v != "" for v in cell_values.values()):
+            continue
+        display_d = _display_date_for_period(month_dt, period_tag)
+        period_label = _INDICATOR_PERIOD_TO_LABEL.get(period_tag) or "月度"  # 旬度与 Excel A 列一致：上旬/中旬/月度
+        row: Dict[str, Any] = {"date": _date_to_yyyy_mm_dd(display_d), "period_type": period_label}
+        row.update(cell_values)
         result_rows.append(row)
 
-    latest = sorted_keys[0][0].isoformat() if sorted_keys else None
+    latest = result_rows[-1]["date"] if result_rows else None
+    latest_d = None
+    if latest:
+        from datetime import datetime as dt
+        try:
+            latest_d = dt.strptime(latest, "%Y/%m/%d").date()
+        except ValueError:
+            try:
+                latest_d = date.fromisoformat(latest.replace("/", "-"))
+            except ValueError:
+                pass
 
     return ProvinceSummaryTableResponse(
         columns=columns,
         rows=result_rows,
         latest_date=latest,
-        update_time=_format_update_date(sorted_keys[0][0]) if sorted_keys else None,
+        update_time=_format_update_date(latest_d) if latest_d else None,
+        data_source="集团企业月度数据跟踪",
     )

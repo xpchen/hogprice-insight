@@ -84,15 +84,12 @@ export interface ProvinceSummaryTableResponse {
 
 /**
  * 获取重点省份旬度汇总表格数据
+ * @param scope 'all' 全部 | 'recent_4_months' 近4个月，默认全部
  */
-export function getProvinceSummaryTable(
-  startDate?: string,
-  endDate?: string
-): Promise<ProvinceSummaryTableResponse> {
+export function getProvinceSummaryTable(scope?: 'all' | 'recent_4_months'): Promise<ProvinceSummaryTableResponse> {
   const params: any = {}
-  if (startDate) params.start_date = startDate
-  if (endDate) params.end_date = endDate
-  
+  if (scope) params.scope = scope
+
   return request({
     url: '/v1/enterprise-statistics/province-summary-table',
     method: 'get',

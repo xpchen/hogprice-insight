@@ -431,8 +431,10 @@ const renderAllDatesChart = (el: HTMLDivElement, series: PremiumResponseV2['seri
       axisLabel: {
         formatter: (value: string | number) => {
           if (value == null) return ''
-          const str = typeof value === 'number' ? new Date(value).toISOString().slice(0, 10) : String(value).slice(0, 10)
-          return str
+          const d = typeof value === 'number' ? new Date(value) : new Date(String(value).slice(0, 10))
+          const m = String(d.getMonth() + 1).padStart(2, '0')
+          const day = String(d.getDate()).padStart(2, '0')
+          return `${m}-${day}`
         }
       }
     },

@@ -58,20 +58,27 @@ INCREMENTAL_FILES = {
 
 def find_file(source_dir: str, filename: str) -> str | None:
     """在 source_dir 及其子目录中查找文件。若存在多份同名文件（如钢联模板），
-    优先选择路径中含 0226 或 生猪 的完整版（含仓单数据等 sheet）。"""
+    优先选择路径中含 0226 或 生猪 的完整版（含仓单数据等 sheet）。
+    涌益日度：若未找到精确「涌益咨询日度数据.xlsx」，则匹配含「涌益」「日度」且以 .xlsx 结尾的文件（兼容 0306_生猪/生猪 等目录）。"""
     candidates = []
     for root, dirs, files in os.walk(source_dir):
         for f in files:
             if f == filename:
                 path = os.path.join(root, f)
                 candidates.append(path)
+    # 涌益日度：允许模糊匹配（如 0306_生猪/生猪 下可能为「1 涌益咨询日度数据.xlsx」等）
+    if not candidates and "涌益" in filename and "日度" in filename:
+        for root, dirs, files in os.walk(source_dir):
+            for f in files:
+                if f.endswith(".xlsx") and "涌益" in f and "日度" in f:
+                    candidates.append(os.path.join(root, f))
     if not candidates:
         return None
     if len(candidates) == 1:
         return candidates[0]
-    # 多份同名：优先含 0226 / 生猪 的路径（完整钢联模板通常在该类目录下）
-    for path in candidates:
-        if "0226" in path or "生猪" in path:
+    # 多份同名：优先含 0306 / 0226 / 生猪 的路径（最新数据源 docs/0306_生猪/生猪 等）
+    for path in sorted(candidates):
+        if "0306" in path or "0226" in path or "生猪" in path:
             return path
     return candidates[0]
 

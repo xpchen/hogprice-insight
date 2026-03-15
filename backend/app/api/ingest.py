@@ -35,12 +35,15 @@ TEMPLATE_MAP = {
     "YONGYI_WEEKLY": "r09_yongyi_weekly",
 }
 
-# 文件名关键词 → template_type
+# 文件名关键词 → template_type（按匹配顺序，更具体的放前）
+# 集团企业两类 Excel 区分：3.1 分省区 → fact_enterprise_daily(r03)；3.2 月度数据跟踪 → fact_enterprise_monthly(r04)
+# - 3.2、集团企业月度数据跟踪.xlsx → 仅含「集团企业月度」，用 ENTERPRISE_MONTHLY
+# - 3.1、集团企业出栏跟踪【分省区】.xlsx → 含「集团企业出栏跟踪」，用 ENTERPRISE_DAILY
 FILENAME_HINTS = [
     ("钢联", "GANGLIAN_DAILY"),
     ("产业数据", "INDUSTRY_DATA"),
+    ("集团企业月度", "ENTERPRISE_MONTHLY"),  # 先匹配 3.2 月度，再匹配 3.1 分省区
     ("集团企业出栏跟踪", "ENTERPRISE_DAILY"),
-    ("集团企业月度", "ENTERPRISE_MONTHLY"),
     ("白条市场", "WHITE_STRIP_MARKET"),
     ("升贴水", "LH_FTR"),
     ("基差", "FUTURES_BASIS"),
