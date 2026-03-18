@@ -1267,7 +1267,7 @@ async def get_slaughter_lunar(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """日度屠宰量（农历对齐）。农历年按正月初八～腊月二十八的阳历区间取数（如 2024 农历年 = 2024-02-17 ～ 2025-01-27）。"""
+    """日度屠宰量（农历对齐）。阳历区间仍按各农历年正月初八～腊月廿八取数；展示轴为 12×30=360 槽位（与客户 Excel 一致），主曲线仅非闰月，闰月单独 series 与同月槽位对齐。无需重新导入。"""
     _end = end_year if end_year is not None else date.today().year
     _start = start_year if start_year is not None else (_end - 5)
 
@@ -1346,131 +1346,95 @@ async def get_slaughter_lunar(
                 if item.get("lunar_day") is None:
                     item["lunar_day"] = (item["date"] - start_d).days + 1
 
-    max_index = 0
-    valid_indices: List[int] = []
-    for year_data_list in year_data.values():
-        for item in year_data_list:
-            if item["lunar_day_index"] is not None:
-                idx = item["lunar_day_index"]
-                if idx > max_index:
-                    max_index = idx
-                valid_indices.append(idx)
-    if max_index == 0:
-        max_index = 350
+    # 与客户 Excel 一致：阴历标准轴 12 月×每月 30 天 = 360 槽位，槽位 = (月-1)*30 + min(日,30)
+    AXIS_LEN = 360
+
+    def _slot_for_month_day(month: int, day: int) -> Optional[int]:
+        if month is None or day is None:
+            return None
+        try:
+            m = int(month)
+            d = int(day)
+        except (TypeError, ValueError):
+            return None
+        if m < 1 or m > 12 or d < 1:
+            return None
+        d = min(d, 30)
+        return (m - 1) * 30 + d
+
+    # 主曲线：按年 -> 槽位 -> 值（仅非闰月；同日多笔取较晚日期）
+    main_slot_value: Dict[int, Dict[int, Tuple[date, float]]] = {}
+    leap_slot_value: Dict[Tuple[int, int], Dict[int, Tuple[date, float]]] = {}
+
+    for year in year_data:
+        for item in year_data[year]:
+            v = item.get("value")
+            if v is None:
+                continue
+            d = item["date"]
+            if item.get("is_leap_month"):
+                lm = item.get("lunar_month")
+                lm = abs(lm) if isinstance(lm, (int, float)) else (lm or 1)
+                day_in = item.get("lunar_day")
+                if day_in is None:
+                    continue
+                slot = _slot_for_month_day(lm, int(day_in))
+                if slot is None or not (1 <= slot <= AXIS_LEN):
+                    continue
+                key = (year, lm)
+                if key not in leap_slot_value:
+                    leap_slot_value[key] = {}
+                prev = leap_slot_value[key].get(slot)
+                if prev is None or d >= prev[0]:
+                    leap_slot_value[key][slot] = (d, float(v))
+            else:
+                m = item.get("lunar_month")
+                day_in = item.get("lunar_day")
+                if m is None or day_in is None:
+                    continue
+                slot = _slot_for_month_day(m, int(day_in))
+                if slot is None or not (1 <= slot <= AXIS_LEN):
+                    continue
+                if year not in main_slot_value:
+                    main_slot_value[year] = {}
+                prev = main_slot_value[year].get(slot)
+                if prev is None or d >= prev[0]:
+                    main_slot_value[year][slot] = (d, float(v))
 
     series: List[SeasonalitySeries] = []
-    leap_month_series_map: Dict[Tuple[int, int], List[Dict]] = {}
 
-    for year in sorted(year_data.keys()):
-        index_to_value: Dict[int, float] = {}
-        leap_month_data: Dict[Tuple[int, int], Dict[int, float]] = {}
-        for item in year_data[year]:
-            if item["is_leap_month"]:
-                lm_raw = item["lunar_month"]
-                lm = abs(lm_raw) if isinstance(lm_raw, (int, float)) else (lm_raw or 1)
-                key = (item["lunar_year"], lm)
-                if key not in leap_month_data:
-                    leap_month_data[key] = {}
-                leap_index = lm * 30 + item["lunar_day"] if item.get("lunar_day") is not None else None
-                if leap_index and item["value"] is not None:
-                    leap_month_data[key][leap_index] = item["value"]
-            else:
-                if item["lunar_day_index"] is not None and item["value"] is not None:
-                    index_to_value[item["lunar_day_index"]] = item["value"]
-
-        if len(index_to_value) == 0 and len(leap_month_data) == 0:
+    for year in sorted(main_slot_value.keys()):
+        slot_map = main_slot_value[year]
+        if not slot_map:
             continue
+        values_360 = [slot_map.get(i, (None, None))[1] for i in range(1, AXIS_LEN + 1)]
         data_points = [
-            SeasonalityDataPoint(
-                year=year,
-                month_day=str(index),
-                value=index_to_value.get(index),
-                lunar_day_index=index,
-            )
-            for index in range(1, max_index + 1)
+            SeasonalityDataPoint(year=year, month_day=str(i), value=values_360[i - 1], lunar_day_index=i)
+            for i in range(1, AXIS_LEN + 1)
         ]
-        if data_points:
-            series.append(SeasonalitySeries(year=year, data=data_points))
+        series.append(SeasonalitySeries(year=year, data=data_points))
 
-        for (ly, lm_val), leap_values in leap_month_data.items():
-            key2 = (ly, lm_val)
-            if key2 not in leap_month_series_map:
-                leap_month_series_map[key2] = []
-            try:
-                from lunar_python import Lunar
-                from datetime import date as date_class
-                lunar_normal_month_first = Lunar.fromYmd(ly, lm_val, 1)
-                solar_normal_first = lunar_normal_month_first.getSolar()
-                solar_normal_date = date_class(
-                    solar_normal_first.getYear(),
-                    solar_normal_first.getMonth(),
-                    solar_normal_first.getDay(),
-                )
-                normal_first_info = solar_to_lunar(solar_normal_date)
-                base_index = normal_first_info.get("lunar_day_index")
-                fallback_base = (lm_val - 1) * 30 + 1
-                if base_index is None or (lm_val >= 2 and base_index < fallback_base):
-                    base_index = fallback_base
-            except Exception:
-                base_index = (lm_val - 1) * 30 + 1
-            for leap_idx, value in sorted(leap_values.items()):
-                day_in_month = leap_idx % 30 if leap_idx >= 30 else leap_idx
-                if day_in_month == 0:
-                    day_in_month = 30
-                aligned_index = base_index + day_in_month - 1
-                leap_month_series_map[key2].append({"index": aligned_index, "value": value})
-
-    for (lunar_year_val, leap_month_val), leap_data in leap_month_series_map.items():
-        if lunar_year_val in year_data:
-            leap_data_points = [
-                SeasonalityDataPoint(
-                    year=lunar_year_val,
-                    month_day=str(it["index"]),
-                    value=it["value"],
-                    lunar_day_index=it["index"],
-                )
-                for it in sorted(leap_data, key=lambda x: x["index"])
-            ]
-            if leap_data_points:
-                series.append(
-                    SeasonalitySeries(
-                        year=lunar_year_val,
-                        data=leap_data_points,
-                        is_leap_month=True,
-                        leap_month=leap_month_val,
-                    )
-                )
+    for (lunar_year_val, leap_month_val), sm in leap_slot_value.items():
+        if not sm:
+            continue
+        values_360: List[Optional[float]] = [None] * AXIS_LEN
+        for slot, (_, val) in sm.items():
+            if 1 <= slot <= AXIS_LEN:
+                values_360[slot - 1] = val
+        data_points = [
+            SeasonalityDataPoint(year=lunar_year_val, month_day=str(i), value=values_360[i - 1], lunar_day_index=i)
+            for i in range(1, AXIS_LEN + 1)
+        ]
+        series.append(
+            SeasonalitySeries(year=lunar_year_val, data=data_points, is_leap_month=True, leap_month=leap_month_val)
+        )
 
     latest_date_str = rows[-1][0].isoformat()
-    # X 轴只显示 正月初八～腊月二十八，不出现下一年的正月；用参考农历年的区间长度截断标签
     x_axis_labels: Dict[int, str] = {}
-    if valid_indices and year_data:
-        sample_lunar_year = list(year_data.keys())[0]
-        try:
-            from lunar_python import Lunar
-            from datetime import date as date_class
-            dr = get_lunar_year_date_range_la_ba(sample_lunar_year)
-            if dr:
-                _start_la_ba, _end_la_ba = dr
-                max_label_index = (_end_la_ba - _start_la_ba).days + 1  # 仅 01-08 到 12-28
-            else:
-                max_label_index = max_index
-            lunar_new_year = Lunar.fromYmd(sample_lunar_year, 1, 1)
-            solar_new_year = lunar_new_year.getSolar()
-            new_year_date = date_class(
-                solar_new_year.getYear(),
-                solar_new_year.getMonth(),
-                solar_new_year.getDay(),
-            )
-            for idx in range(1, min(max_index, max_label_index) + 1):
-                target_date = date_class.fromordinal(new_year_date.toordinal() + idx - 1 + 7)
-                li = solar_to_lunar(target_date)
-                lm2 = li.get("lunar_month")
-                ld2 = li.get("lunar_day")
-                if lm2 and ld2:
-                    x_axis_labels[idx] = f"{lm2:02d}-{ld2:02d}"
-        except Exception:
-            pass
+    for idx in range(1, AXIS_LEN + 1):
+        m = (idx - 1) // 30 + 1
+        d = (idx - 1) % 30 + 1
+        x_axis_labels[idx] = f"{m:02d}-{d:02d}"
 
     return SlaughterLunarResponse(
         metric_name="日度屠宰量",

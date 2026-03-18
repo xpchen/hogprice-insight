@@ -10,9 +10,9 @@ R02 - 生猪产业数据 Reader
 ─────────────────────────────────────────────────────────────
 A1供给预测 (表头约row1~3, data从row4起, 日期在B列=col1)
   C(2)/D(3)/E(4)=能繁存栏/环比/同比, F(6)=母猪效能, G(7)/H(8)/I(9)=新生仔猪/环比/同比
-  J(10)=5月大猪, K(11)/L(12)=环比/同比, M(13)=残差率, N(14)=压栏系数
-  O(15)=生猪出栏, P(16)/Q(17)=环比/同比, R(18)=累计出栏, S(19)=累同
-  定点屠宰 AC(28)=绝对值, AD(29)=环比, AE(30)=同比（如 2020/1 为 1509.34）(source=A1)
+  J(10)=5月大猪, K(11)/L(12)=环比/同比, N(14)=压栏系数
+  P(16)=残差率, Q(17)=生猪出栏, R(18)=环比, S(19)=同比, W(23)=累计出栏, X(24)=累同
+  定点屠宰 AC(29)=绝对值, AD(30)=环比, AE(31)=同比（如 2020/1 为 1509.34）(source=A1)
 
 NYB (row0=大类表头, row1=子表头, data从row2起, 日期在B列=col1)
   能繁环比: C(2)=全国, D(3)=规模场, E(4)=CR26, F(5)=小散户
@@ -297,18 +297,17 @@ class IndustryDataReader(BaseSheetReader):
                 records.append(self._make_record(
                     month_dt, "medium_large_hog", "", "A1", float(l_val), "yoy_pct", "%", "NATION", self.batch_id,
                 ))
-            # M=残差率
-            m_val = self._cv(t, 12)
+            # P=残差率, Q=生猪出栏, R=环比, S=同比, W=累计出栏, X=累同（与用户 Excel 列一致）
+            m_val = self._cv(t, 15)
             if m_val is not None:
                 records.append(self._make_record(
                     month_dt, "supply_residual_rate", "", "A1", float(m_val), "pct", "%", "NATION", self.batch_id,
                 ))
-            # O=生猪出栏, P=环比, Q=同比, R=累计出栏, S=累同
-            o_val = self._cv(t, 14)
-            p_val = self._cv(t, 15)
-            q_val = self._cv(t, 16)
-            r_val = self._cv(t, 17)
-            s_val = self._cv(t, 18)
+            o_val = self._cv(t, 16)
+            p_val = self._cv(t, 17)
+            q_val = self._cv(t, 18)
+            r_val = self._cv(t, 22)
+            s_val = self._cv(t, 23)
             if o_val is not None:
                 records.append(self._make_record(
                     month_dt, "hog_turnover", "", "A1", float(o_val), "abs", "万头", "NATION", self.batch_id,

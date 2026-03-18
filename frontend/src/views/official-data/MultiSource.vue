@@ -42,6 +42,7 @@
         <div class="filter-row" style="margin-top: 15px">
           <span class="filter-label">显示月数：</span>
           <el-select v-model="selectedMonths" @change="handleMonthsChange" style="width: 120px">
+            <el-option label="最近15个月" :value="15" />
             <el-option label="最近10个月" :value="10" />
             <el-option label="最近12个月" :value="12" />
             <el-option label="最近24个月" :value="24" />
@@ -54,13 +55,14 @@
       <!-- 表格1：淘汰母猪屠宰环比、能繁母猪存栏环比、能繁母猪饲料环比 -->
       <div class="table-section" v-if="showTable1">
         <h3>表格1：淘汰母猪屠宰环比、能繁母猪存栏环比、能繁母猪饲料环比</h3>
-        <div class="table-container">
+        <div class="table-container raw-table-wrap">
           <el-table
             :data="table1Data"
             border
             stripe
             v-loading="loading1"
             style="width: 100%"
+            max-height="520"
             :row-class-name="tableRowClassName"
           >
             <el-table-column prop="month" label="月度" width="120" fixed="left">
@@ -142,13 +144,14 @@
       <!-- 表格2：新生仔猪存栏环比、仔猪饲料环比 -->
       <div class="table-section" v-if="showTable2" style="margin-top: 30px">
         <h3>表格2：新生仔猪存栏环比、仔猪饲料环比</h3>
-        <div class="table-container">
+        <div class="table-container raw-table-wrap">
           <el-table
             :data="table2Data"
             border
             stripe
             v-loading="loading2"
             style="width: 100%"
+            max-height="520"
             :row-class-name="tableRowClassName"
           >
             <el-table-column prop="month" label="月度" width="120" fixed="left">
@@ -218,13 +221,14 @@
       <!-- 表格3：生猪存栏环比、育肥猪饲料环比 -->
       <div class="table-section" v-if="showTable3" style="margin-top: 30px">
         <h3>表格3：生猪存栏环比、育肥猪饲料环比</h3>
-        <div class="table-container">
+        <div class="table-container raw-table-wrap">
           <el-table
             :data="table3Data"
             border
             stripe
             v-loading="loading3"
             style="width: 100%"
+            max-height="520"
             :row-class-name="tableRowClassName"
           >
             <el-table-column prop="month" label="月度" width="120" fixed="left">
@@ -315,7 +319,7 @@ const latestMonth = ref<string | null>(null)
 const timeFilter = ref<'all' | 'specific'>('all')
 const dateRange = ref<[Date, Date] | null>(null)
 const selectedCategories = ref<string[]>(['能繁母猪', '新生仔猪', '中大猪存栏'])
-const selectedMonths = ref(24)
+const selectedMonths = ref(15)
 
 // 计算显示的表格
 const showTable1 = computed(() => selectedCategories.value.includes('能繁母猪'))
@@ -434,6 +438,13 @@ onMounted(() => {
 
   .table-container {
     margin-bottom: 20px;
+  }
+
+  /* 行高与 E1 规模场一致：紧凑行高、小字号 */
+  :deep(.el-table td),
+  :deep(.el-table th) {
+    padding: 6px 8px;
+    font-size: 12px;
   }
 }
 

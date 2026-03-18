@@ -52,7 +52,7 @@
               <template #header>
                 <div class="header-with-pd">
                   <span>{{ getColumnLabel(company) }}</span>
-                  <span v-if="getHeaderPremiumDiscount(company) !== null" class="header-pd">{{ formatHeaderPremiumDiscount(getHeaderPremiumDiscount(company)) }}</span>
+                  <span v-if="getHeaderPremiumDiscount(company) !== null" :class="['header-pd', getHeaderPremiumDiscount(company)! < 0 ? 'header-pd-negative' : '']">{{ formatHeaderPremiumDiscount(getHeaderPremiumDiscount(company)) }}</span>
                 </div>
               </template>
               <template #default="{ row }">
@@ -76,7 +76,7 @@
                 <template #header>
                   <div class="header-with-pd">
                     <span>{{ region }}</span>
-                    <span v-if="getHeaderPremiumDiscount(region) !== null" class="header-pd">{{ formatHeaderPremiumDiscount(getHeaderPremiumDiscount(region)) }}</span>
+                    <span v-if="getHeaderPremiumDiscount(region) !== null" :class="['header-pd', getHeaderPremiumDiscount(region)! < 0 ? 'header-pd-negative' : '']">{{ formatHeaderPremiumDiscount(getHeaderPremiumDiscount(region)) }}</span>
                   </div>
                 </template>
                 <template #default="{ row }">
@@ -124,31 +124,23 @@
           </el-select>
         </div>
 
-        <!-- 白条市场表格：旧版布局，固定四列 日期 / 市场 / 到货量 / 价格，每行一条记录 -->
-        <div class="table-container">
-          <el-table
-            :data="table2DisplayData"
-            border
-            stripe
-            v-loading="loading2"
-            style="width: 100%"
-            max-height="calc(100vh - 320px)"
-          >
-            <el-table-column prop="date" label="日期" min-width="110" align="center">
-              <template #default="{ row }">{{ formatDate(row.date) }}</template>
-            </el-table-column>
-            <el-table-column prop="market" label="市场" min-width="88" align="center" />
-            <el-table-column prop="arrival_volume" label="到货量" min-width="90" align="right">
-              <template #default="{ row }">
-                {{ row.arrival_volume != null ? formatValue(row.arrival_volume) : '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="price" label="价格" min-width="90" align="right">
-              <template #default="{ row }">
-                {{ row.price != null ? formatPrice(row.price) : '-' }}
-              </template>
-            </el-table-column>
-          </el-table>
+        <!-- 表格2：按 Excel A-Q 列原样，日期列与表头固定（参照规模场） -->
+        <div class="table-container raw-table-wrap" v-loading="loading2">
+          <table v-if="table2PivotedRows.length" class="raw-excel-table">
+            <thead>
+              <tr>
+                <th v-for="col in TABLE2_COLUMNS" :key="col.key">{{ col.label }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, ri) in table2PivotedRows" :key="'r-' + ri">
+                <td v-for="(col, ci) in TABLE2_COLUMNS" :key="col.key" :class="ci === 0 ? 'cell-date' : 'cell-num'">
+                  {{ table2CellValue(row as Record<string, unknown>, col) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else-if="!loading2" class="empty-hint">暂无白条市场数据</div>
         </div>
       </div>
     </el-card>
@@ -177,6 +169,18 @@ const MUYUAN_WHITE_STRIP_REGIONS = ['华东', '河南山东', '湖北陕西', '�
 
 // 以下列显示整数（无小数点）：华宝白条、牧原白条下属区域
 const INTEGER_DISPLAY_COLUMNS = ['华宝白条', ...MUYUAN_WHITE_STRIP_REGIONS]
+
+// 表格1 企业/区域升贴水固定值（元/吨），负数表示贴水
+const FIXED_PREMIUM_DISCOUNT_YUAN_PER_TON: Record<string, number> = {
+  '吉林中粮': -300,
+  '河南牧原': 0,
+  '山东新希望': 200,
+  '广东温氏': 500,
+  '湖南唐人神': 100,
+  '江西温氏': 100,
+  '四川德康': -100,
+  '贵州富之源': -300
+}
 
 // 表格1 平铺列（不含牧原白条及下属华东等 5 列，该部分用多表头展示）
 const table1FlatColumns = computed(() => {
@@ -209,24 +213,52 @@ const table1DisplayData = computed(() => {
   }))
 })
 
-// 表格2 市场顺序（与后端一致，用于排序）
+// 表格2 按 Excel A-Q 列：日期 + 8 市场×(到货/价格)，成都点杀为「数量」「价格」
 const TABLE2_MARKET_ORDER = ['北京石门', '上海西郊', '成都点杀', '山西太原', '杭州五和', '无锡天鹏', '南京众彩', '广西桂林']
+const TABLE2_COLUMNS: { key: string; label: string }[] = [
+  { key: 'date', label: '日期' },
+  { key: '北京石门到货', label: '北京石门到货' },
+  { key: '北京石门价格', label: '北京石门价格' },
+  { key: '上海西郊到货', label: '上海西郊到货' },
+  { key: '上海西郊价格', label: '上海西郊价格' },
+  { key: '成都点杀数量', label: '成都点杀数量' },
+  { key: '成都点杀价格', label: '成都点杀价格' },
+  { key: '山西太原到货', label: '山西太原到货' },
+  { key: '山西太原价格', label: '山西太原价格' },
+  { key: '杭州五和到货', label: '杭州五和到货' },
+  { key: '杭州五和价格', label: '杭州五和价格' },
+  { key: '无锡天鹏到货', label: '无锡天鹏到货' },
+  { key: '无锡天鹏价格', label: '无锡天鹏价格' },
+  { key: '南京众彩到货', label: '南京众彩到货' },
+  { key: '南京众彩价格', label: '南京众彩价格' },
+  { key: '广西桂林到货', label: '广西桂林到货' },
+  { key: '广西桂林价格', label: '广西桂林价格' }
+]
 
-// 表格2：旧版布局，每行一条记录（日期、市场、到货量、价格），按日期升序、同日期内按市场顺序
-const table2DisplayData = computed(() => {
+const table2PivotedRows = computed(() => {
   if (!table2Data.value || !table2Data.value.data.length) return []
-  const list = [...table2Data.value.data]
-  const marketIdx = (m: string) => {
-    const i = TABLE2_MARKET_ORDER.indexOf(m)
-    return i >= 0 ? i : TABLE2_MARKET_ORDER.length
-  }
-  list.sort((a, b) => {
-    const d = a.date.localeCompare(b.date)
-    if (d !== 0) return d
-    return marketIdx(a.market) - marketIdx(b.market)
+  const byDate: Record<string, Record<string, number | null>> = {}
+  table2Data.value.data.forEach((d: { date: string; market: string; arrival_volume?: number | null; price?: number | null }) => {
+    if (!byDate[d.date]) byDate[d.date] = { date: d.date }
+    const row = byDate[d.date] as Record<string, string | number | null>
+    const volKey = d.market === '成都点杀' ? '成都点杀数量' : d.market + '到货'
+    const priceKey = d.market + '价格'
+    row[volKey] = d.arrival_volume ?? null
+    row[priceKey] = d.price ?? null
   })
-  return list
+  return Object.values(byDate).sort((a, b) => (a.date as string).localeCompare(b.date as string))
 })
+
+function table2CellValue(row: Record<string, unknown>, col: { key: string }): string {
+  if (col.key === 'date') return formatDate(row.date as string)
+  const v = row[col.key]
+  if (v === null || v === undefined) return '-'
+  if (typeof v === 'number') {
+    if (col.key.endsWith('价格')) return formatPrice(v)
+    return formatValue(v)
+  }
+  return '-'
+}
 
 // 获取企业价格
 const getCompanyPrice = (row: any, company: string): number | null => {
@@ -242,18 +274,14 @@ const getCompanyPremiumDiscount = (row: any, company: string): number | null => 
 // 列标题：仅企业名称
 const getColumnLabel = (company: string): string => company
 
-// 表头升贴水：取最新一行的该企业升贴水。API 为 元/公斤，表头按 元/吨 显示：(＋200) / (－300)
+// 表头升贴水：使用固定值（元/吨），不随数据计算
 const getHeaderPremiumDiscount = (company: string): number | null => {
-  const rows = table1DisplayData.value
-  if (!rows.length) return null
-  const last = rows[rows.length - 1]
-  const v = last[company + '_pd']
-  return v != null ? v : null
+  const v = FIXED_PREMIUM_DISCOUNT_YUAN_PER_TON[company]
+  return v !== undefined ? v : null
 }
 const formatHeaderPremiumDiscount = (v: number | null | undefined): string => {
   if (v == null) return ''
-  const yuanPerTon = Math.round(v * 1000) // 元/公斤 -> 元/吨
-  return yuanPerTon >= 0 ? `(+${yuanPerTon})` : `(${yuanPerTon})`
+  return v >= 0 ? `+${v}` : `(${Math.abs(v)})`
 }
 
 // 加载表格1数据
@@ -414,6 +442,50 @@ onMounted(() => {
     margin-bottom: 12px;
   }
 
+  /* 表格2 原始表：固定表头与日期列（参照规模场） */
+  .raw-table-wrap {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 520px;
+    border: 1px solid #e4e7ed;
+    border-radius: 4px;
+  }
+  .raw-excel-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .raw-excel-table th,
+  .raw-excel-table td {
+    border: 1px solid #e4e7ed;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+  .raw-excel-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .raw-excel-table thead th {
+    background-color: #f5f7fa;
+    font-weight: 600;
+    box-shadow: 0 1px 0 #e4e7ed;
+  }
+  .raw-excel-table th:first-child,
+  .raw-excel-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: #f5f7fa;
+    box-shadow: 1px 0 0 #e4e7ed;
+  }
+  .raw-excel-table thead th:first-child { z-index: 11; }
+  .raw-excel-table tbody td:first-child { background: #fff; }
+  .raw-excel-table tbody tr:nth-child(even) td:first-child { background: #fafafa; }
+  .raw-excel-table .cell-date { text-align: center; }
+  .raw-excel-table .cell-num { text-align: right; }
+  .empty-hint { padding: 16px; color: #909399; text-align: center; }
+
   .range-section {
     margin-top: 12px;
     padding: 10px;
@@ -434,6 +506,7 @@ onMounted(() => {
   .date-cell { white-space: nowrap; }
   .header-with-pd { display: flex; flex-direction: column; align-items: center; gap: 1px; }
   .header-pd { font-size: 10px; color: #909399; }
+  .header-pd-negative { color: #f56c6c !important; }
 
   .group-price-table-wrap table.group-price-table {
     width: 100%;

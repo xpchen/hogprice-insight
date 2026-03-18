@@ -213,8 +213,8 @@ async def get_group_enterprise_price(
                 premium_discount=prem,
             ))
 
-    # 按日期降序排序
-    all_data.sort(key=lambda x: x.date, reverse=True)
+    # 按日期正序（与源数据一致）
+    all_data.sort(key=lambda x: x.date, reverse=False)
 
     latest_date = all_data[0].date if all_data else None
     # 只展示旧版列：8 个企业 + 华宝白条 + 牧原五区域，不再带其它企业
@@ -288,8 +288,8 @@ def _fetch_white_strip_market(
         )
         for v in grouped.values()
     ]
-    all_data.sort(key=lambda x: x.date, reverse=True)
-    latest_date = all_data[0].date if all_data else None
+    all_data.sort(key=lambda x: (x.market, x.date))
+    latest_date = max((x.date for x in all_data), default=None)
     return WhiteStripMarketResponse(
         data=all_data,
         markets=sorted(list(markets_set)),

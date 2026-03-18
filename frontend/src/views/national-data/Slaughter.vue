@@ -267,7 +267,9 @@ const calculateSlaughterChanges = async () => {
 
 /** 将后端返回的农历月-日 "MM-DD" 转为中文农历显示，如 "01-08" → "正月初八" */
 function formatLunarMonthDay(mmdd: string): string {
-  const m = /^(\d{1,2})-(\d{1,2})$/.exec(String(mmdd).trim())
+  const raw = String(mmdd).trim()
+  const isLeap = raw.startsWith('闰')
+  const m = /^闰?(\d{1,2})-(\d{1,2})$/.exec(raw)
   if (!m) return mmdd
   const month = parseInt(m[1], 10)
   const day = parseInt(m[2], 10)
@@ -276,7 +278,8 @@ function formatLunarMonthDay(mmdd: string): string {
   const dayNames = ['初一', '初二', '初三', '初四', '初五', '初六', '初七', '初八', '初九', '初十',
     '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十',
     '廿一', '廿二', '廿三', '廿四', '廿五', '廿六', '廿七', '廿八', '廿九', '三十']
-  return monthNames[month - 1] + dayNames[day - 1]
+  const base = monthNames[month - 1] + dayNames[day - 1]
+  return isLeap ? '闰' + base : base
 }
 
 // 渲染农历日度屠宰量图表
@@ -436,12 +439,6 @@ const renderSlaughterLunarChart = () => {
     }
   })
   
-  // 计算Y轴范围（自动调整）
-  const allValues = series.flatMap(s => s.data).filter(v => v !== null && v !== undefined) as number[]
-  const yMin = allValues.length > 0 ? Math.min(...allValues) : 0
-  const yMax = allValues.length > 0 ? Math.max(...allValues) : 100
-  const yPadding = (yMax - yMin) * 0.1 // 10% padding
-  
   const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
@@ -496,11 +493,10 @@ const renderSlaughterLunarChart = () => {
     yAxis: {
       type: 'value',
       name: '',
-      min: yMin - yPadding,
-      max: yMax + yPadding,
       scale: false,
       ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
+      // 不设置 min/max，由 ECharts 按当前可见 series 自动缩放，图例勾选/取消时轴会随之变化
     },
     series: series,
     dataZoom: [
@@ -662,17 +658,6 @@ const renderSolarTrendChart = () => {
 
   if (series.length === 0 || xAxisData.length === 0) return
 
-  // 按数据范围设定 Y 轴，避免 0 线以下大片空白（红线之下没有曲线）
-  const slaughterNums = slaughterValues.filter((v): v is number => v != null && typeof v === 'number')
-  const priceNums = priceValues.filter((v): v is number => v != null && typeof v === 'number')
-  const slaughterMin = slaughterNums.length ? Math.min(...slaughterNums) : 0
-  const slaughterMax = slaughterNums.length ? Math.max(...slaughterNums) : 100
-  const priceMin = priceNums.length ? Math.min(...priceNums) : 0
-  const priceMax = priceNums.length ? Math.max(...priceNums) : 20
-  const pad = (a: number, b: number) => (b - a) * 0.05 || 1
-  const slaughterPadding = pad(slaughterMin, slaughterMax)
-  const pricePadding = pad(priceMin, priceMax)
-
   solarTrendChart.setOption({
     tooltip: {
       trigger: 'axis',
@@ -704,17 +689,14 @@ const renderSolarTrendChart = () => {
         type: 'value',
         position: 'left',
         name: '',
-        min: slaughterMin - slaughterPadding,
-        max: slaughterMax + slaughterPadding,
         ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
+        // 不设 min/max，图例勾选/取消时轴随可见 series 变化
       },
       {
         type: 'value',
         position: 'right',
         name: '',
-        min: priceMin - pricePadding,
-        max: priceMax + pricePadding,
         ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
       }

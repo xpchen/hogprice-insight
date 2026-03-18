@@ -255,7 +255,7 @@ function formatDataCell(colIdx: number, val: unknown): string {
   if (val === null || val === undefined) return ''
   const num = typeof val === 'number' ? val : parseFloat(String(val ?? ''))
   if (!Number.isFinite(num)) return formatCell(val)
-  return `(${num})`
+  return num < 0 ? `(${Math.abs(num)})` : String(num)
 }
 
 const handleTimeRangeChange = () => {
@@ -650,6 +650,25 @@ onBeforeUnmount(() => {
   font-weight: 600;
   white-space: nowrap;
   box-shadow: 0 1px 0 #e4e7ed;
+}
+
+/* 季度列横向滚动时固定 */
+.raw-excel-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 11;
+  background-color: #f5f7fa;
+  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.06);
+}
+.raw-excel-table tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: #fff;
+  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.06);
+}
+.raw-excel-table tbody tr:nth-child(even) td:first-child {
+  background-color: #fafafa;
 }
 
 .raw-excel-table thead th.header-yellow {

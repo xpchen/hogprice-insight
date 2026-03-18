@@ -79,26 +79,19 @@ def _compute_mom(rows) -> List[StructureDataPoint]:
 # CR20 出栏环比 — from fact_enterprise_monthly
 # ---------------------------------------------------------------------------
 def _get_cr20_month_on_month(db: Session) -> List[StructureDataPoint]:
+    # 仅用实际出栏算环比；当月仅有计划无实际时该月不输出环比（避免 3 月等用计划算出的错误环比）
     sql = text("""
-        SELECT m.month_date, m.value
-        FROM (
-            SELECT month_date,
-                COALESCE(
-                    MAX(CASE WHEN indicator IN ('actual_output_monthly') THEN value END),
-                    MAX(CASE WHEN indicator IN ('实际出栏量','实际出栏量_月度') THEN value END),
-                    MAX(CASE WHEN indicator IN ('planned_output_monthly') THEN value END),
-                    MAX(CASE WHEN indicator IN ('计划出栏量','计划出栏量_月度') THEN value END)
-                ) AS value
-            FROM fact_enterprise_monthly
-            WHERE company_code = 'CR20'
-              AND indicator IN (
-                  'actual_output_monthly','planned_output_monthly',
-                  '实际出栏量','实际出栏量_月度','计划出栏量','计划出栏量_月度'
-              )
-            GROUP BY month_date
-        ) m
-        WHERE m.value IS NOT NULL
-        ORDER BY m.month_date
+        SELECT month_date,
+            MAX(CASE WHEN indicator IN ('actual_output_monthly','实际出栏量','实际出栏量_月度') THEN value END) AS actual,
+            MAX(CASE WHEN indicator IN ('planned_output_monthly','计划出栏量','计划出栏量_月度') THEN value END) AS planned
+        FROM fact_enterprise_monthly
+        WHERE company_code = 'CR20'
+          AND indicator IN (
+              'actual_output_monthly','planned_output_monthly',
+              '实际出栏量','实际出栏量_月度','计划出栏量','计划出栏量_月度'
+          )
+        GROUP BY month_date
+        ORDER BY month_date
     """)
     rows = db.execute(sql).fetchall()
     if len(rows) < 2:
@@ -106,16 +99,15 @@ def _get_cr20_month_on_month(db: Session) -> List[StructureDataPoint]:
 
     result = []
     for i in range(1, len(rows)):
-        prev_val = _safe_float(rows[i - 1][1])
-        curr_val = _safe_float(rows[i][1])
-        if prev_val and curr_val and prev_val > 0:
-            mom = round((curr_val - prev_val) / prev_val * 100, 2)
-            if mom is not None:
-                result.append(StructureDataPoint(
-                    date=rows[i][0].isoformat(),
-                    source="CR20",
-                    value=mom,
-                ))
+        prev_actual = _safe_float(rows[i - 1][1])
+        curr_actual = _safe_float(rows[i][1])
+        if prev_actual is not None and curr_actual is not None and prev_actual > 0:
+            mom = round((curr_actual - prev_actual) / prev_actual * 100, 2)
+            result.append(StructureDataPoint(
+                date=rows[i][0].isoformat(),
+                source="CR20",
+                value=mom,
+            ))
     return result
 
 
@@ -210,10 +202,27 @@ def _get_ministry_agriculture_month_on_month(db: Session, scale_type: str = "全
 
 
 # ---------------------------------------------------------------------------
-# 定点企业屠宰环比 — compute MoM from abs
+# 定点企业屠宰环比 — 优先 A1 供给预测 AD 列(mom_pct)，无则用定点屠宰 sheet 绝对值算环比
 # ---------------------------------------------------------------------------
 def _get_slaughter_month_on_month(db: Session) -> List[StructureDataPoint]:
-    sql = text("""
+    sql_a1 = text("""
+        SELECT month_date, value
+        FROM fact_monthly_indicator
+        WHERE source = 'A1'
+          AND indicator_code = 'designated_slaughter'
+          AND value_type = 'mom_pct'
+          AND COALESCE(region_code, 'NATION') = 'NATION'
+          AND value IS NOT NULL
+        ORDER BY month_date
+    """)
+    rows_a1 = db.execute(sql_a1).fetchall()
+    if rows_a1:
+        return [
+            StructureDataPoint(date=r[0].isoformat(), source="定点企业屠宰", value=_safe_float(r[1]))
+            for r in rows_a1
+            if _safe_float(r[1]) is not None
+        ]
+    sql_abs = text("""
         SELECT month_date, value
         FROM fact_monthly_indicator
         WHERE source = 'STATISTICS_BUREA'
@@ -223,7 +232,7 @@ def _get_slaughter_month_on_month(db: Session) -> List[StructureDataPoint]:
           AND value IS NOT NULL
         ORDER BY month_date
     """)
-    rows = db.execute(sql).fetchall()
+    rows = db.execute(sql_abs).fetchall()
     labeled = [(r[0], r[1], "定点企业屠宰") for r in rows]
     return _compute_mom(labeled)
 

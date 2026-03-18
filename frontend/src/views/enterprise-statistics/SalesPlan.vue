@@ -40,8 +40,8 @@
         </div>
       </div>
 
-      <!-- 数据表格：根据筛选显示不同布局 -->
-      <div class="table-container">
+      <!-- 数据表格：根据筛选显示不同布局，日期列与表头固定（参照规模场） -->
+      <div class="table-container raw-table-wrap">
         <!-- 模式A：单指标 + 全部区域 → 按区域透视为列 -->
         <el-table
           v-if="isModeA"
@@ -50,7 +50,7 @@
           stripe
           v-loading="loading"
           style="width: 100%"
-          max-height="calc(100vh - 320px)"
+          max-height="520"
         >
           <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
             <template #default="{ row }">{{ formatDate(row.date) }}</template>
@@ -75,7 +75,7 @@
           stripe
           v-loading="loading"
           style="width: 100%"
-          max-height="calc(100vh - 320px)"
+          max-height="520"
         >
           <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
             <template #default="{ row }">{{ formatDate(row.date) }}</template>
@@ -100,7 +100,7 @@
           stripe
           v-loading="loading"
           style="width: 100%"
-          max-height="calc(100vh - 320px)"
+          max-height="520"
         >
           <el-table-column prop="date" label="日期" width="120" fixed="left" align="center">
             <template #default="{ row }">{{ formatDate(row.date) }}</template>

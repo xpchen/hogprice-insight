@@ -15,13 +15,14 @@
       <!-- 表格容器 -->
       <div class="table-container">
         <el-table
-          :data="tableData"
+          :data="displayRows"
           border
           stripe
           v-loading="loading"
           style="width: 100%"
+          max-height="520"
           :header-cell-style="{ background: '#f5f7fa', color: '#606266', textAlign: 'center' }"
-          default-sort="{ prop: 'month', order: 'descending' }"
+          default-sort="{ prop: 'month', order: 'ascending' }"
         >
           <!-- 月度列 -->
           <el-table-column prop="month" label="月度" width="120" align="center" fixed="left" sortable />
@@ -98,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getStructureAnalysisTable } from '@/api/structure-analysis'
 import type { StructureTableResponse, StructureTableRow } from '@/api/structure-analysis'
@@ -107,6 +108,12 @@ import DataSourceInfo from '@/components/DataSourceInfo.vue'
 const loading = ref(false)
 const tableData = ref<StructureTableRow[]>([])
 const latestMonth = ref<string | null>(null)
+
+// 按月份正序，只显示最新 20 行（与源数据日期正序一致，其余可滚动查看需后端支持或此处展示全部）
+const displayRows = computed(() => {
+  const sorted = [...(tableData.value || [])].sort((a, b) => a.month.localeCompare(b.month))
+  return sorted.slice(-20)
+})
 
 // 格式化数值显示
 const formatValue = (value: number | null | undefined): string => {
@@ -119,11 +126,7 @@ const loadData = async () => {
   loading.value = true
   try {
     const response = await getStructureAnalysisTable()
-    // 按月份倒序排列，显示最新的数据在前面
-    const sortedData = (response.data || []).sort((a, b) => {
-      return b.month.localeCompare(a.month)
-    })
-    tableData.value = sortedData
+    tableData.value = response.data || []
     latestMonth.value = response.latest_month || null
   } catch (error: any) {
     console.error('加载数据失败:', error)
