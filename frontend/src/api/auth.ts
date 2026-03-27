@@ -17,6 +17,11 @@ export interface UserInfo {
   roles: string[]
 }
 
+export interface ChangePasswordForm {
+  old_password: string
+  new_password: string
+}
+
 export const authApi = {
   login: (username: string, password: string) => {
     const params = new URLSearchParams()
@@ -31,5 +36,9 @@ export const authApi = {
   
   getMe: () => {
     return request.get<UserInfo>('/auth/me')
+  },
+
+  changePassword: (payload: ChangePasswordForm) => {
+    return request.post<{ message: string }>('/auth/change-password', payload)
   }
 }
