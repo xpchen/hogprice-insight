@@ -8,6 +8,7 @@ import json
 import tempfile
 from pathlib import Path
 from typing import List, Optional
+import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
@@ -111,7 +112,7 @@ async def execute_import(
     current_user: SysUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """上传 Excel 并立即执行导入"""
+    """上传 Excel 并立即执行导入（默认按 bulk 模式）"""
     import time
 
     file_content = await file.read()
@@ -132,22 +133,30 @@ async def execute_import(
     tmp = Path(tempfile.mktemp(suffix=".xlsx"))
     tmp.write_bytes(file_content)
 
+    batch_id = None
     try:
-        reader = ReaderClass()
+        engine = db.get_bind()
+        # 页面导入默认按 bulk 记录，增量模式后续再优化
+        result_batch = db.execute(text("""
+            INSERT INTO import_batch (filename, file_hash, mode, status, row_count, duration_ms)
+            VALUES (:fn, :fh, 'bulk', 'processing', 0, 0)
+        """), {"fn": file.filename, "fh": file_hash})
+        db.commit()
+        batch_id = int(result_batch.lastrowid)
+
+        reader = ReaderClass(engine, batch_id)
         result = reader.read_file(str(tmp))
 
-        total_rows = 0
-        for table_name, records in result.items():
-            inserted = reader.bulk_insert(table_name, records)
-            total_rows += inserted
+        counts = reader.insert_all(result, mode="bulk")
+        total_rows = sum(counts.values())
 
         duration_ms = int((time.time() - start_ms) * 1000)
 
-        # 记录 import_batch
         db.execute(text("""
-            INSERT INTO import_batch (filename, file_hash, mode, status, row_count, duration_ms)
-            VALUES (:fn, :fh, 'incremental', 'success', :rc, :dm)
-        """), {"fn": file.filename, "fh": file_hash, "rc": total_rows, "dm": duration_ms})
+            UPDATE import_batch
+            SET status='success', row_count=:rc, duration_ms=:dm
+            WHERE id=:bid
+        """), {"rc": total_rows, "dm": duration_ms, "bid": batch_id})
         db.commit()
 
         return {
@@ -161,6 +170,16 @@ async def execute_import(
         raise
     except Exception as e:
         db.rollback()
+        if batch_id:
+            try:
+                db.execute(text("""
+                    UPDATE import_batch
+                    SET status='failed', error_msg=:err
+                    WHERE id=:bid
+                """), {"err": str(e)[:500], "bid": batch_id})
+                db.commit()
+            except Exception:
+                db.rollback()
         error_msg = str(e)[:300]
         raise HTTPException(status_code=500, detail=f"导入失败: {error_msg}")
     finally:
@@ -179,9 +198,12 @@ async def submit_import(
     if not files:
         raise HTTPException(status_code=400, detail="请至少上传一个文件")
 
-    valid_files = [(f, f.filename) for f in files if f.filename and f.filename.lower().endswith(('.xlsx', '.xls'))]
+    valid_files = [
+        (f, f.filename) for f in files
+        if f.filename and f.filename.lower().endswith(('.xlsx', '.xls', '.zip'))
+    ]
     if not valid_files:
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx, .xls 格式")
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx, .xls, .zip 格式")
 
     task_id = str(uuid.uuid4())[:8]
     _progress_store[task_id] = {
@@ -191,14 +213,42 @@ async def submit_import(
         "message": "准备中...",
     }
 
-    # 保存文件到临时目录
+    # 保存文件到临时目录；zip 自动解压并导入其中 Excel
     tmp_dir = Path(tempfile.mkdtemp(prefix="ingest_"))
     file_paths = []
     for f, fname in valid_files:
         content = await f.read()
-        p = tmp_dir / fname
-        p.write_bytes(content)
-        file_paths.append((str(p), fname))
+        lower_name = fname.lower()
+        if lower_name.endswith(".zip"):
+            zip_path = tmp_dir / fname
+            zip_path.write_bytes(content)
+            extract_dir = tmp_dir / f"unzipped_{len(file_paths)}"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        member_name = info.filename
+                        if "__MACOSX/" in member_name or member_name.startswith("/"):
+                            continue
+                        if ".." in Path(member_name).parts:
+                            continue
+                        if not member_name.lower().endswith((".xlsx", ".xls")):
+                            continue
+                        target = extract_dir / Path(member_name).name
+                        with zf.open(info, "r") as src, open(target, "wb") as dst:
+                            dst.write(src.read())
+                        file_paths.append((str(target), target.name))
+            except zipfile.BadZipFile:
+                raise HTTPException(status_code=400, detail=f"无效 zip 文件: {fname}")
+        else:
+            p = tmp_dir / fname
+            p.write_bytes(content)
+            file_paths.append((str(p), fname))
+
+    if not file_paths:
+        raise HTTPException(status_code=400, detail="zip 中未找到可导入的 Excel 文件")
 
     background_tasks.add_task(_run_bg_import, task_id, file_paths, tmp_dir)
 
@@ -223,25 +273,44 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path):
                 "message": f"正在导入 {fname}",
             }
             try:
+                batch_id = None
                 ttype = _detect_template(fname)
                 ReaderClass = _get_reader_class(ttype)
                 if ReaderClass is None:
                     continue
 
                 start_ms = time.time()
-                reader = ReaderClass()
+                engine = db.get_bind()
+                result_batch = db.execute(text("""
+                    INSERT INTO import_batch (filename, file_hash, mode, status, row_count, duration_ms)
+                    VALUES (:fn, '', 'bulk', 'processing', 0, 0)
+                """), {"fn": fname})
+                db.commit()
+                batch_id = int(result_batch.lastrowid)
+
+                reader = ReaderClass(engine, batch_id)
                 result = reader.read_file(fpath)
-                total_rows = 0
-                for table_name, records in result.items():
-                    total_rows += reader.bulk_insert(table_name, records)
+                counts = reader.insert_all(result, mode="bulk")
+                total_rows = sum(counts.values())
                 duration_ms = int((time.time() - start_ms) * 1000)
 
                 db.execute(text("""
-                    INSERT INTO import_batch (filename, file_hash, mode, status, row_count, duration_ms)
-                    VALUES (:fn, '', 'incremental', 'success', :rc, :dm)
-                """), {"fn": fname, "rc": total_rows, "dm": duration_ms})
+                    UPDATE import_batch
+                    SET status='success', row_count=:rc, duration_ms=:dm
+                    WHERE id=:bid
+                """), {"rc": total_rows, "dm": duration_ms, "bid": batch_id})
                 db.commit()
             except Exception as e:
+                try:
+                    if batch_id:
+                        db.execute(text("""
+                            UPDATE import_batch
+                            SET status='failed', error_msg=:err
+                            WHERE id=:bid
+                        """), {"err": str(e)[:500], "bid": batch_id})
+                        db.commit()
+                except Exception:
+                    db.rollback()
                 _progress_store[task_id] = {
                     "status": "done",
                     "success": False,
