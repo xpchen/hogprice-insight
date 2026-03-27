@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.security import verify_password, create_access_token, get_current_user
+from app.core.security import verify_password, create_access_token, get_current_user, get_password_hash
 from app.core.config import settings
 from app.models.sys_user import SysUser
 from app.models.sys_role import SysRole
@@ -28,6 +28,11 @@ class UserInfo(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 
 @router.post("/login", response_model=Token)
@@ -86,3 +91,33 @@ async def get_me(current_user: SysUser = Depends(get_current_user), db: Session 
         "display_name": current_user.display_name,
         "roles": role_codes
     }
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """用户修改自己的密码"""
+    if not verify_password(body.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="旧密码错误",
+        )
+
+    if body.old_password == body.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="新密码不能与旧密码相同",
+        )
+
+    if len(body.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="新密码长度至少为6位",
+        )
+
+    current_user.password_hash = get_password_hash(body.new_password)
+    db.commit()
+    return {"message": "密码修改成功"}

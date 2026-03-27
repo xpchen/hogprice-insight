@@ -215,13 +215,17 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- G. 系统管理（已隐藏） -->
-        <el-sub-menu v-if="false" index="system-group">
+        <!-- G. 系统管理（管理员） -->
+        <el-sub-menu v-if="isAdmin" index="system-group">
           <template #title>
             <el-icon><Setting /></el-icon>
             <span>系统管理</span>
           </template>
-          <el-menu-item index="/templates">
+          <el-menu-item index="/system/users">
+            <el-icon><Document /></el-icon>
+            <template #title>用户管理</template>
+          </el-menu-item>
+          <el-menu-item v-if="false" index="/templates">
             <el-icon><Document /></el-icon>
             <template #title>模板管理</template>
           </el-menu-item>
@@ -239,6 +243,10 @@
           />
         </div>
         <div class="header-right">
+          <el-button type="primary" :loading="exportLoading" @click="handleExportCurrentPage">
+            导出图片
+          </el-button>
+          <el-button type="text" @click="openChangePasswordDialog">修改密码</el-button>
           <el-tooltip :content="isFullscreen ? '退出全屏 (Esc)' : '全屏 (F11)'" placement="bottom">
             <el-button
               :icon="FullScreen"
@@ -253,18 +261,42 @@
         </div>
       </el-header>
       <el-main>
-        <router-view />
+        <div ref="mainContentRef" class="main-content-export-target">
+          <router-view />
+        </div>
       </el-main>
     </el-container>
   </el-container>
+
+  <el-dialog v-model="passwordDialogVisible" title="修改密码" width="440px">
+    <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="100px">
+      <el-form-item label="旧密码" prop="oldPassword">
+        <el-input v-model="passwordForm.oldPassword" type="password" show-password />
+      </el-form-item>
+      <el-form-item label="新密码" prop="newPassword">
+        <el-input v-model="passwordForm.newPassword" type="password" show-password />
+      </el-form-item>
+      <el-form-item label="确认新密码" prop="confirmPassword">
+        <el-input v-model="passwordForm.confirmPassword" type="password" show-password />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="passwordDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="passwordSaving" @click="handleChangePassword">确认</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { House, Upload, DataAnalysis, Fold, Expand, FullScreen, Document, TrendCharts, Setting } from '@element-plus/icons-vue'
 import { useUserStore } from '../store/user'
+import { authApi } from '@/api/auth'
+import html2canvas from 'html2canvas'
+import { saveAs } from 'file-saver'
 
 const route = useRoute()
 const router = useRouter()
@@ -273,6 +305,31 @@ const userStore = useUserStore()
 const activeMenu = computed(() => route.path)
 const isCollapse = ref(false)
 const isFullscreen = ref(false)
+const exportLoading = ref(false)
+const mainContentRef = ref<HTMLElement | null>(null)
+const passwordDialogVisible = ref(false)
+const passwordSaving = ref(false)
+const passwordFormRef = ref<FormInstance>()
+const passwordForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+
+const passwordRules: FormRules = {
+  oldPassword: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
+  newPassword: [{ required: true, min: 6, message: '新密码至少6位', trigger: 'blur' }],
+  confirmPassword: [
+    { required: true, message: '请确认新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value, callback) => {
+        if (value !== passwordForm.newPassword) callback(new Error('两次密码输入不一致'))
+        else callback()
+      },
+      trigger: 'blur'
+    }
+  ]
+}
 
 // 权限判断
 const isAdmin = computed(() => {
@@ -332,6 +389,69 @@ const handleLogout = () => {
   userStore.clearToken()
   ElMessage.success('已退出登录')
   router.push('/login')
+}
+
+const sanitizeFileName = (input: string) => input.replace(/[^\w\-.]/g, '_')
+
+const handleExportCurrentPage = async () => {
+  if (!mainContentRef.value) {
+    ElMessage.warning('暂无内容可导出')
+    return
+  }
+  exportLoading.value = true
+  try {
+    const canvas = await html2canvas(mainContentRef.value, {
+      useCORS: true,
+      allowTaint: true,
+      scale: 2,
+      backgroundColor: '#f8fafc',
+      logging: false
+    })
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        ElMessage.error('导出失败')
+        return
+      }
+      const pageName = sanitizeFileName(String(route.name || route.path || 'page'))
+      const date = new Date().toISOString().slice(0, 10)
+      saveAs(blob, `${pageName}_${date}.png`)
+      ElMessage.success('已导出图片')
+    }, 'image/png')
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('导出失败')
+  } finally {
+    exportLoading.value = false
+  }
+}
+
+const handleChangePassword = async () => {
+  if (!passwordFormRef.value) return
+  await passwordFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    passwordSaving.value = true
+    try {
+      await authApi.changePassword({
+        old_password: passwordForm.oldPassword,
+        new_password: passwordForm.newPassword
+      })
+      ElMessage.success('密码修改成功，请重新登录')
+      passwordDialogVisible.value = false
+      passwordForm.oldPassword = ''
+      passwordForm.newPassword = ''
+      passwordForm.confirmPassword = ''
+      handleLogout()
+    } finally {
+      passwordSaving.value = false
+    }
+  })
+}
+
+const openChangePasswordDialog = () => {
+  passwordForm.oldPassword = ''
+  passwordForm.newPassword = ''
+  passwordForm.confirmPassword = ''
+  passwordDialogVisible.value = true
 }
 </script>
 
@@ -692,6 +812,10 @@ const handleLogout = () => {
 
 .header-right span {
   font-weight: 500;
+}
+
+.main-content-export-target {
+  min-height: calc(100vh - 64px);
 }
 
 /* 响应式调整 */

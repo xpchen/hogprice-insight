@@ -7,7 +7,7 @@ from app.api import (
     observation, price_display, enterprise_statistics, sales_plan,
     structure_analysis, group_price, production_indicators, multi_source,
     supply_demand, statistics_bureau, ingest, query, export, data_freshness,
-    internal,
+    internal, users_admin,
 )
 from app.middleware.chart_timing_and_cache import ChartTimingAndCacheMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
@@ -61,6 +61,7 @@ app.include_router(export.router)
 app.include_router(data_freshness.router)
 # 内部接口（脚本/cron 刷新缓存等，不通过 Web）
 app.include_router(internal.router)
+app.include_router(users_admin.router)
 
 
 @app.get("/health")

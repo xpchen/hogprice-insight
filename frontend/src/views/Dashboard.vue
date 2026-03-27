@@ -5,10 +5,6 @@
         <h1 class="dashboard-title">生猪重点数据汇总</h1>
         <span class="dashboard-subtitle">核心指标一览</span>
       </div>
-      <el-button type="primary" :loading="exportLoading" @click="exportToImage" class="export-btn">
-        <el-icon><Download /></el-icon>
-        导出图片
-      </el-button>
     </header>
 
     <!-- 数据更新状态条 -->
@@ -33,7 +29,7 @@
       </div>
     </div>
 
-    <div ref="exportTargetRef" class="charts-container">
+    <div class="charts-container">
       <!-- 第一行：A1区域 全国猪价、标肥价差 【季节性图】 -->
       <div class="chart-row">
         <div class="chart-card">
@@ -180,10 +176,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Download } from '@element-plus/icons-vue'
-import html2canvas from 'html2canvas'
-import { saveAs } from 'file-saver'
 import SeasonalityChart from '../components/SeasonalityChart.vue'
 import {
   getNationalPriceSeasonality,
@@ -197,9 +189,6 @@ import { dataFreshnessApi } from '../api/data-freshness'
 import type { DataFreshnessResponse, TableFreshnessItem } from '../api/data-freshness'
 import type { SeasonalityData } from '../components/SeasonalityChart.vue'
 import type { SeasonalityResponse } from '../api/price-display'
-
-const exportTargetRef = ref<HTMLElement | null>(null)
-const exportLoading = ref(false)
 
 const chartPriceRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
 const chartSpreadRef = ref<InstanceType<typeof SeasonalityChart> | null>(null)
@@ -449,36 +438,6 @@ const loadA5 = async () => {
   }
 }
 
-const exportToImage = async () => {
-  if (!exportTargetRef.value) {
-    ElMessage.warning('暂无内容可导出')
-    return
-  }
-  exportLoading.value = true
-  try {
-    const canvas = await html2canvas(exportTargetRef.value, {
-      useCORS: true,
-      allowTaint: true,
-      scale: 2,
-      backgroundColor: '#f8fafc',
-      logging: false
-    })
-    canvas.toBlob((blob) => {
-      if (blob) {
-        saveAs(blob, `生猪重点数据汇总_${new Date().toISOString().slice(0, 10)}.png`)
-        ElMessage.success('已导出图片')
-      } else {
-        ElMessage.error('导出失败')
-      }
-    }, 'image/png')
-  } catch (e) {
-    console.error(e)
-    ElMessage.error('导出失败')
-  } finally {
-    exportLoading.value = false
-  }
-}
-
 onMounted(() => {
   loadFreshness()
   loadA1()
@@ -521,10 +480,6 @@ onMounted(() => {
     font-size: 13px;
     color: #64748b;
   }
-}
-
-.export-btn {
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
 
 .freshness-bar {

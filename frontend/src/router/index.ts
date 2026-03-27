@@ -229,6 +229,12 @@ const routes = [
         path: 'raw-viewer',
         name: 'RawViewer',
         component: () => import('../views/RawViewer.vue')
+      },
+      {
+        path: 'system/users',
+        name: 'SystemUsers',
+        component: () => import('../views/system/UserManagement.vue'),
+        meta: { requiresAdmin: true }
       }
     ]
   }
@@ -258,6 +264,13 @@ router.beforeEach(async (to, from, next) => {
       await userStore.fetchUserInfo()
     } catch {
       // token 失效时 clearToken 会清空，直接放行到需鉴权页会再被重定向到登录
+    }
+  }
+  if (to.meta.requiresAdmin) {
+    const roles = userStore.user?.roles || []
+    if (!roles.includes('admin')) {
+      next('/dashboard')
+      return
     }
   }
   next()

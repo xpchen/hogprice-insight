@@ -133,6 +133,7 @@ ENV/
 
 # Frontend build
 frontend/dist/
+frontend/dist.zip
 frontend/.vite/
 
 # Backend reports
