@@ -36,9 +36,19 @@ class ChartTimingAndCacheMiddleware(BaseHTTPMiddleware):
         try:
             cached = get_cached(db, cache_key)
             if cached is not None:
+                if "/price-display/slaughter" in path:
+                    logger.info(
+                        "chart_cache_hit path=%s query=%s cache_key=%s",
+                        path, query_string or "(none)", cache_key
+                    )
                 return Response(content=cached, media_type="application/json")
         finally:
             db.close()
+        if "/price-display/slaughter" in path:
+            logger.info(
+                "chart_cache_miss path=%s query=%s cache_key=%s",
+                path, query_string or "(none)", cache_key
+            )
 
         start = time.perf_counter()
         response = await call_next(request)

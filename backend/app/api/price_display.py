@@ -14,6 +14,7 @@
 9. 产业链数据（周度）              -- 新表中暂无，保留接口返回空
 10. 省份多指标面板
 """
+import logging
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -32,6 +33,7 @@ from app.services.lunar_alignment_service import (
 )
 
 router = APIRouter(prefix="/api/v1/price-display", tags=["price-display"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1285,6 +1287,15 @@ async def get_slaughter_lunar(
     if range_start is None or range_end is None:
         range_start = date(_start, 1, 1)
         range_end = date(_end, 12, 31)
+        logger.warning(
+            "slaughter_lunar fallback to solar range start_year=%s end_year=%s range_start=%s range_end=%s",
+            _start, _end, range_start, range_end
+        )
+    else:
+        logger.info(
+            "slaughter_lunar using lunar range start_year=%s end_year=%s range_start=%s range_end=%s",
+            _start, _end, range_start, range_end
+        )
 
     rows = db.execute(
         text("""
@@ -1297,6 +1308,10 @@ async def get_slaughter_lunar(
     ).fetchall()
 
     if not rows:
+        logger.warning(
+            "slaughter_lunar empty rows range_start=%s range_end=%s region_code=NATION source=YONGYI",
+            range_start, range_end
+        )
         return SlaughterLunarResponse(
             metric_name="日度屠宰量",
             unit="头",
@@ -1436,6 +1451,10 @@ async def get_slaughter_lunar(
         d = (idx - 1) % 30 + 1
         x_axis_labels[idx] = f"{m:02d}-{d:02d}"
 
+    logger.info(
+        "slaughter_lunar ok rows=%s series=%s latest_date=%s",
+        len(rows), len(series), latest_date_str
+    )
     return SlaughterLunarResponse(
         metric_name="日度屠宰量",
         unit="头",
@@ -1460,11 +1479,17 @@ async def get_slaughter_price_trend_solar(
         r = get_lunar_year_date_range_la_ba(y)
         if r:
             year_ranges[y] = r
+    logger.info(
+        "slaughter_solar year_ranges candidate_count=%s valid_count=%s valid_years=%s",
+        len(candidate_years), len(year_ranges), sorted(year_ranges.keys())
+    )
+    if not year_ranges:
+        logger.warning("slaughter_solar year_ranges empty; check lunar library/runtime env")
 
     available_years: List[int] = []
     for y in sorted(year_ranges.keys(), reverse=True):
         sd, ed = year_ranges[y]
-        has_data = db.execute(
+        slaughter_hit = db.execute(
             text("""
                 SELECT 1 FROM fact_slaughter_daily
                 WHERE region_code = 'NATION' AND source = 'YONGYI'
@@ -1473,8 +1498,9 @@ async def get_slaughter_price_trend_solar(
             """),
             {"s": sd, "e": ed},
         ).first()
-        if not has_data:
-            has_data = db.execute(
+        price_hit = None
+        if not slaughter_hit:
+            price_hit = db.execute(
                 text("""
                     SELECT 1 FROM fact_price_daily
                     WHERE price_type = '标猪均价' AND region_code = 'NATION'
@@ -1483,10 +1509,19 @@ async def get_slaughter_price_trend_solar(
                 """),
                 {"s": sd, "e": ed},
             ).first()
+        has_data = slaughter_hit or price_hit
+        logger.info(
+            "slaughter_solar year_probe lunar_year=%s start=%s end=%s slaughter_hit=%s price_hit=%s",
+            y, sd, ed, bool(slaughter_hit), bool(price_hit)
+        )
         if has_data:
             available_years.append(y)
 
     if not available_years:
+        logger.warning(
+            "slaughter_solar empty response available_years=[] candidate_years=%s valid_year_ranges=%s",
+            candidate_years, sorted(year_ranges.keys())
+        )
         return SlaughterPriceTrendSolarResponse(
             slaughter_data=[], price_data=[], available_years=[], update_time=None, latest_date=None
         )
@@ -1548,6 +1583,10 @@ async def get_slaughter_price_trend_solar(
 
     latest = slaughter_rows[-1][0].isoformat() if slaughter_rows else (price_rows[-1][0].isoformat() if price_rows else None)
 
+    logger.info(
+        "slaughter_solar ok query_year=%s start=%s end=%s available_years=%s slaughter_rows=%s price_rows=%s latest=%s",
+        query_year, sd, ed, available_years, len(slaughter_rows), len(price_rows), latest
+    )
     return SlaughterPriceTrendSolarResponse(
         slaughter_data=slaughter_data,
         price_data=price_data,
