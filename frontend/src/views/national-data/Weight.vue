@@ -218,7 +218,12 @@ import ChangeAnnotation from '@/components/ChangeAnnotation.vue'
 import DataSourceInfo from '@/components/DataSourceInfo.vue'
 import { getWeightData } from '@/api/national-data'
 import { useRouter } from 'vue-router'
-import { getYearColor, axisLabelDecimalFormatter, axisLabelHideMinMax } from '@/utils/chart-style'
+import {
+  getYearColor,
+  axisLabelDecimalFormatter,
+  axisLabelHideMinMax,
+  axisLabelPercentFormatter,
+} from '@/utils/chart-style'
 
 const router = useRouter()
 const loading = ref(false)
@@ -336,12 +341,16 @@ const loadData = async () => {
     retailYoyChange.value = retailChanges.yoyChange
     
     const ratio90kgChanges = calculateChanges(result.weight90kgRatio)
-    ratio90kgCurrentChange.value = ratio90kgChanges.currentChange
-    ratio90kgYoyChange.value = ratio90kgChanges.yoyChange
-    
+    ratio90kgCurrentChange.value =
+      ratio90kgChanges.currentChange != null ? ratio90kgChanges.currentChange * 100 : null
+    ratio90kgYoyChange.value =
+      ratio90kgChanges.yoyChange != null ? ratio90kgChanges.yoyChange * 100 : null
+
     const ratio150kgChanges = calculateChanges(result.weight150kgRatio)
-    ratio150kgCurrentChange.value = ratio150kgChanges.currentChange
-    ratio150kgYoyChange.value = ratio150kgChanges.yoyChange
+    ratio150kgCurrentChange.value =
+      ratio150kgChanges.currentChange != null ? ratio150kgChanges.currentChange * 100 : null
+    ratio150kgYoyChange.value =
+      ratio150kgChanges.yoyChange != null ? ratio150kgChanges.yoyChange * 100 : null
     
     // 更新更新时间（以图表时间为准）
     let latestUpdateTime: string | null = null
@@ -436,7 +445,10 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
   
   const chartInstance = echarts.init(chartRef)
   chartInstanceRef.value = chartInstance
-  
+
+  // 涌益 90Kg/150Kg 在库中为 0~1 比例，图表与 tooltip 按百分数展示（×100）
+  const ratioToPercentScale = unit === '%' ? 100 : 1
+
   // 处理周度数据，按1-52周对齐
   const weekData = data.map(item => ({
     week: getWeekOfYear(item.period_end || item.obs_date),
@@ -452,7 +464,9 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
     const values = Array(52).fill(null)
     yearData.forEach(d => {
       if (d.week >= 1 && d.week <= 52) {
-        values[d.week - 1] = d.value
+        const raw = d.value
+        values[d.week - 1] =
+          raw === null || raw === undefined ? null : Number(raw) * ratioToPercentScale
       }
     })
     const lineColor = getYearColor(year)
@@ -481,12 +495,13 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
         if (!Array.isArray(params)) return ''
         let result = `<div style="margin-bottom: 4px;"><strong>第${params[0].axisValue}周</strong></div>`
         params.forEach((param: any) => {
-          const value = param.value !== null && param.value !== undefined 
-            ? param.value.toFixed(2) 
-            : '-'
+          const v = param.value
+          const value =
+            v !== null && v !== undefined && !Number.isNaN(Number(v)) ? Number(v).toFixed(2) : '-'
+          const suffix = unit === '%' ? '%' : unit
           result += `<div style="margin: 2px 0;">
             <span style="display:inline-block;width:10px;height:10px;background-color:${param.color};border-radius:50%;margin-right:5px;"></span>
-            ${param.seriesName}: <strong>${value}${unit}</strong>
+            ${param.seriesName}: <strong>${value === '-' ? '-' : `${value}${suffix}`}</strong>
           </div>`
         })
         return result
@@ -535,7 +550,8 @@ const renderChart = (chartRef: HTMLDivElement, data: any[], title: string, unit:
       scale: false,
       axisLabel: {
         ...axisLabelHideMinMax,
-        formatter: (v: number) => axisLabelDecimalFormatter(v)
+        formatter: (v: number) =>
+          unit === '%' ? axisLabelPercentFormatter(v) : axisLabelDecimalFormatter(v),
       }
     },
     series: series,

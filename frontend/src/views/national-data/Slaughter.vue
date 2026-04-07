@@ -493,10 +493,10 @@ const renderSlaughterLunarChart = () => {
     yAxis: {
       type: 'value',
       name: '',
+      min: 50000,
       scale: false,
       ...yAxisHideMinMaxLabel,
       axisLabel: { formatter: (v: number) => axisLabelDecimalFormatter(v) }
-      // 不设置 min/max，由 ECharts 按当前可见 series 自动缩放，图例勾选/取消时轴会随之变化
     },
     series: series,
     dataZoom: [
@@ -658,6 +658,18 @@ const renderSolarTrendChart = () => {
 
   if (series.length === 0 || xAxisData.length === 0) return
 
+  // 左侧屠宰量：Y 轴从 5 万头起；右侧价格：按数据范围 + 留白（与 Price.vue 季节性图一致）
+  const priceNums = priceValues.filter((v): v is number => v != null && typeof v === 'number')
+  let yMinPrice: number | undefined
+  let yMaxPrice: number | undefined
+  if (priceNums.length > 0) {
+    const pMin = Math.min(...priceNums)
+    const pMax = Math.max(...priceNums)
+    const pPadding = Math.max((pMax - pMin) * 0.08, 0.5)
+    yMinPrice = pMin - pPadding
+    yMaxPrice = pMax + pPadding
+  }
+
   solarTrendChart.setOption({
     tooltip: {
       trigger: 'axis',
@@ -689,14 +701,15 @@ const renderSolarTrendChart = () => {
         type: 'value',
         position: 'left',
         name: '',
+        min: 50000,
         ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
-        // 不设 min/max，图例勾选/取消时轴随可见 series 变化
       },
       {
         type: 'value',
         position: 'right',
         name: '',
+        ...(yMinPrice != null && yMaxPrice != null ? { min: yMinPrice, max: yMaxPrice } : {}),
         ...yAxisHideMinMaxLabel,
         axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
       }
