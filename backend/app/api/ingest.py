@@ -5,6 +5,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import tempfile
 from pathlib import Path
 from typing import List, Optional
@@ -22,6 +23,22 @@ from app.core.config import settings
 from app.models.sys_user import SysUser
 
 router = APIRouter(prefix=f"{settings.API_V1_STR}/ingest", tags=["ingest"])
+
+logger = logging.getLogger(__name__)
+
+
+def _refresh_quick_chart_cache_after_ingest() -> dict:
+    """清空 quick_chart_cache 并按配置预计算写入（独立 DB 会话）。"""
+    db = SessionLocal()
+    try:
+        from app.services.quick_chart_service import regenerate_cache_sync
+
+        return regenerate_cache_sync(db)
+    except Exception as e:
+        logger.exception("导入后刷新图表缓存失败: %s", e)
+        return {"cleared": 0, "computed": 0, "errors": [{"error": str(e)}]}
+    finally:
+        db.close()
 
 # ---------- 文件名 → reader 映射 ----------
 TEMPLATE_MAP = {
@@ -159,12 +176,14 @@ async def execute_import(
         """), {"rc": total_rows, "dm": duration_ms, "bid": batch_id})
         db.commit()
 
+        background_tasks.add_task(_refresh_quick_chart_cache_after_ingest)
+
         return {
             "success": True,
             "inserted": total_rows,
             "updated": 0,
             "errors_count": 0,
-            "message": f"导入完成，共 {total_rows} 行，耗时 {duration_ms}ms",
+            "message": f"导入完成，共 {total_rows} 行，耗时 {duration_ms}ms；图表缓存正在后台清空并预热",
         }
     except HTTPException:
         raise
@@ -319,11 +338,26 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path):
                 return
 
         _progress_store[task_id] = {
+            "status": "processing",
+            "total_files": len(file_paths),
+            "current_file": len(file_paths),
+            "message": "正在清除并预热图表缓存...",
+        }
+        cache_result = _refresh_quick_chart_cache_after_ingest()
+        err_list = cache_result.get("errors") or []
+        err_n = len(err_list)
+        computed = cache_result.get("computed", 0)
+        if err_n == 0:
+            cache_msg = f"已预热 {computed} 个图表接口缓存"
+        else:
+            cache_msg = f"缓存已清空；{err_n} 项预计算失败，详见服务端日志（已成功 {computed} 项）"
+
+        _progress_store[task_id] = {
             "status": "done",
             "success": True,
             "total_files": len(file_paths),
             "current_file": len(file_paths),
-            "message": "全部导入完成",
+            "message": f"全部导入完成。{cache_msg}",
         }
     finally:
         db.close()
