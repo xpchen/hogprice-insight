@@ -133,7 +133,11 @@ async def execute_import(
     """上传 Excel 并立即执行导入（默认按 bulk 模式）"""
     import time
 
-    from import_tool.replace_scope import supports_replace_tables, truncate_tables_for_template
+    from import_tool.replace_scope import (
+        apply_replace_strategy,
+        get_replace_support_hint,
+        supports_replace_tables,
+    )
 
     file_content = await file.read()
     if not template_type:
@@ -145,8 +149,7 @@ async def execute_import(
     if replace_tables and not supports_replace_tables(template_type):
         raise HTTPException(
             status_code=400,
-            detail="该模板不支持覆盖导入。当前仅支持：集团企业月度(ENTERPRISE_MONTHLY)→fact_enterprise_monthly；"
-            "升贴水(LH_FTR)→fact_futures_daily。",
+            detail=f"该模板不支持覆盖导入。{get_replace_support_hint()}",
         )
 
     ReaderClass = _get_reader_class(template_type)
@@ -171,9 +174,10 @@ async def execute_import(
         db.commit()
         batch_id = int(result_batch.lastrowid)
 
+        replace_summary = None
         if replace_tables:
-            cleared = truncate_tables_for_template(engine, template_type)
-            logger.info("ingest execute replace_tables: template=%s truncated=%s", template_type, cleared)
+            replace_summary = apply_replace_strategy(engine, template_type)
+            logger.info("ingest execute replace_tables: %s", replace_summary)
 
         reader = ReaderClass(engine, batch_id)
         result = reader.read_file(str(tmp))
@@ -192,12 +196,19 @@ async def execute_import(
 
         background_tasks.add_task(_refresh_quick_chart_cache_after_ingest)
 
+        replace_msg = ""
+        if replace_summary:
+            if replace_summary.mode == "truncate_tables":
+                replace_msg = f"；已覆盖清空表: {','.join(replace_summary.truncated_tables)}"
+            elif replace_summary.deleted_rows_by_table:
+                parts = [f"{k}:{v}" for k, v in replace_summary.deleted_rows_by_table.items()]
+                replace_msg = f"；已按source清理: {', '.join(parts)}"
         return {
             "success": True,
             "inserted": total_rows,
             "updated": 0,
             "errors_count": 0,
-            "message": f"导入完成，共 {total_rows} 行，耗时 {duration_ms}ms；图表缓存正在后台清空并预热",
+            "message": f"导入完成，共 {total_rows} 行，耗时 {duration_ms}ms{replace_msg}；图表缓存正在后台清空并预热",
         }
     except HTTPException:
         raise
@@ -304,7 +315,11 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
     """后台执行导入"""
     import time, shutil
 
-    from import_tool.replace_scope import supports_replace_tables, truncate_tables_for_template
+    from import_tool.replace_scope import (
+        apply_replace_strategy,
+        get_replace_support_hint,
+        supports_replace_tables,
+    )
 
     db = SessionLocal()
     try:
@@ -322,7 +337,7 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
                     _progress_store[task_id] = {
                         "status": "done",
                         "success": False,
-                        "message": f"{fname}: 覆盖导入仅支持集团企业月度(3.2)或升贴水模板，当前识别为 {ttype}",
+                        "message": f"{fname}: 覆盖导入不支持模板 {ttype}。{get_replace_support_hint()}",
                     }
                     return
 
@@ -340,8 +355,19 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
                 batch_id = int(result_batch.lastrowid)
 
                 if replace_tables:
-                    cleared = truncate_tables_for_template(engine, ttype)
-                    logger.info("ingest submit replace_tables: file=%s template=%s truncated=%s", fname, ttype, cleared)
+                    replace_summary = apply_replace_strategy(engine, ttype)
+                    if replace_summary.mode == "truncate_tables":
+                        clear_msg = f"覆盖清空: {','.join(replace_summary.truncated_tables)}"
+                    else:
+                        parts = [f"{k}:{v}" for k, v in replace_summary.deleted_rows_by_table.items()]
+                        clear_msg = f"按source清理: {', '.join(parts)}"
+                    _progress_store[task_id] = {
+                        "status": "processing",
+                        "total_files": len(file_paths),
+                        "current_file": i + 1,
+                        "message": f"正在导入 {fname}（{clear_msg}）",
+                    }
+                    logger.info("ingest submit replace_tables: file=%s template=%s summary=%s", fname, ttype, replace_summary)
 
                 reader = ReaderClass(engine, batch_id)
                 result = reader.read_file(fpath)

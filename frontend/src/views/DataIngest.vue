@@ -58,8 +58,12 @@
               覆盖导入（先清空本模板独占库表）
             </el-checkbox>
             <div class="replace-tables-hint">
-              仅支持：<strong>3.2 集团企业月度</strong>（清空 fact_enterprise_monthly）、<strong>升贴水</strong>模板（清空
-              fact_futures_daily）。多文件批量时每个文件须均为上述类型之一，否则任务会失败。
+              当前支持覆盖导入：
+              <strong>3.2 集团企业月度</strong>（整表清空 fact_enterprise_monthly）、
+              <strong>升贴水</strong>（整表清空 fact_futures_daily）、
+              <strong>涌益日度</strong>（按 source=YONGYI 清理 price/spread/slaughter）、
+              <strong>涌益周度</strong>（按 source=YONGYI 清理 weekly/monthly indicator）。
+              多文件批量时若含不支持模板，任务会失败并提示具体文件。
             </div>
           </div>
         </el-card>
