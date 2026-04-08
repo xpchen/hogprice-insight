@@ -20,8 +20,9 @@ def main():
     from import_tool.readers.r04_enterprise_monthly import EnterpriseMonthlyReader
 
     excel_name = "3.2、集团企业月度数据跟踪.xlsx"
-    # 优先 docs/0306_生猪/生猪/
+    # 优先项目 docs 根目录（用户常粘贴到此），再查生猪子目录
     search_dirs = [
+        repo_root / "docs",
         repo_root / "docs" / "0306_生猪" / "生猪",
         repo_root / "docs" / "生猪" / "集团企业",
         repo_root / "docs" / "生猪",
@@ -43,14 +44,11 @@ def main():
     print("=" * 60)
     print(f"文件: {filepath}")
 
-    # 先删「汇总」对应数据，再插入，保证展示与 Excel 汇总 sheet 一模一样
+    # 仅本表全量：truncate 后整文件 bulk 写入（避免 INSERT IGNORE 留旧值）
     with engine.connect() as conn:
-        conn.execute(text("""
-            DELETE FROM fact_enterprise_monthly
-            WHERE company_code = 'TOTAL' AND region_code IN ('GUANGDONG','SICHUAN','GUIZHOU')
-        """))
+        conn.execute(text("TRUNCATE TABLE fact_enterprise_monthly"))
         conn.commit()
-    print("  已清除库内汇总数据，将以 Excel 为准重新写入")
+    print("  已清空 fact_enterprise_monthly，将以当前 Excel 全量写入")
 
     batch_id = 1
     with engine.connect() as conn:

@@ -53,6 +53,15 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="replace-tables-row">
+            <el-checkbox v-model="replaceTablesImport" :disabled="importing">
+              覆盖导入（先清空本模板独占库表）
+            </el-checkbox>
+            <div class="replace-tables-hint">
+              仅支持：<strong>3.2 集团企业月度</strong>（清空 fact_enterprise_monthly）、<strong>升贴水</strong>模板（清空
+              fact_futures_daily）。多文件批量时每个文件须均为上述类型之一，否则任务会失败。
+            </div>
+          </div>
         </el-card>
       </div>
 
@@ -153,6 +162,8 @@ import { UploadFilled } from '@element-plus/icons-vue'
 import { ingestApi } from '../api/ingest'
 
 const fileList = ref<any[]>([])
+/** 与后端 replace_tables 对应：仅白名单模板会先 TRUNCATE 独占表 */
+const replaceTablesImport = ref(false)
 const importing = ref(false)
 const batches = ref<any[]>([])
 const batchDetail = ref<any>(null)
@@ -202,7 +213,7 @@ const submitImport = async () => {
   const filesToSend = fileList.value.map((f) => f.raw).filter((r): r is File => r instanceof File)
 
   try {
-    const res = await ingestApi.submitImport(filesToSend)
+    const res = await ingestApi.submitImport(filesToSend, replaceTablesImport.value)
     progress.value.message = '任务已提交，等待处理...'
     progress.value.totalFiles = res.total_files
 
@@ -301,5 +312,18 @@ onMounted(() => {
 
 .upload-area {
   width: 100%;
+}
+
+.replace-tables-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.replace-tables-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
 }
 </style>

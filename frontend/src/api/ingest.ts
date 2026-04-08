@@ -67,9 +67,15 @@ export const ingestApi = {
   },
 
   /** 提交导入任务（后台执行），立即返回 task_id */
-  submitImport: (files: File[]): Promise<{ task_id: string; total_files: number; message: string }> => {
+  submitImport: (
+    files: File[],
+    replaceTables?: boolean
+  ): Promise<{ task_id: string; total_files: number; message: string }> => {
     const formData = new FormData()
     files.forEach((f) => formData.append('files', f))
+    if (replaceTables) {
+      formData.append('replace_tables', '1')
+    }
     return request.post('/ingest/submit', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
@@ -87,12 +93,18 @@ export const ingestApi = {
     return new EventSource(url)
   },
 
-  executeImport: (formData: FormData, templateType?: string): Promise<any> => {
+  executeImport: (
+    formData: FormData,
+    options?: { templateType?: string; replaceTables?: boolean }
+  ): Promise<any> => {
+    const params: Record<string, string | boolean> = {}
+    if (options?.templateType) params.template_type = options.templateType
+    if (options?.replaceTables) params.replace_tables = true
     return request.post('/ingest/execute', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
-      params: templateType ? { template_type: templateType } : undefined,
+      params: Object.keys(params).length ? params : undefined,
       timeout: 600000
     })
   },

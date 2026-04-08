@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Optional
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -126,11 +126,14 @@ async def execute_import(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     template_type: Optional[str] = Query(None),
+    replace_tables: bool = Query(False, description="为 true 时先 TRUNCATE 本模板独占的 fact 表（仅部分模板支持）"),
     current_user: SysUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """上传 Excel 并立即执行导入（默认按 bulk 模式）"""
     import time
+
+    from import_tool.replace_scope import supports_replace_tables, truncate_tables_for_template
 
     file_content = await file.read()
     if not template_type:
@@ -138,6 +141,13 @@ async def execute_import(
 
     if template_type not in TEMPLATE_MAP:
         raise HTTPException(status_code=400, detail=f"不支持的模板类型: {template_type}，已知类型: {list(TEMPLATE_MAP.keys())}")
+
+    if replace_tables and not supports_replace_tables(template_type):
+        raise HTTPException(
+            status_code=400,
+            detail="该模板不支持覆盖导入。当前仅支持：集团企业月度(ENTERPRISE_MONTHLY)→fact_enterprise_monthly；"
+            "升贴水(LH_FTR)→fact_futures_daily。",
+        )
 
     ReaderClass = _get_reader_class(template_type)
     if not ReaderClass:
@@ -160,6 +170,10 @@ async def execute_import(
         """), {"fn": file.filename, "fh": file_hash})
         db.commit()
         batch_id = int(result_batch.lastrowid)
+
+        if replace_tables:
+            cleared = truncate_tables_for_template(engine, template_type)
+            logger.info("ingest execute replace_tables: template=%s truncated=%s", template_type, cleared)
 
         reader = ReaderClass(engine, batch_id)
         result = reader.read_file(str(tmp))
@@ -205,10 +219,17 @@ async def execute_import(
         tmp.unlink(missing_ok=True)
 
 
+def _form_bool_replace_tables(raw: Optional[str]) -> bool:
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 @router.post("/submit", status_code=status.HTTP_202_ACCEPTED)
 async def submit_import(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(..., description="Excel 文件，可多选"),
+    replace_tables: Optional[str] = Form(None, description="传 1/true 时按文件模板尝试先 TRUNCATE 独占表（仅部分模板）"),
     current_user: SysUser = Depends(get_current_user),
 ):
     """提交多文件后台导入任务"""
@@ -269,7 +290,8 @@ async def submit_import(
     if not file_paths:
         raise HTTPException(status_code=400, detail="zip 中未找到可导入的 Excel 文件")
 
-    background_tasks.add_task(_run_bg_import, task_id, file_paths, tmp_dir)
+    replace_flag = _form_bool_replace_tables(replace_tables)
+    background_tasks.add_task(_run_bg_import, task_id, file_paths, tmp_dir, replace_flag)
 
     return {
         "task_id": task_id,
@@ -278,9 +300,11 @@ async def submit_import(
     }
 
 
-def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path):
+def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables: bool = False):
     """后台执行导入"""
     import time, shutil
+
+    from import_tool.replace_scope import supports_replace_tables, truncate_tables_for_template
 
     db = SessionLocal()
     try:
@@ -294,6 +318,14 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path):
             try:
                 batch_id = None
                 ttype = _detect_template(fname)
+                if replace_tables and not supports_replace_tables(ttype):
+                    _progress_store[task_id] = {
+                        "status": "done",
+                        "success": False,
+                        "message": f"{fname}: 覆盖导入仅支持集团企业月度(3.2)或升贴水模板，当前识别为 {ttype}",
+                    }
+                    return
+
                 ReaderClass = _get_reader_class(ttype)
                 if ReaderClass is None:
                     continue
@@ -306,6 +338,10 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path):
                 """), {"fn": fname})
                 db.commit()
                 batch_id = int(result_batch.lastrowid)
+
+                if replace_tables:
+                    cleared = truncate_tables_for_template(engine, ttype)
+                    logger.info("ingest submit replace_tables: file=%s template=%s truncated=%s", fname, ttype, cleared)
 
                 reader = ReaderClass(engine, batch_id)
                 result = reader.read_file(fpath)
