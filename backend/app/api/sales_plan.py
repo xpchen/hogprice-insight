@@ -178,6 +178,7 @@ async def get_sales_plan_data(
             {PLAN_INDICATORS},
             {RATE_INDICATORS}
         )
+        AND (m.region_code IS NULL OR m.region_code = 'NATION')
         {company_filter}
         ORDER BY m.month_date DESC, m.company_code, m.region_code
     """
@@ -242,7 +243,7 @@ async def get_sales_plan_data(
         prev_plan = item.get("prev_plan")
         compl = item.get("completion_rate")
 
-        plan_completion = compl / 100.0 if compl is not None else (
+        plan_completion = compl if compl is not None else (
             actual_val / plan_val if actual_val and plan_val else None)
         mom = (actual_val / prev_actual - 1) if actual_val and prev_actual and prev_actual != 0 else None
         pop = (plan_val / prev_actual - 1) if plan_val and prev_actual and prev_actual != 0 else None  # 计划环比=当月计划/上月实际

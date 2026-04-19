@@ -469,7 +469,7 @@ async def get_a1_supply_forecast_table(db: Session = Depends(get_db)):
                     indicator_code=code,
                     source=source,
                     region_code="NATION",
-                    sub_category=sub_cat if sub_cat else None,
+                    sub_category=sub_cat,
                     value_type=vtype,
                 )
                 for dp in data_points:

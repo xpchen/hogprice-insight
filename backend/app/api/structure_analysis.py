@@ -31,6 +31,8 @@ class StructureTableRow(BaseModel):
     cr20: Optional[float] = None
     yongyi: Optional[float] = None
     ganglian: Optional[float] = None
+    ganglian_large: Optional[float] = None
+    ganglian_small: Optional[float] = None
     ministry_scale: Optional[float] = None
     ministry_scattered: Optional[float] = None
     slaughter: Optional[float] = None
@@ -225,7 +227,7 @@ def _get_slaughter_month_on_month(db: Session) -> List[StructureDataPoint]:
     sql_abs = text("""
         SELECT month_date, value
         FROM fact_monthly_indicator
-        WHERE source = 'STATISTICS_BUREA'
+        WHERE source = 'STATISTICS_BUREAU'
           AND indicator_code = 'designated_slaughter'
           AND value_type = 'abs'
           AND COALESCE(region_code, 'NATION') = 'NATION'
@@ -286,6 +288,8 @@ async def get_structure_analysis_table(
     cr20_data = _get_cr20_month_on_month(db)
     yongyi_data = _get_yongyi_month_on_month(db)
     ganglian_data = _get_ganglian_month_on_month(db, "全国")
+    ganglian_large_data = _get_ganglian_month_on_month(db, "规模场")
+    ganglian_small_data = _get_ganglian_month_on_month(db, "中小散户")
     ministry_scale_data = _get_ministry_agriculture_month_on_month(db, "规模场")
     ministry_scattered_data = _get_ministry_agriculture_month_on_month(db, "散户")
     slaughter_data = _get_slaughter_month_on_month(db)
@@ -298,6 +302,8 @@ async def get_structure_analysis_table(
         ("cr20", cr20_data),
         ("yongyi", yongyi_data),
         ("ganglian", ganglian_data),
+        ("ganglian_large", ganglian_large_data),
+        ("ganglian_small", ganglian_small_data),
         ("ministry_scale", ministry_scale_data),
         ("ministry_scattered", ministry_scattered_data),
         ("slaughter", slaughter_data),
@@ -314,6 +320,8 @@ async def get_structure_analysis_table(
             cr20=row_data.get('cr20'),
             yongyi=row_data.get('yongyi'),
             ganglian=row_data.get('ganglian'),
+            ganglian_large=row_data.get('ganglian_large'),
+            ganglian_small=row_data.get('ganglian_small'),
             ministry_scale=row_data.get('ministry_scale'),
             ministry_scattered=row_data.get('ministry_scattered'),
             slaughter=row_data.get('slaughter'),

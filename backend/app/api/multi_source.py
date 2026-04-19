@@ -69,7 +69,7 @@ class MultiSourceResponse(BaseModel):
 # Mapping: (indicator_code, source, sub_category, region_code) -> response field
 #
 # All values queried from fact_monthly_indicator for this API use
-# value_type = 'mom_pct' (month-over-month percentage).
+# value_type IN ('mom_pct', 'mom') (month-over-month percentage).
 # sub_category and region_code use NULL / 'NATION' as defaults; we
 # normalise NULLs via COALESCE in the SQL query.
 # ---------------------------------------------------------------------------
@@ -80,8 +80,7 @@ INDICATOR_FIELD_MAP: dict[tuple[str, str, str, str], str] = {
 
     # --- 能繁母猪存栏环比 ---
     ("breeding_sow_inventory", "YONGYI", "", "NATION"): "breeding_inventory_yongyi",
-    # 钢联: nation=全国, small_nation=中小散户
-    ("breeding_sow_inventory", "GANGLIAN", "nation", "NATION"): "breeding_inventory_ganglian_nation",
+    # 钢联: small_nation=中小散户 (r02 col11 "nation" is actually 中小散, removed)
     ("breeding_sow_inventory", "GANGLIAN", "small_nation", "NATION"): "breeding_inventory_ganglian_small",
     # NYB: nation/scale/small
     ("breeding_sow_inventory", "NYB", "nation", "NATION"): "breeding_inventory_nyb_nation",
@@ -91,13 +90,13 @@ INDICATOR_FIELD_MAP: dict[tuple[str, str, str, str], str] = {
     # --- 能繁母猪饲料环比 ---
     # YONGYI sub_cats: other/production_mom/reserve — fallback to empty matches any
     ("breeding_sow_feed", "YONGYI", "", "NATION"): "breeding_feed_yongyi",
-    ("breeding_sow_feed", "GANGLIAN", "nation", "NATION"): "breeding_feed_ganglian",
+    # 钢联饲料: use r01 indicator (sow_feed_sales_mom) to avoid r02 date shift
+    ("sow_feed_sales_mom", "GANGLIAN", "", "NATION"): "breeding_feed_ganglian",
     ("breeding_sow_feed", "ASSOCIATION", "", "NATION"): "breeding_feed_association",
 
     # --- 新生仔猪存栏环比 ---
     ("piglet_inventory", "YONGYI", "", "NATION"): "piglet_inventory_yongyi",
-    ("piglet_inventory", "GANGLIAN", "nation", "NATION"): "piglet_inventory_ganglian_nation",
-    ("piglet_inventory", "GANGLIAN", "small_nation", "NATION"): "piglet_inventory_ganglian_small",
+    # 钢联新生仔猪: r02 nation 实为中小散, scale 用了错误指标, 全部移除
     ("piglet_inventory", "NYB", "nation", "NATION"): "piglet_inventory_nyb_nation",
     ("piglet_inventory", "NYB", "scale", "NATION"): "piglet_inventory_nyb_scale",
     ("piglet_inventory", "NYB", "small", "NATION"): "piglet_inventory_nyb_small",
@@ -105,11 +104,17 @@ INDICATOR_FIELD_MAP: dict[tuple[str, str, str, str], str] = {
     # --- 仔猪饲料环比 ---
     # YONGYI sub_cats: nursery/production_mom/small — fallback to empty matches any
     ("piglet_feed", "YONGYI", "", "NATION"): "piglet_feed_yongyi",
-    ("piglet_feed", "GANGLIAN", "nation", "NATION"): "piglet_feed_ganglian",
+    # 钢联饲料: use r01 indicator (piglet_feed_sales_mom) to avoid r02 date shift
+    ("piglet_feed_sales_mom", "GANGLIAN", "", "NATION"): "piglet_feed_ganglian",
     ("piglet_feed", "ASSOCIATION", "", "NATION"): "piglet_feed_association",
 
     # --- 生猪存栏环比 ---
     ("hog_inventory", "YONGYI", "", "NATION"): "hog_inventory_yongyi",
+    # r09 YONGYI feed indicator codes (value_type='mom') — mapped to E2 response fields
+    ("feed_sales_nursery",     "YONGYI", "", "NATION"): "piglet_feed_yongyi",
+    ("feed_sales_fattening",   "YONGYI", "", "NATION"): "hog_feed_yongyi",
+    ("feed_sales_reserve_sow", "YONGYI", "", "NATION"): "breeding_feed_yongyi",
+    ("feed_sales_other_sow",   "YONGYI", "", "NATION"): "breeding_feed_yongyi",
     # GANGLIAN only has small_* variants for hog_inventory
     ("hog_inventory", "GANGLIAN", "small_nation", "NATION"): "hog_inventory_ganglian_small",
     ("hog_inventory", "NYB", "nation", "NATION"): "hog_inventory_nyb_nation",
@@ -118,7 +123,8 @@ INDICATOR_FIELD_MAP: dict[tuple[str, str, str, str], str] = {
 
     # --- 育肥猪饲料环比 (DB indicator_code = fattening_feed) ---
     ("fattening_feed", "YONGYI", "", "NATION"): "hog_feed_yongyi",
-    ("fattening_feed", "GANGLIAN", "nation", "NATION"): "hog_feed_ganglian",
+    # 钢联饲料: use r01 indicator (fattening_feed_sales_mom) to avoid r02 date shift
+    ("fattening_feed_sales_mom", "GANGLIAN", "", "NATION"): "hog_feed_ganglian",
     ("fattening_feed", "ASSOCIATION", "", "NATION"): "hog_feed_association",
 }
 
@@ -136,11 +142,16 @@ ABS_COMPUTED_FIELDS: list = [
     # 淘汰母猪屠宰环比 — YONGYI/钢联 abs only
     ("cull_slaughter",               "YONGYI",   "",  "NATION", "cull_slaughter_yongyi"),
     ("cull_sow_slaughter",           "GANGLIAN",  "",  "NATION", "cull_slaughter_ganglian"),
+    # 能繁母猪存栏环比 — 钢联全国 uses r01 _total indicator (r02 nation col is actually 中小散)
+    ("breeding_sow_inventory_total", "GANGLIAN",  "",  "NATION", "breeding_inventory_ganglian_nation"),
     # 能繁母猪存栏环比 — 钢联规模场 uses _large indicator
     ("breeding_sow_inventory_large", "GANGLIAN",  "",  "NATION", "breeding_inventory_ganglian_scale"),
-    # 新生仔猪存栏环比 — YONGYI abs only; 钢联规模场复用 hog_inventory_large（与旧版一致）
+    # 能繁母猪存栏环比 — YONGYI r09 abs (r02 stops at 2025-10)
+    ("breeding_sow_inventory",       "YONGYI",    "",  "NATION", "breeding_inventory_yongyi"),
+    # 生猪存栏环比 — YONGYI r09 abs (r02 stops at 2025-10)
+    ("hog_inventory",                "YONGYI",    "",  "NATION", "hog_inventory_yongyi"),
+    # 新生仔猪存栏环比 — YONGYI abs only; 钢联仔猪数据来源不明已移除
     ("piglet_inventory",             "YONGYI",    "",  "NATION", "piglet_inventory_yongyi"),
-    ("hog_inventory_large",          "GANGLIAN",  "",  "NATION", "piglet_inventory_ganglian_scale"),
     # 生猪存栏环比 — 钢联全国/规模场 use _total/_large indicator
     ("hog_inventory_total",          "GANGLIAN",  "",  "NATION", "hog_inventory_ganglian_nation"),
     ("hog_inventory_large",          "GANGLIAN",  "",  "NATION", "hog_inventory_ganglian_scale"),
@@ -208,7 +219,7 @@ async def get_multi_source_data(
             COALESCE(region_code, 'NATION')            AS region,
             ROUND(value, 2)                            AS val
         FROM fact_monthly_indicator
-        WHERE value_type = 'mom_pct'
+        WHERE value_type IN ('mom_pct', 'mom')
           AND indicator_code IN ({indicator_placeholders})
           AND source            IN ({source_placeholders})
         ORDER BY month_date

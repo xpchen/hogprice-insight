@@ -996,7 +996,7 @@ class YongyiWeeklyReader(BaseSheetReader):
                                 "indicator_code": indicator_code,
                                 "sub_category": "",
                                 "source": SOURCE,
-                                "value": mom_val,
+                                "value": mom_val * 100,
                                 "value_type": "mom_pct",
                                 "unit": "%",
                                 "batch_id": self.batch_id,

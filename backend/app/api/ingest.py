@@ -333,16 +333,10 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
             try:
                 batch_id = None
                 ttype = _detect_template(fname)
-                if replace_tables and not supports_replace_tables(ttype):
-                    _progress_store[task_id] = {
-                        "status": "done",
-                        "success": False,
-                        "message": f"{fname}: 覆盖导入不支持模板 {ttype}。{get_replace_support_hint()}",
-                    }
-                    return
 
                 ReaderClass = _get_reader_class(ttype)
                 if ReaderClass is None:
+                    logger.warning("跳过无法识别模板的文件: %s (type=%s)", fname, ttype)
                     continue
 
                 start_ms = time.time()
@@ -354,7 +348,7 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
                 db.commit()
                 batch_id = int(result_batch.lastrowid)
 
-                if replace_tables:
+                if replace_tables and supports_replace_tables(ttype):
                     replace_summary = apply_replace_strategy(engine, ttype)
                     if replace_summary.mode == "truncate_tables":
                         clear_msg = f"覆盖清空: {','.join(replace_summary.truncated_tables)}"

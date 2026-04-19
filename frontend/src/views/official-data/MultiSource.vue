@@ -162,23 +162,7 @@
                   {{ formatPercent(row.piglet_inventory_yongyi) }}
                 </template>
               </el-table-column>
-              <el-table-column label="钢联" align="center">
-                <el-table-column prop="piglet_inventory_ganglian_nation" label="全国" width="100" align="right">
-                  <template #default="{ row }">
-                    {{ formatPercent(row.piglet_inventory_ganglian_nation) }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="piglet_inventory_ganglian_scale" label="规模场" width="100" align="right">
-                  <template #default="{ row }">
-                    {{ formatPercent(row.piglet_inventory_ganglian_scale) }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="piglet_inventory_ganglian_small" label="中小散户" width="100" align="right">
-                  <template #default="{ row }">
-                    {{ formatPercent(row.piglet_inventory_ganglian_small) }}
-                  </template>
-                </el-table-column>
-              </el-table-column>
+              <!-- 钢联新生仔猪: 数据来源不明, 已移除 -->
               <el-table-column label="NYB" align="center">
                 <el-table-column prop="piglet_inventory_nyb_nation" label="全国" width="90" align="right">
                   <template #default="{ row }">

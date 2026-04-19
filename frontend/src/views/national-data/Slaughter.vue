@@ -703,7 +703,7 @@ const renderSolarTrendChart = () => {
         name: '',
         min: 50000,
         ...yAxisHideMinMaxLabel,
-        axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
+        axisLabel: { formatter: (v: number) => (v == null ? '' : axisLabelDecimalFormatter(v)) }
       },
       {
         type: 'value',
@@ -711,7 +711,7 @@ const renderSolarTrendChart = () => {
         name: '',
         ...(yMinPrice != null && yMaxPrice != null ? { min: yMinPrice, max: yMaxPrice } : {}),
         ...yAxisHideMinMaxLabel,
-        axisLabel: { formatter: (v: number) => (v == null ? '' : String(v)) }
+        axisLabel: { formatter: (v: number) => (v == null ? '' : axisLabelDecimalFormatter(v)) }
       }
     ],
     series,
