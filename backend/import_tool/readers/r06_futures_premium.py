@@ -48,7 +48,9 @@ class FuturesPremiumReader(BaseSheetReader):
 
     def read_file(self, filepath: str) -> dict[str, list[dict]]:
         logger.info("开始读取期货结算价文件: %s", filepath)
-        wb = load_workbook(filepath, data_only=True, read_only=True)
+        # 注意：该文件在 read_only=True 时 openpyxl 只能读到首列，
+        # 其余列全部丢失（疑似 xlsx 内部 sparse row 格式问题），必须用 read_only=False。
+        wb = load_workbook(filepath, data_only=True, read_only=False)
 
         try:
             ws = wb[SHEET_NAME]

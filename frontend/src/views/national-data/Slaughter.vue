@@ -429,9 +429,8 @@ const renderSlaughterLunarChart = () => {
       smooth: true,
       // 移除数据点
       symbol: 'none',
-      // 处理断点：使用连续曲线
       connectNulls: true,
-      lineStyle: { 
+      lineStyle: {
         width: 2,
         color: lineColor
       },
@@ -637,7 +636,7 @@ const renderSolarTrendChart = () => {
       yAxisIndex: 0,
       smooth: true,
       symbol: 'none',
-      connectNulls: true,
+      connectNulls: false,
       lineStyle: { width: 2 },
       itemStyle: { color: '#409EFF' }
     })
@@ -650,7 +649,7 @@ const renderSolarTrendChart = () => {
       yAxisIndex: 1,
       smooth: true,
       symbol: 'none',
-      connectNulls: true,
+      connectNulls: false,
       lineStyle: { width: 2, type: 'dashed' },
       itemStyle: { color: '#67C23A' }
     })

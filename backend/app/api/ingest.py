@@ -312,7 +312,7 @@ async def submit_import(
 
 
 def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables: bool = False):
-    """后台执行导入"""
+    """后台执行导入（单个文件失败不影响其余文件，最终始终刷新缓存）"""
     import time, shutil
 
     from import_tool.replace_scope import (
@@ -322,6 +322,8 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
     )
 
     db = SessionLocal()
+    failed_files: list[str] = []
+    success_count = 0
     try:
         for i, (fpath, fname) in enumerate(file_paths):
             _progress_store[task_id] = {
@@ -375,7 +377,9 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
                     WHERE id=:bid
                 """), {"rc": total_rows, "dm": duration_ms, "bid": batch_id})
                 db.commit()
+                success_count += 1
             except Exception as e:
+                logger.exception("导入文件失败: %s", fname)
                 try:
                     if batch_id:
                         db.execute(text("""
@@ -386,13 +390,10 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
                         db.commit()
                 except Exception:
                     db.rollback()
-                _progress_store[task_id] = {
-                    "status": "done",
-                    "success": False,
-                    "message": f"导入 {fname} 失败: {str(e)[:200]}",
-                }
-                return
+                failed_files.append(f"{fname}: {str(e)[:100]}")
+                # 继续处理下一个文件，不提前返回
 
+        # 无论是否有文件失败，始终刷新缓存
         _progress_store[task_id] = {
             "status": "processing",
             "total_files": len(file_paths),
@@ -408,13 +409,23 @@ def _run_bg_import(task_id: str, file_paths: list, tmp_dir: Path, replace_tables
         else:
             cache_msg = f"缓存已清空；{err_n} 项预计算失败，详见服务端日志（已成功 {computed} 项）"
 
-        _progress_store[task_id] = {
-            "status": "done",
-            "success": True,
-            "total_files": len(file_paths),
-            "current_file": len(file_paths),
-            "message": f"全部导入完成。{cache_msg}",
-        }
+        if failed_files:
+            fail_detail = "；".join(failed_files)
+            _progress_store[task_id] = {
+                "status": "done",
+                "success": False,
+                "total_files": len(file_paths),
+                "current_file": len(file_paths),
+                "message": f"导入完成（成功 {success_count}/{len(file_paths)} 个）。失败：{fail_detail}。{cache_msg}",
+            }
+        else:
+            _progress_store[task_id] = {
+                "status": "done",
+                "success": True,
+                "total_files": len(file_paths),
+                "current_file": len(file_paths),
+                "message": f"全部导入完成。{cache_msg}",
+            }
     finally:
         db.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
