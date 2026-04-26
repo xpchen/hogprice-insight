@@ -299,7 +299,7 @@ class CarcassMarketReader(BaseSheetReader):
                 # Slaughter volumes (col 8..22)
                 for col, (label, source) in SLAUGHTER_COLS.items():
                     val = clean_value(ws.cell(row=row, column=col).value)
-                    if val is not None:
+                    if val is not None and val != 0:
                         volume = int(val) if val == int(val) else int(round(val))
                         slaughter_records.append({
                             "trade_date": dt,

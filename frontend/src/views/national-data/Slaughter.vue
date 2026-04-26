@@ -649,7 +649,7 @@ const renderSolarTrendChart = () => {
       yAxisIndex: 1,
       smooth: true,
       symbol: 'none',
-      connectNulls: false,
+      connectNulls: true,
       lineStyle: { width: 2, type: 'dashed' },
       itemStyle: { color: '#67C23A' }
     })
