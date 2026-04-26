@@ -146,6 +146,8 @@ ABS_COMPUTED_FIELDS: list = [
     ("breeding_sow_inventory_total", "GANGLIAN",  "",  "NATION", "breeding_inventory_ganglian_nation"),
     # 能繁母猪存栏环比 — 钢联规模场 uses _large indicator
     ("breeding_sow_inventory_large", "GANGLIAN",  "",  "NATION", "breeding_inventory_ganglian_scale"),
+    # 能繁母猪存栏环比 — 钢联中小散户 uses _small indicator
+    ("breeding_sow_inventory_small", "GANGLIAN",  "",  "NATION", "breeding_inventory_ganglian_small"),
     # 能繁母猪存栏环比 — YONGYI r09 abs (r02 stops at 2025-10)
     ("breeding_sow_inventory",       "YONGYI",    "",  "NATION", "breeding_inventory_yongyi"),
     # 生猪存栏环比 — YONGYI r09 abs (r02 stops at 2025-10)
